@@ -1,0 +1,402 @@
+# SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0
+
+
+Path: /opt/binarybot/docs/canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md  
+Version: 2.0.0  
+Status: Canonical Active Execution Specification  
+Owner: BinaryBot / DROPi Signals  
+Scope: Final signal execution layer after FSM decision, including emission readiness, delivery contract, and separation from strategy/FSM truth layers  
+
+Linked Documents:
+- /opt/binarybot/docs/canonical/active/CANONICAL_STRATEGY_STACK_v1.0.0.md
+- /opt/binarybot/docs/canonical/active/ALGO_SPEC_v2.0.0.md
+- /opt/binarybot/docs/canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md
+- /opt/binarybot/docs/canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md
+- /opt/binarybot/docs/canonical/active/OBSERVABILITY_SPEC_v2.0.0.md
+- /opt/binarybot/docs/canonical/active/SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md
+- /opt/binarybot/docs/canonical/active/CHANNEL_CONFIG_SPEC_v2.0.0.md
+
+
+Depends on:
+- canonical/active/CANONICAL_STRATEGY_STACK_v1.0.0.md
+- canonical/active/ALGO_SPEC_v2.0.0.md
+- canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md
+- canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md
+- canonical/active/OBSERVABILITY_SPEC_v2.0.0.md
+
+---
+
+## 1. PURPOSE
+
+Acest document definește specificația canonică a layerului de execuție a semnalului din BinaryBot.
+
+Signal engine-ul are rolul de a:
+- consuma verdictul operațional post-FSM
+- decide dacă există readiness real pentru emitere
+- construi payload-ul final de semnal
+- executa distribuirea conform regulilor active
+- furniza date de execuție pentru observability și audit
+
+Signal engine-ul nu definește matematica strategiei.
+Signal engine-ul nu definește contractul `DecisionObject`.
+Signal engine-ul nu definește stările FSM.
+
+---
+
+## 2. CORE PRINCIPLE
+
+Signal engine-ul este **layerul final de execuție**, nu layerul de adevăr strategic.
+
+Ordinea canonică blocată este:
+1. market model
+2. corridor engine
+3. time model
+4. scoring
+5. `DecisionObject`
+6. FSM
+7. signal engine
+
+Prin urmare:
+- signal engine-ul este după FSM
+- nu trebuie să consume direct output strategic brut ca adevăr primar
+- nu trebuie să emită semnal direct din score sau expiry fără verdict operațional standardizat
+
+---
+
+## 3. ROLE OF SIGNAL ENGINE
+
+Signal engine-ul are patru responsabilități fundamentale:
+
+1. **execution gating**  
+   verifică dacă verdictul operațional permite emiterea
+
+2. **payload construction**  
+   transformă verdictul operațional într-un format final de semnal utilizabil
+
+3. **delivery orchestration**  
+   distribuie semnalul către canalele / mecanismele active
+
+4. **execution traceability**  
+   produce urme observabile despre ce s-a emis, când, unde și de ce
+
+---
+
+## 4. WHAT SIGNAL ENGINE IS NOT
+
+Signal engine-ul nu este:
+- motorul strategic principal
+- calculatorul time modelului
+- producătorul `DecisionObject`
+- FSM-ul
+- singura sursă de observability
+- înlocuitor pentru auditul deciziilor
+
+---
+
+## 5. REQUIRED INPUT CONTRACT
+
+Inputul canonic primar pentru signal engine este verdictul operațional post-FSM.
+
+Acesta poate include:
+- state / outcome
+- execution readiness
+- degrade / reject semantics
+- explanation snippets
+- metadata de handoff
+- referințe către setup și context
+
+Signal engine-ul poate avea acces și la `DecisionObject` pentru context auxiliar,
+dar nu trebuie să sară peste verdictul FSM ca layer operațional obligatoriu.
+
+---
+
+## 6. CANONICAL EXECUTION RULE
+
+Semnalul final poate fi emis numai dacă:
+- există verdict FSM compatibil cu execuția
+- există readiness suficient pentru emitere
+- nu există blocaje operaționale active
+- payload-ul poate fi construit coerent
+- distribuția este permisă de regulile sistemului
+
+Aceasta este regula canonică de execuție.
+
+---
+
+## 7. FORBIDDEN DIRECT PATHS
+
+Sunt interzise ca flow canonic activ:
+
+- strategy -> signal direct
+- score -> signal direct
+- expiry -> signal direct
+- raw dict legacy -> Telegram direct
+- `DecisionObject` -> signal direct fără FSM
+- FSM state textual brut -> emitere fără execution contract clar
+
+Acestea pot exista doar în layere tranzitorii de compatibilitate.
+
+---
+
+## 8. EXECUTION OUTCOME FAMILIES
+
+Signal engine-ul trebuie să poată exprima cel puțin următoarele familii de outcome:
+
+- `EMITTED`
+- `NOT_EMITTED`
+- `BLOCKED`
+- `SKIPPED`
+- `FAILED`
+- `DEFERRED`
+
+Aceste outcome-uri descriu starea execuției,
+nu starea strategică și nici starea FSM.
+
+---
+
+## 9. EMITTED FAMILY
+
+`EMITTED` înseamnă că semnalul final a fost generat și livrat sau marcat oficial ca livrat.
+
+Acest outcome trebuie să poată păstra:
+- timestamp de emitere
+- canal / destinație
+- payload version
+- context minim de corelare
+- referință la verdictul care a permis emiterea
+
+---
+
+## 10. NOT_EMITTED FAMILY
+
+`NOT_EMITTED` înseamnă că nu s-a ajuns la emitere,
+dar fără a implica neapărat eroare tehnică.
+
+Exemple:
+- verdictul operațional nu permite emiterea
+- readiness insuficient
+- setup degradat sub pragul de execuție
+- lipsă de condiții minime pentru payload final
+
+---
+
+## 11. BLOCKED FAMILY
+
+`BLOCKED` înseamnă că emiterea ar fi putut părea posibilă,
+dar a fost oprită de o regulă explicită.
+
+Exemple:
+- rule gating
+- channel gating
+- focus gating
+- duplicate prevention
+- cooldown / anti-spam policy
+- safety / control guardrails
+
+---
+
+## 12. SKIPPED FAMILY
+
+`SKIPPED` înseamnă că sistemul a ales să nu emită în contextul unei reguli de flux,
+fără a semnifica neapărat reject strategic sau eroare.
+
+Exemple:
+- setup depășit
+- oportunitate pierdută
+- window operațional închis
+- alt eveniment prioritar a preluat execuția
+
+---
+
+## 13. FAILED FAMILY
+
+`FAILED` înseamnă că emiterea era intenționată,
+dar a eșuat din motive tehnice sau infrastructurale.
+
+Exemple:
+- eroare de construire payload
+- eroare de transport / API
+- eroare de rețea
+- eroare de serializare
+- eroare de canal extern
+
+Această familie trebuie separată clar de `NOT_EMITTED` și `BLOCKED`.
+
+---
+
+## 14. DEFERRED FAMILY
+
+`DEFERRED` înseamnă că emiterea este amânată explicit pentru un moment ulterior sau pentru o condiție ulterioară.
+
+Această familie este utilă când:
+- setup-ul este aproape de execuție
+- există un holding pattern operațional
+- distribuția este temporizată deliberat
+- sistemul folosește staged execution
+
+---
+
+## 15. PAYLOAD CONSTRUCTION PRINCIPLE
+
+Payload-ul final de semnal trebuie construit dintr-un contract operațional coerent.
+
+Payload-ul poate include:
+- symbol
+- direction
+- execution classification
+- expirare / timing prezentat operațional
+- confidence sau grade de semnal
+- explanation snippets
+- metadata de corelare
+
+Dar payload-ul nu trebuie să devină adevărul canonic primar al sistemului.
+El este un produs de livrare,
+nu contractul strategic.
+
+---
+
+## 16. EXECUTION GATING PRINCIPLE
+
+Înainte de emitere, signal engine-ul trebuie să verifice:
+- outcome FSM compatibil
+- readiness explicit
+- absența blockerelor operaționale
+- eligibilitatea canalului
+- consistența payload-ului final
+
+Dacă una dintre aceste condiții lipsește,
+emiterea trebuie oprită, amânată sau marcată corespunzător.
+
+---
+
+## 17. DUPLICATE / FLOOD CONTROL PRINCIPLE
+
+Signal engine-ul trebuie să poată aplica control asupra duplicatelor sau floodingului.
+
+Asta poate include:
+- duplicate suppression
+- cooldown
+- signal uniqueness rules
+- repeated setup suppression
+- channel spam protection
+
+Aceste controale sunt operaționale,
+nu strategice.
+
+---
+
+## 18. RELATION TO FSM
+
+FSM-ul decide semnificația operațională.
+Signal engine-ul decide și execută livrarea finală în baza acelei semnificații.
+
+Relația corectă este:
+- strategia produce `DecisionObject`
+- FSM-ul produce verdict operațional
+- signal engine-ul decide emiterea și construiește payload-ul final
+
+Această separare este blocată canonic.
+
+---
+
+## 19. RELATION TO DECISIONOBJECT
+
+`DecisionObject` poate fi disponibil signal engine-ului pentru context și enrichments,
+dar nu este contractul de execuție finală.
+
+Signal engine-ul nu trebuie să trateze `DecisionObject` ca substitut al verdictului FSM.
+
+`DecisionObject` este adevăr strategic.
+Verdictul FSM este adevăr operațional.
+Signal engine-ul lucrează pe adevărul operațional.
+
+---
+
+## 20. RELATION TO OBSERVABILITY
+
+Observability trebuie să poată urmări:
+- ce verdict a intrat în signal engine
+- dacă emiterea a avut loc
+- de ce a avut loc sau de ce nu
+- ce canal a fost vizat
+- dacă a existat blocaj, skip, defer sau fail
+- ce payload version a fost folosită
+
+Prin urmare, signal engine-ul trebuie să emită trace semantic suficient.
+
+---
+
+## 21. DELIVERY TRACE REQUIREMENT
+
+Pentru fiecare încercare relevantă de execuție,
+sistemul trebuie să poată păstra minimum:
+
+- execution attempt id
+- setup correlation id
+- outcome family
+- reason / blocker / fail detail
+- timestamp
+- destination / channel class
+- payload or payload reference
+
+Aceasta este fundația pentru auditul execuției.
+
+---
+
+## 22. REJECTION VS NON-EMISSION RULE
+
+Signal engine-ul nu trebuie să confunde:
+- reject strategic
+- reject operațional
+- non-emission
+- fail tehnic
+- skip de flux
+
+Acestea trebuie separate semantic,
+altfel auditul devine opac.
+
+---
+
+## 23. FORBIDDEN EXECUTION PATTERNS
+
+Sunt interzise ca modele canonice active:
+
+- emitere directă din score
+- emitere directă din expiry
+- emitere directă din `DecisionObject` fără FSM
+- payload final tratat ca adevăr strategic
+- lipsa outcome-urilor de execuție explicite
+- imposibilitatea de a distinge fail, block și not_emitted
+
+---
+
+## 24. CODE ALIGNMENT RULE
+
+Orice implementare a signal engine-ului trebuie să poată răspunde clar la întrebările:
+
+- ce input post-FSM consumă?
+- unde aplică execution gating?
+- cum construiește payload-ul?
+- cum previne duplicatele?
+- cum marchează emitted / blocked / failed / skipped / deferred?
+- cum trimite datele către observability?
+
+Dacă aceste răspunsuri nu sunt clare,
+alinierea codului este incompletă.
+
+---
+
+## 25. FINAL PRINCIPLE
+
+Signal engine-ul este layerul final de execuție,
+nu sursa de adevăr strategic și nici sursa de adevăr FSM.
+
+El trebuie să fie:
+- separat de strategie
+- separat de FSM semantics ca autoritate
+- capabil de execution gating
+- capabil de payload construction
+- capabil de delivery traceability
+- capabil să explice de ce a emis sau nu a emis
+
+Aceasta este specificația canonică activă a signal execution layer-ului.

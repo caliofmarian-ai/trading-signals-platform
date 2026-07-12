@@ -1,0 +1,43 @@
+{
+  "reports": {
+    "enabled": true,
+    "output_dir": "/opt/binarybot/analytics/reports",
+    "cache_dir": "/opt/binarybot/analytics/cache",
+    "write_json": true,
+    "write_markdown": true
+  },
+  "sources": {
+    "engine_events": "/opt/binarybot/observability/engine_events.jsonl",
+    "fsm_events": "/opt/binarybot/observability/fsm_events.jsonl",
+    "distribution_events": "/opt/binarybot/observability/distribution_events.jsonl",
+    "error_events": "/opt/binarybot/observability/error_events.jsonl",
+    "outcomes": "/opt/binarybot/outcomes/outcomes.jsonl"
+  },
+  "heatmap": {
+    "enabled": true,
+    "score_buckets": [
+      [50, 55],
+      [55, 60],
+      [60, 65],
+      [65, 70],
+      [70, 75],
+      [75, 80],
+      [80, 100]
+    ]
+  },
+  "bottleneck_detection": {
+    "enabled": true,
+    "dominant_reject_share_threshold": 0.6
+  },
+  "symbol_health": {
+    "enabled": true,
+    "healthy_pre_rate_min": 0.15,
+    "starved_pre_rate_max": 0.03,
+    "blocked_same_reason_share_min": 0.6
+  },
+  "report_defaults": {
+    "timezone": "UTC",
+    "top_n_rejects": 10,
+    "top_n_symbols": 10
+  }
+}

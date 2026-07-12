@@ -1,0 +1,20 @@
+            "gates": gates,
+            "debug": debug,
+            "candle_ts": candle_ts,
+        }
+
+    return {
+        "kind": kind,
+        "signal_id": sid,
+        "symbol": symbol,
+        "timeframe": tf,
+        "direction": direction,
+        "score_total": score_total,
+        "buffer_mode": bm,
+        "buffer_price": buffer_price,
+        "expiry_minutes": expiry_minutes,
+        "want_open_now": bool(want_open_now),
+        "gates": gates,
+        "debug": debug,
+        "candle_ts": candle_ts,
+    }

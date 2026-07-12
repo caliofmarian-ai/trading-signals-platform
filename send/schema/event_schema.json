@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0.0",
+  "event_types": {
+    "system_boot": {
+      "required": ["event_type", "message"],
+      "optional": ["severity", "module", "ts", "meta"]
+    },
+    "engine_start": {
+      "required": ["event_type", "message"],
+      "optional": ["ts", "meta"]
+    },
+    "tier_reset": {
+      "required": ["event_type", "message"],
+      "optional": ["ts", "meta"]
+    },
+    "error": {
+      "required": ["event_type", "error"],
+      "optional": ["severity", "module", "trace", "message", "ts", "meta"]
+    }
+  },
+  "defaults": {
+    "severity": "INFO"
+  }
+}

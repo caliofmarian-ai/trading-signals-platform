@@ -1,0 +1,120 @@
+        "spike_filter": _make_gate(
+            spike_ok,
+            None if spike_ok else "SPIKE_DETECTED",
+            {
+                "wick_body_ratio": feat["wick_body_ratio"],
+                "range_z": rz,
+                "jump_vs_atr": jva,
+                "reasons": spike_reasons,
+                "limits": {
+                    "wick_body_ratio_max": spike_wick_body_ratio_max,
+                    "range_z_max": spike_range_z_max,
+                    "jump_vs_atr_max": spike_jump_vs_atr_max,
+                }
+            }
+        ),
+        "feasibility": _make_gate(
+            feas_ok,
+            None if feas_ok else "FEASIBILITY_FAIL",
+            {
+                "t_needed_min": t_needed,
+                "t_needed_adj_min": t_needed_adj,
+                "expiry_min": expiry_minutes,
+                "speed_price_per_min": speed,
+            }
+        ),
+    }
+
+    # ----------------------------
+    # Decide kind (ALGO_SPEC thresholds)
+    # - If any critical gate fails => REJECT
+    # - Else: OPEN/CONFIRM/PRE by thresholds
+    # ----------------------------
+    critical_ok = sr_ok and spike_ok and feas_ok
+
+    # Build stable signal_id for this candle idea
+    # NOTE: must be stable across stages (same candle_ts & direction)
+    sid = f"{_symbol_key(symbol)}_{tf}_{candle_ts}_{direction}"
+
+    debug = {
+        "symbol": symbol,
+        "tf": tf,
+        "price": price,
+        "ema_fast": ema_fast,
+        "ema_slow": ema_slow,
+        "ema_gap": ema_gap,
+        "trend_class": trend_class,
+        "rsi": rsi_val,
+        "atr_m5": atr_val,
+        "buffer_mult": buffer_mult,
+        "buffer_price": buffer_price,
+        "required_space": required_space,
+        "scores": {
+            "trend": score_trend,
+            "rsi": score_rsi,
+            "body": score_body,
+            "structure": score_struct,
+            "feasibility": score_feas,
+            "total": score_total,
+        },
+        "thresholds": {"PRE": thr_pre, "CONFIRM": thr_confirm, "OPEN": thr_open},
+        "expiry": {
+            "min": expiry_min,
+            "max": expiry_max,
+            "selected": expiry_minutes,
+            "t_needed_adj": t_needed_adj,
+            "trend_time_adjust": t_adj,
+            "structure_factor": structure_factor,
+        },
+        "sr": {
+            "nearest_support": nearest_sup,
+            "nearest_resistance": nearest_res,
+            "available_space": avail_space,
+        },
+        "spike": {
+            "wick_body_ratio": feat["wick_body_ratio"],
+            "range_z": rz,
+            "jump_vs_atr": jva,
+            "reasons": spike_reasons,
+        },
+    }
+
+    if not critical_ok:
+        return {
+            "kind": "REJECT",
+            "signal_id": sid,  # preferred to keep traceability
+            "symbol": symbol,
+            "timeframe": tf,
+            "direction": direction,
+            "score_total": score_total,
+            "buffer_mode": bm,
+            "buffer_price": buffer_price,
+            "expiry_minutes": expiry_minutes,
+            "want_open_now": bool(want_open_now),
+            "gates": gates,
+            "debug": debug,
+            "candle_ts": candle_ts,
+        }
+
+    # Stage selection
+    if score_total >= thr_open and want_open_now:
+        kind = "OPEN_NOW"
+    elif score_total >= thr_confirm:
+        kind = "CONFIRM"
+    elif score_total >= thr_pre:
+        kind = "PRE"
+    else:
+        kind = "NO_SIGNAL"
+
+    if kind == "NO_SIGNAL":
+        return {
+            "kind": "NO_SIGNAL",
+            "signal_id": None,
+            "symbol": symbol,
+            "timeframe": tf,
+            "direction": None,
+            "score_total": None,
+            "buffer_mode": bm,
+            "buffer_price": None,
+            "expiry_minutes": None,
+            "want_open_now": bool(want_open_now),

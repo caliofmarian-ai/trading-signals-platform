@@ -1,0 +1,120 @@
+===== observability_logger.py =====
+# /opt/binarybot/core/observability_logger.py
+# BinaryBot — Observability Logger (JSONL + Proofs)
+# Implements EVENT_SCHEMA_SPEC.md + OBSERVABILITY_LOGGING_SPEC.md (minimal, strict-enough)
+
+from __future__ import annotations
+
+import json
+import os
+import socket
+import time
+import uuid
+import traceback
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
+
+# Try to use canonical storage layer if present (we'll create it next).
+try:
+    from . import storage  # type: ignore
+except Exception:  # pragma: no cover
+    storage = None  # fallback to local append
+
+# Try to use telegram publisher if present.
+try:
+    from . import telegram_publisher  # type: ignore
+except Exception:  # pragma: no cover
+    telegram_publisher = None
+
+
+SCHEMA_VERSION = os.getenv("EVENT_SCHEMA_VERSION", "1.0.0")
+SERVICE_NAME = os.getenv("SERVICE_NAME", "binarybot")
+ENV_NAME = os.getenv("BOT_ENV", "prod")
+BOT_VERSION = os.getenv("BOT_VERSION", "0.0.0")
+GIT_SHA = os.getenv("GIT_SHA", "")
+
+OBS_DIR = os.getenv("OBS_DIR", "/opt/binarybot/observability")
+ENGINE_LOG = os.getenv("ENGINE_EVENTS_LOG", os.path.join(OBS_DIR, "engine_events.jsonl"))
+FSM_LOG = os.getenv("FSM_EVENTS_LOG", os.path.join(OBS_DIR, "fsm_events.jsonl"))
+DIST_LOG = os.getenv("DIST_EVENTS_LOG", os.path.join(OBS_DIR, "distribution_events.jsonl"))
+ADMIN_PROOFS_LOG = os.getenv("ADMIN_PROOFS_LOG", os.path.join(OBS_DIR, "admin_proofs.jsonl"))
+ERROR_LOG = os.getenv("ERROR_EVENTS_LOG", os.path.join(OBS_DIR, "error_events.jsonl"))
+
+# Telegram admin proof mirror (optional)
+ADMIN_PROOF_CHAT_ID = os.getenv("ADMIN_PROOF_CHAT_ID", "")  # numeric as string
+ADMIN_PROOF_THREAD_ID = os.getenv("ADMIN_PROOF_THREAD_ID", "")  # numeric as string
+
+
+@dataclass
+class RunContext:
+    run_id: str
+    hostname: str
+    pid: int
+
+
+_RUN = RunContext(
+    run_id=os.getenv("RUN_ID", f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"),
+    hostname=socket.gethostname(),
+    pid=os.getpid(),
+)
+
+
+def _iso_utc_now() -> str:
+    # ISO8601 with milliseconds and Z
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _epoch_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _ensure_dir(path: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+
+def _append_jsonl_fallback(path: str, record: Dict[str, Any]) -> None:
+    _ensure_dir(path)
+    line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def _append_jsonl(path: str, record: Dict[str, Any]) -> None:
+    if storage and hasattr(storage, "append_jsonl"):
+        storage.append_jsonl(path, record)  # type: ignore
+    else:
+        _append_jsonl_fallback(path, record)
+
+
+def _host_obj() -> Dict[str, Any]:
+    obj: Dict[str, Any] = {
+        "hostname": _RUN.hostname,
+        "pid": _RUN.pid,
+        "version": BOT_VERSION,
+    }
+    if GIT_SHA:
+        obj["git_sha"] = GIT_SHA
+    return obj
+
+
+def _base_envelope(source: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    env: Dict[str, Any] = {
+        "event_id": str(uuid.uuid4()),
+        "schema_version": SCHEMA_VERSION,
+        "ts_utc": _iso_utc_now(),
+        "ts_epoch_ms": _epoch_ms(),
+        "service": SERVICE_NAME,
+        "env": ENV_NAME,
+        "run_id": _RUN.run_id,
+        "host": _host_obj(),
+    }
+    if source:
+        env["source"] = source
+    return env
+
+
+_ALLOWED_EVENT_TYPES = {
+    "engine_start",
+    "engine_stop",
+    "signal_event",

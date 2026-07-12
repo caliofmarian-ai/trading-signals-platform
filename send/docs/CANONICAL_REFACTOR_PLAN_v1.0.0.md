@@ -1,0 +1,339 @@
+# CANONICAL REFACTOR PLAN
+
+Version: 1.0.0  
+Status: Canonical Refactor Blueprint  
+Scope: Safe Migration from Legacy Strategy Engine to Canonical Architecture  
+Dependencies:
+
+- STRATEGY_ENGINE_ARCHITECTURE_MAP_v1.0.0.md
+- canonical/active/ALGO_SPEC_v2.0.0.md
+- canonical/active/SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md
+- canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md
+- SIGNAL_TIME_MODEL_SPEC_v2.0.0.md
+- canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md
+- canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md
+- CANONICAL_CODE_ALIGNMENT_MATRIX_v1.0.0.md
+
+---
+
+## 1. PURPOSE OF THIS DOCUMENT
+
+Acest document definește **planul oficial de refactorizare al codului BinaryBot** pentru a alinia implementarea reală cu arhitectura canonică.
+
+Scopul acestui plan este:
+
+- să introducă arhitectura modulară definită în documentația canonică
+- să elimine logica monolitică din strategy_v2
+- să introducă DecisionObject ca obiect central de decizie
+- să separe clar modelele matematice
+- să mențină botul operațional pe durata refactorizării
+
+Acest document definește **ordinea exactă a modificărilor de cod**.
+
+---
+
+## 2. REFRACTORING PRINCIPLES
+
+Refactorizarea trebuie să respecte următoarele principii:
+
+## 2.1 ZERO DOWNTIME
+
+Botul trebuie să rămână funcțional pe toată durata refactorului.
+
+Nu se va opri sistemul de generare de semnale.
+
+---
+
+### 2.2 SHADOW IMPLEMENTATION
+
+Noile module vor fi introduse inițial în paralel cu implementarea existentă.
+
+strategy_v2 va continua să ruleze până la finalul migrării.
+
+---
+
+### 2.3 FEATURE FLAG CONTROL
+
+Noile componente vor fi activate progresiv prin flaguri interne:
+
+USE_DECISION_OBJECT USE_NEW_TIME_MODEL USE_NEW_SCORING_MODEL USE_NEW_FSM
+
+---
+
+### 2.4 SAFE CUTOVER
+
+Migrarea finală se va face doar după verificarea completă a:
+
+- outputurilor matematice
+- semnalelor generate
+- performanței runtime
+
+---
+
+## 3. TARGET ARCHITECTURE
+
+Arhitectura finală a strategiei va fi:
+
+MARKET DATA ↓ MARKET MODEL ↓ SR CORRIDOR ENGINE ↓ TIME MODEL ↓ SCORING MODEL ↓ DECISION OBJECT ↓ DECISION FSM ↓ EXECUTION MODEL ↓ SIGNAL ENGINE ↓ TELEGRAM / DISTRIBUTION
+
+---
+
+## 4. CURRENT CODE PROBLEM
+
+Auditul codului a identificat următoarea problemă majoră:
+
+strategy_v2.py conține simultan:
+
+- market model
+- corridor detection
+- time model
+- scoring logic
+- signal decision
+
+Această structură este:
+
+MONOLITICĂ
+
+și contravine arhitecturii canonice.
+
+---
+
+## 5. REFACTOR PHASES
+
+Refactorizarea se va face în 6 faze principale.
+
+---
+
+### PHASE 1 — DECISION OBJECT INTRODUCTION
+
+Scop:
+
+Introducerea structurii canonice:
+
+DecisionObject
+
+Acest obiect va conține toate variabilele matematice ale strategiei.
+
+Structură:
+
+DecisionObject symbol direction price_speed buffer_distance corridor_width model_expiry model_time_reach_ratio corridor_time_pressure score_total
+
+Acțiuni:
+
+- creare modul `decision_object.py`
+- definire structură dataclass
+- integrare logging observability
+
+strategy_v2 nu va fi modificat încă.
+
+---
+
+### PHASE 2 — MARKET MODEL EXTRACTION
+
+Scop:
+
+Separarea logicii de analiză a pieței din strategy_v2.
+
+Creare modul:
+
+market_model.py
+
+Responsabilități:
+
+- calcul price_speed
+- determinare buffer_distance
+- evaluare trend_context
+- evaluare volatility_state
+
+Output:
+
+MarketContext
+
+---
+
+### PHASE 3 — SR CORRIDOR ENGINE EXTRACTION
+
+Scop:
+
+Separarea logicii corridor detection.
+
+Creare modul:
+
+sr_corridor_engine.py
+
+Responsabilități:
+
+- detectare support/resistance
+- calcul corridor_width
+- determinare corridor_direction
+
+Output:
+
+CorridorContext
+
+---
+
+### PHASE 4 — TIME MODEL EXTRACTION
+
+Scop:
+
+Separarea modelului temporal.
+
+Creare modul:
+
+time_model.py
+
+Formula principală:
+
+t_needed = buffer_distance / price_speed
+
+Apoi:
+
+model_expiry = t_needed × expiry_tolerance
+
+și:
+
+model_time_reach_ratio = (price_speed × model_expiry) / buffer_distance
+
+Output:
+
+TimeContext
+
+---
+
+### PHASE 5 — SCORING MODEL EXTRACTION
+
+Creare modul:
+
+scoring_model.py
+
+Responsabilități:
+
+calculul scorului strategic.
+
+Output:
+
+score_total score_components normalized_score
+
+---
+
+### PHASE 6 — DECISION OBJECT ASSEMBLY
+
+Strategy engine va construi:
+
+DecisionObject
+
+prin combinarea:
+
+MarketContext CorridorContext TimeContext ScoreContext
+
+---
+
+### PHASE 7 — FSM INTEGRATION
+
+FSM va primi direct:
+
+DecisionObject
+
+și va produce:
+
+NO_SIGNAL REJECT PRE CONFIRM OPEN_NOW
+
+Aceasta va elimina dependențele directe dintre FSM și strategy_v2.
+
+---
+
+### PHASE 8 — EXECUTION MODEL SEPARATION
+
+Creare modul:
+
+execution_model.py
+
+Responsabilități:
+
+calcul expiry final.
+
+confirm_expiry open_now_expiry
+
+Acest modul va fi apelat după FSM.
+
+---
+
+### PHASE 9 — SIGNAL ENGINE CLEANUP
+
+signal_engine.py va deveni responsabil doar pentru:
+
+- construirea semnalului
+- publicarea semnalului
+- routing
+
+Logica matematică va fi eliminată.
+
+---
+
+## 6. MIGRATION SAFETY
+
+Pentru fiecare fază se vor efectua:
+
+1️⃣ CODE AUDIT
+
+scanarea modificărilor.
+
+2️⃣ SHADOW EXECUTION
+
+noua logică rulează în paralel.
+
+3️⃣ OUTPUT COMPARISON
+
+compararea rezultatelor.
+
+4️⃣ SAFE ACTIVATION
+
+activare prin flag.
+
+---
+
+## 7. OBSERVABILITY REQUIREMENTS
+
+Refactorizarea trebuie să păstreze următoarele sisteme:
+
+- trade_temporal_telemetry
+- strategy diagnostics
+- signal journal
+- metrics collector
+
+Niciun modul de observability nu va fi eliminat.
+
+---
+
+## 8. EXPECTED RESULT
+
+După finalizarea refactorului, arhitectura codului va deveni:
+
+strategy_engine/ market_model.py sr_corridor_engine.py time_model.py scoring_model.py decision_object.py decision_fsm.py execution_model.py
+
+signal_engine/ signal_builder.py signal_router.py
+
+---
+
+## 9. FINAL OBJECTIVE
+
+Obiectivul final este:
+
+separarea completă între:
+
+MATHEMATICAL MODEL
+
+și
+
+SIGNAL DELIVERY ENGINE
+
+Această separare permite:
+
+- audit matematic clar
+- refactorizare sigură
+- evoluție a strategiei fără risc operațional
+
+---
+
+END OF DOCUMENT

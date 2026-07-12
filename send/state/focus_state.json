@@ -1,0 +1,253 @@
+{
+  "version": "1.0",
+  "mode": "FOCUS_MODE",
+  "watchlist": [
+    "EUR/AUD"
+  ],
+  "per_symbol": {
+    "EUR/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "GBP/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "USD/JPY": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "USD/CHF": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "USD/CAD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "AUD/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "NZD/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "EUR/JPY": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "GBP/JPY": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "AUD/JPY": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "NZD/JPY": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "EUR/GBP": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "EUR/AUD": {
+      "state": "WATCHLIST",
+      "current_signal_id": "EURAUD_M15_1772829960_SELL",
+      "last_pre_candle_ts": 1772829960,
+      "last_confirm_candle_ts": 1772850120,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": 1772793379
+    },
+    "EUR/CAD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "GBP/AUD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "GBP/CAD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "AUD/NZD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "BTC/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "ETH/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "SOL/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "BNB/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "XRP/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "ADA/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "DOGE/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "LTC/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "DOT/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    },
+    "AVAX/USD": {
+      "state": "IDLE",
+      "current_signal_id": null,
+      "last_pre_candle_ts": null,
+      "last_confirm_candle_ts": null,
+      "last_open_candle_ts": null,
+      "cooldown_until_ts": null,
+      "focus_enter_ts": null
+    }
+  },
+  "last_updated_ts": 1772919132
+}

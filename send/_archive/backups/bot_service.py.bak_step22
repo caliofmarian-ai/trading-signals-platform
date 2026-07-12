@@ -1,0 +1,350 @@
+# /opt/binarybot/core/bot_service.py
+# BinaryBot - bot_service (Commands + Admin Panel + Docs Viewer)
+from __future__ import annotations
+
+import os
+import time
+from dataclasses import dataclass
+from typing import Optional, Dict, Any, List
+
+from core import storage
+from core import telegram_publisher
+from core.admin_commands import handle_admin_command as handle_admin_command_v2
+from core.callback_router import route_callback
+from core import observability_logger
+
+# ---- Paths (canonical) ----
+BASE_DIR = "/opt/binarybot"
+DOCS_DIR = os.path.join(BASE_DIR, "docs")
+CONFIG_DIR = os.path.join(BASE_DIR, "config")
+STATE_DIR = os.path.join(BASE_DIR, "state")
+
+SETTINGS_PATH = os.path.join(BASE_DIR, "settings.json")              # existing in root
+ACTIVE_SYMBOLS_PATH = os.path.join(BASE_DIR, "symbols.json")         # existing in root (your current)
+FOCUS_STATE_PATH = os.path.join(BASE_DIR, "focus_state.json")        # existing in root
+DIST_STATE_PATH = os.path.join(STATE_DIR, "dist_state.json")         # new state location
+OUTCOMES_PATH = os.path.join(STATE_DIR, "outcomes.json")         # admin outcomes store
+
+CHANNEL_CONFIG_PATH = os.path.join(CONFIG_DIR, "channel_config.json") # if exists
+RBAC_PATH = os.path.join(CONFIG_DIR, "rbac.json")                    # optional
+
+# ---- Env ----
+ADMIN_CONTROL_CHAT_ID = int(os.getenv("ADMIN_CONTROL_CHAT_ID", "0"))  # admin supergroup id
+ADMIN_PROOFS_CHAT_ID = int(os.getenv("ADMIN_PROOFS_CHAT_ID", "0"))    # proofs topic/group id
+ADMIN_CONTROL_THREAD_ID = int(os.getenv("ADMIN_CONTROL_THREAD_ID", "0") or "0")  # topic id (0 = none)
+ADMIN_PROOFS_THREAD_ID = int(os.getenv("ADMIN_PROOFS_THREAD_ID", "0") or "0")
+
+# Backward compatibility: single admin user id
+ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "0") or "0")
+
+ENV = os.getenv("ENV", "prod")
+
+ROLE_OWNER = "OWNER"
+ROLE_ADMIN = "ADMIN"
+ROLE_ANALYST = "ANALYST"
+ROLE_MODERATOR = "MODERATOR"
+
+ALLOWED_BUFFER_MODES = {"SMALL", "MEDIUM", "LARGE"}
+
+
+# ---------------- RBAC ----------------
+def _load_rbac() -> Dict[str, Any]:
+    """
+    Optional RBAC file:
+    config/rbac.json
+    {
+      "users": {"12345":"OWNER", "67890":"ADMIN"},
+      "admins_chat_id": -100....
+    }
+    """
+    return storage.load_json(RBAC_PATH, default={"users": {}})  # safe default
+
+
+def get_role(user_id: int) -> str:
+    rbac = _load_rbac()
+    role = (rbac.get("users", {}) or {}).get(str(user_id))
+    if role:
+        return role
+    # fallback: ADMIN_USER_ID treated as OWNER if set
+    if ADMIN_USER_ID and user_id == ADMIN_USER_ID:
+        return ROLE_OWNER
+    return ""
+
+
+def require_role(user_id: int, allowed: List[str]) -> bool:
+    role = get_role(user_id)
+    return role in allowed
+
+
+def in_admin_context(chat_id: int) -> bool:
+    # If ADMIN_CONTROL_CHAT_ID not set, we allow (dev mode), but still log warning.
+    if ADMIN_CONTROL_CHAT_ID == 0:
+        return True
+    return chat_id == ADMIN_CONTROL_CHAT_ID
+
+
+# ---------------- Telegram keyboard helpers ----------------
+def kb(button_rows: List[List[Dict[str, str]]]) -> Dict[str, Any]:
+    return {"inline_keyboard": button_rows}
+
+
+def btn(text: str, data: str) -> Dict[str, str]:
+    return {"text": text, "callback_data": data}
+
+
+# ---------------- Settings / state ----------------
+def _load_settings() -> Dict[str, Any]:
+    # settings.json exists in /opt/binarybot (your current)
+    return storage.load_json(SETTINGS_PATH, default={"buffer_mode": "MEDIUM"})
+
+
+def _save_settings(settings_obj: Dict[str, Any]) -> None:
+    storage.save_json_atomic(SETTINGS_PATH, settings_obj)
+
+
+def _load_active_symbols() -> List[str]:
+    # your current file name is symbols.json; keep it
+    data = storage.load_json(ACTIVE_SYMBOLS_PATH, default=[])
+    if isinstance(data, dict) and "symbols" in data:
+        # allow both formats
+        return list(data.get("symbols") or [])
+    if isinstance(data, list):
+        return list(data)
+    return []
+
+
+def _save_active_symbols(symbols: List[str]) -> None:
+    # preserve your current format if it's list
+    current = storage.load_json(ACTIVE_SYMBOLS_PATH, default=[])
+    if isinstance(current, dict) and "symbols" in current:
+        current["symbols"] = symbols
+        storage.save_json_atomic(ACTIVE_SYMBOLS_PATH, current)
+    else:
+        storage.save_json_atomic(ACTIVE_SYMBOLS_PATH, symbols)
+
+
+def _load_focus_state() -> Dict[str, Any]:
+    return storage.load_json(FOCUS_STATE_PATH, default={})
+
+
+def _load_dist_state() -> Dict[str, Any]:
+    return storage.load_json(DIST_STATE_PATH, default={})
+
+
+def _load_outcomes_store() -> Dict[str, Any]:
+    return storage.load_json(
+        OUTCOMES_PATH,
+        default={
+            "meta": {"version": "1.0.0"},
+            "items": {}
+        }
+    )
+
+
+def _save_outcomes_store(obj: Dict[str, Any]) -> None:
+    storage.save_json_atomic(OUTCOMES_PATH, obj)
+
+
+def _record_outcome(
+    *,
+    signal_id: str,
+    outcome: str,
+    user_id: int,
+    admin_chat_id: int,
+    admin_message_id: Optional[int] = None,
+    symbol: Optional[str] = None,
+    side: Optional[str] = None,
+    expiry_seconds: Optional[int] = None,
+    buffer_mode: Optional[str] = None,
+    created_at_utc: Optional[str] = None,
+) -> Dict[str, Any]:
+    outcome = (outcome or "").strip().upper()
+    if outcome not in {"WIN", "LOSE", "MISSED"}:
+        return {"ok": False, "error": "invalid_outcome"}
+
+    signal_id = (signal_id or "").strip()
+    if not signal_id:
+        return {"ok": False, "error": "missing_signal_id"}
+
+    now_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    with storage.with_lock("outcomes_store"):
+        store = _load_outcomes_store()
+        items = store.setdefault("items", {})
+        previous = items.get(signal_id)
+
+        previous_outcome = previous.get("outcome") if isinstance(previous, dict) else None
+        if previous_outcome == outcome:
+            return {"ok": True, "already_set": True, "previous_outcome": previous_outcome, "item": previous}
+
+        item = dict(previous or {})
+        item["signal_id"] = signal_id
+        item["outcome"] = outcome
+        item["outcome_set_at_utc"] = now_utc
+        item["set_by_user_id"] = user_id
+        item["admin_chat_id"] = admin_chat_id
+
+        if admin_message_id is not None:
+            item["admin_message_id"] = admin_message_id
+        if symbol is not None:
+            item["symbol"] = symbol
+        if side is not None:
+            item["side"] = side
+        if expiry_seconds is not None:
+            item["expiry_seconds"] = expiry_seconds
+        if buffer_mode is not None:
+            item["buffer_mode"] = buffer_mode
+        if created_at_utc is not None:
+            item["created_at_utc"] = created_at_utc
+
+        items[signal_id] = item
+        _save_outcomes_store(store)
+
+    observability_logger.log_event({
+        "event_type": "OUTCOME_SET",
+        "data": {
+            "signal_id": signal_id,
+            "outcome": outcome,
+            "previous_outcome": previous_outcome,
+            "user_id": user_id,
+            "symbol": symbol,
+            "tier": "admin"
+        }
+    })
+
+    return {
+        "ok": True,
+        "already_set": False,
+        "previous_outcome": previous_outcome,
+        "item": item
+    }
+
+
+# ---------------- Proof helpers ----------------
+def _proof(user_id: int, action: str, before: Dict[str, Any], after: Dict[str, Any], scope: str) -> None:
+    now_ts = int(time.time())
+    observability_logger.proof(
+        kind="ADMIN_CHANGE",
+        payload={
+            "user_id": user_id,
+            "action": action,
+            "before": before,
+            "after": after,
+            "scope": scope,
+            "env": ENV,
+        },
+        now_ts=now_ts,
+    )
+
+
+# ---------------- Admin Panel UI ----------------
+def render_admin_panel(user_id: int) -> Dict[str, Any]:
+    role = get_role(user_id) or "UNKNOWN"
+    # Role-filtered buttons (per ADMIN_OPERATIONS_SPEC)
+    rows: List[List[Dict[str, str]]] = []
+
+    if role in (ROLE_OWNER, ROLE_ADMIN):
+        rows.append([btn("🧱 Set Buffer", "ADMIN_SET_BUFFER")])
+        rows.append([btn("🧩 Set Symbols", "ADMIN_SET_SYMBOLS")])
+
+    if role in (ROLE_OWNER, ROLE_ADMIN, ROLE_ANALYST, ROLE_MODERATOR):
+        rows.append([btn("📡 Status", "ADMIN_STATUS")])
+
+    if role in (ROLE_OWNER, ROLE_ADMIN, ROLE_ANALYST):
+        rows.append([btn("📊 Research", "ADMIN_RESEARCH")])
+
+    # Docs viewer: show to everyone with access to /admin
+    if role in (ROLE_OWNER, ROLE_ADMIN, ROLE_ANALYST, ROLE_MODERATOR):
+        rows.append([btn("📚 View Docs", "ADMIN_DOCS")])
+
+    return kb(rows)
+
+
+def handle_admin_command(chat_id: int, user_id: int) -> Dict[str, Any]:
+    if not in_admin_context(chat_id):
+        return {"text": "Access denied (wrong chat).", "reply_markup": None}
+
+    role = get_role(user_id)
+    if not role:
+        return {"text": "Access denied.", "reply_markup": None}
+
+    text = f"🔐 Admin Panel\nRole: {role}"
+    return {"text": text, "reply_markup": render_admin_panel(user_id)}
+
+
+# ---------------- Callback handlers ----------------
+def handle_callback(chat_id: int, user_id: int, data: str) -> Dict[str, Any]:
+    # Delegate UI callbacks to callback_router
+    if data.startswith("BUFFER_") or data.startswith("SYM_TOGGLE:") or data.startswith("DOC:"):
+        return route_callback(chat_id, user_id, data)
+
+    if not in_admin_context(chat_id):
+        return {"text": "Access denied (wrong chat).", "reply_markup": None}
+
+    role = get_role(user_id)
+    if not role:
+        return {"text": "Access denied.", "reply_markup": None}
+
+    if data.startswith("VOTE_|"):
+        parts = data.split("|")
+        if len(parts) != 3:
+            return {"text": "Invalid vote payload.", "reply_markup": None}
+
+        signal_id = (parts[1] or "").strip()
+        outcome = (parts[2] or "").strip().upper()
+
+        res = _record_outcome(
+            signal_id=signal_id,
+            outcome=outcome,
+            user_id=user_id,
+            admin_chat_id=chat_id,
+        )
+
+        if not res.get("ok"):
+            return {"text": f"Outcome error: {res.get('error')}", "reply_markup": None}
+
+        if res.get("already_set"):
+            return {"text": f"Already set: {outcome}", "reply_markup": None}
+
+        return {"text": f"OUTCOME: {outcome}", "reply_markup": None}
+
+    if data.startswith("OUTCOME:"):
+        parts = data.split(":", 2)
+        if len(parts) != 3:
+            return {"text": "Invalid outcome payload.", "reply_markup": None}
+
+        outcome = (parts[1] or "").strip().upper()
+        signal_id = (parts[2] or "").strip()
+
+        msg_obj = {}  # callback message context is handled in process_update; here we only persist
+        res = _record_outcome(
+            signal_id=signal_id,
+            outcome=outcome,
+            user_id=user_id,
+            admin_chat_id=chat_id,
+        )
+
+        if not res.get("ok"):
+            return {"text": f"Outcome error: {res.get('error')}", "reply_markup": None}
+
+        if res.get("already_set"):
+            return {"text": f"Already set: {outcome}", "reply_markup": None}
+
+        return {"text": f"OUTCOME: {outcome}", "reply_markup": None}
+
+    
+    # ---- Outcome voting (public buttons) ----
+    if data.startswith("VOTE_"):
+        from core import outcome_tracker
+        signal_id, outcome = data.split("|")[1:]
+        result = outcome_tracker.register_vote(signal_id, outcome, user_id, chat_id)
+        return {"text": result, "reply_markup": None}
+
+    if data == "ADMIN_STATUS":
+        return _ui_status()
+
+    if data == "ADMIN_SET_BUFFER":
+        if role not in (ROLE_OWNER, ROLE_ADMIN):
+            return {"text": "Access denied.", "reply_markup": None}
+        return _ui_set_buffer()
+

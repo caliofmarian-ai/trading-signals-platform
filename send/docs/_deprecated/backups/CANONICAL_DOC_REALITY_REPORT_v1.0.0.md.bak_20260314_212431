@@ -1,0 +1,292 @@
+# CANONICAL_DOC_REALITY_REPORT_v1.0.0
+
+Version: 1.0.0  
+Status: Canonical Active Inventory and Migration Audit  
+Owner: BinaryBot / DROPi Signals  
+Scope: Canonical inventory of active/supporting/transitional/deprecated document reality, target classification, and migration readiness before controlled path normalization and code alignment  
+
+Depends on:
+- CANONICAL_STRATEGY_STACK_v1.0.0.md
+- DOCUMENT_NORMALIZATION_AND_DEPRECATION_PLAN_v1.0.0.md
+- ALGO_SPEC_v2.0.0.md
+- canonical/active/TIME_MODEL_UNIFIED_CANON_v2.0.0.md
+- SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md
+- DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md
+- FSM_DECISION_ENGINE_SPEC_v1.0.0.md
+- SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md
+- OBSERVABILITY_SPEC_v2.0.0.md
+- CANONICAL_CODE_ALIGNMENT_MATRIX_v1.0.0.md
+- CANONICAL_CODE_ALIGNMENT_AUDIT_v1.0.0.md
+- CANONICAL_REFACTOR_PLAN_v1.0.0.md
+- IMPLEMENTATION_STEP_PLAN_v1.0.0.md
+
+---
+
+## 1. PURPOSE
+
+Acest document definește auditul de realitate canonică pentru documentația BinaryBot înainte de faza de mutare controlată a path-urilor și înainte de alinierea finală a codului.
+
+Scopul lui este:
+- să inventarieze realitatea documentară relevantă
+- să clasifice documentele în clase canonice clare
+- să definească setul activ minim oficial
+- să definească setul supporting activ
+- să marcheze explicit documentele transitional
+- să pregătească deprecarea pentru duplicate, mixed și historical docs
+- să ofere baza formală pentru migrarea controlată a path-urilor
+
+Acest document nu mută el însuși fișierele.
+El stabilește **ce trebuie considerat activ**, **ce trebuie păstrat ca suport**, și **ce trebuie scos din lanțul activ**.
+
+---
+
+## 2. CORE PRINCIPLE
+
+Înainte de orice mutare sau patch de cod,
+trebuie să fie clară **realitatea documentară oficială**.
+
+Nu lucrăm pe presupuneri.
+Nu lucrăm pe fișiere care "par" canonice.
+Nu lucrăm pe memorii parțiale despre ce document era bun și care era vechi.
+
+Lucrăm pe un inventar explicit și auditat.
+
+---
+
+## 3. OFFICIAL ACTIVE ROOT CANONICAL SET
+
+La momentul acestui audit,
+setul root canonic activ minim este:
+
+- `CANONICAL_STRATEGY_STACK_v1.0.0.md`
+- `ALGO_SPEC_v2.0.0.md`
+- `canonical/active/TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
+- `SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`
+- `DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
+- `FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
+- `SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`
+- `OBSERVABILITY_SPEC_v2.0.0.md`
+
+Aceste documente sunt lanțul strategic canonic minim și autoritar.
+
+---
+
+## 4. OFFICIAL ACTIVE SUPPORTING SET
+
+La momentul acestui audit,
+următoarele documente rămân active ca supporting docs:
+
+- `DOCUMENT_NORMALIZATION_AND_DEPRECATION_PLAN_v1.0.0.md`
+- `CANONICAL_CODE_ALIGNMENT_MATRIX_v1.0.0.md`
+- `CANONICAL_CODE_ALIGNMENT_AUDIT_v1.0.0.md`
+- `CANONICAL_REFACTOR_PLAN_v1.0.0.md`
+- `IMPLEMENTATION_STEP_PLAN_v1.0.0.md`
+
+Aceste documente nu trebuie să concureze cu specificațiile root,
+ci să derive din ele și să le operationalizeze.
+
+---
+
+## 5. TARGET DOCUMENT CLASSIFICATION MODEL
+
+Clasificarea țintă folosită în acest audit este:
+
+- Canonical Active Root
+- Canonical Active Supporting
+- Transitional Migration
+- Deprecated Historical
+- Deprecated Duplicate
+- Deprecated Mixed / Superseded
+
+Orice document relevant trebuie să intre într-una dintre aceste clase.
+
+---
+
+## 6. OFFICIAL STATUS TABLE
+
+### 6.1 Canonical Active Root
+
+| Document | Status | Class | Current Role | Target Role |
+|---|---|---|---|---|
+| CANONICAL_STRATEGY_STACK_v1.0.0.md | active | Canonical Active Root | root manifest | remain root canonical |
+| ALGO_SPEC_v2.0.0.md | active | Canonical Active Root | main strategy spec | remain root canonical |
+| canonical/active/TIME_MODEL_UNIFIED_CANON_v2.0.0.md | active | Canonical Active Root | time canonical authority | remain root canonical |
+| SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md | active | Canonical Active Root | structural truth spec | remain root canonical |
+| DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md | active | Canonical Active Root | strategy output contract | remain root canonical |
+| FSM_DECISION_ENGINE_SPEC_v1.0.0.md | active | Canonical Active Root | operational decision layer | remain root canonical |
+| SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md | active | Canonical Active Root | execution layer spec | remain root canonical |
+| OBSERVABILITY_SPEC_v2.0.0.md | active | Canonical Active Root | observability and rejection analytics | remain root canonical |
+
+### 6.2 Canonical Active Supporting
+
+| Document | Status | Class | Current Role | Target Role |
+|---|---|---|---|---|
+| DOCUMENT_NORMALIZATION_AND_DEPRECATION_PLAN_v1.0.0.md | active | Canonical Active Supporting | governance / migration plan | remain supporting active |
+| CANONICAL_CODE_ALIGNMENT_MATRIX_v1.0.0.md | active candidate | Canonical Active Supporting | mapping canon ↔ code | validate and retain as supporting |
+| CANONICAL_CODE_ALIGNMENT_AUDIT_v1.0.0.md | active candidate | Canonical Active Supporting | code reality audit | validate and retain as supporting |
+| CANONICAL_REFACTOR_PLAN_v1.0.0.md | active candidate | Canonical Active Supporting | refactor sequencing | validate and retain as supporting |
+| IMPLEMENTATION_STEP_PLAN_v1.0.0.md | active candidate | Canonical Active Supporting | step execution sequencing | validate and retain as supporting |
+
+### 6.3 Transitional Migration
+
+| Document Pattern / Family | Status | Class | Current Role | Target Role |
+|---|---|---|---|---|
+| migration helper docs | transitional | Transitional Migration | move / rename / bridge support | keep only until normalization finishes |
+| temporary repair drafts | transitional | Transitional Migration | formatting / rescue intermediates | remove from active chain after use |
+| one-off unification bridge docs | transitional | Transitional Migration | temporary bridge artifacts | deprecate after target docs stabilize |
+
+### 6.4 Deprecated Historical / Duplicate / Mixed
+
+| Document Pattern / Family | Status | Class | Current Role | Target Role |
+|---|---|---|---|---|
+| `_deprecated_*` files | deprecated | Deprecated Historical | historical traceability | remain excluded from active chain |
+| older overlapping strategy specs | pending deprecation | Deprecated Duplicate | partial legacy truth | supersede and deprecate |
+| mixed docs crossing strategy/FSM/execution/admin | pending cleanup | Deprecated Mixed / Superseded | ambiguous authority | remove from active chain after inventory confirmation |
+| obsolete drafts / pre-activation versions | deprecated | Deprecated Historical | transitional history | remain non-authoritative |
+
+---
+
+## 7. REQUIRED INVENTORY LOGIC
+
+Inventarul canonic trebuie să urmărească minimum:
+
+- numele documentului
+- clasa documentului
+- statutul actual
+- rolul curent
+- rolul țintă
+- dacă rămâne activ
+- dacă trebuie mutat
+- dacă trebuie depreciat
+- dacă necesită actualizare de referințe
+
+Fără această logică,
+migrarea ulterioară devine nesigură.
+
+---
+
+## 8. WHAT IS OFFICIALLY EXCLUDED FROM ACTIVE TRUTH
+
+Sunt excluse din adevărul activ primar:
+
+- orice fișier prefixat `_deprecated_`
+- orice backup `.bak_*`
+- orice draft `.new`, `.repair` sau intermediar tehnic
+- orice document mixed care contrazice separarea pe layere
+- orice document vechi suprapus peste root set-ul canonic actual
+
+Aceste fișiere pot exista pentru trasabilitate,
+dar nu au autoritate canonică activă.
+
+---
+
+## 9. REFERENCE UPDATE REQUIREMENT
+
+Înainte sau în timpul normalizării finale de path-uri,
+trebuie verificat pentru fiecare document activ:
+
+- dacă referințele `Depends on` sunt corecte
+- dacă path-urile către documente mutate rămân valide
+- dacă nu există trimiteri primare către documente deprecated
+- dacă supporting docs pointează doar către setul activ relevant
+
+Această verificare este obligatorie înainte de auditul final pre-cod.
+
+---
+
+## 10. MIGRATION READINESS CRITERIA
+
+Un document este gata de migrare controlată când:
+- are structură markdown stabilă
+- are statut clar
+- are clasă clară
+- are rol clar
+- nu este draft temporar
+- nu concurează cu alt document activ pentru același adevăr
+- are referințe suficient de clare pentru a fi mutat fără ambiguitate
+
+---
+
+## 11. REQUIRED NEXT AUDIT AFTER THIS REPORT
+
+După acest reality report,
+următorul audit obligatoriu este:
+
+**path normalization + controlled move audit**
+
+Acest audit trebuie să decidă explicit:
+- ce fișiere rămân pe loc
+- ce fișiere se mută
+- în ce ordine se mută
+- ce referințe se repară
+- ce fișiere devin deprecated imediat după mutare
+
+---
+
+## 12. RELATION TO CODE ALIGNMENT
+
+Codul nu trebuie aliniat la:
+- fișiere deprecated
+- fișiere mixte
+- bridge docs temporare
+- drafturi sau repair files
+
+Codul trebuie aliniat la:
+- root canonical active docs
+- supporting active docs validate ca atare
+- setul final normalizat după migrarea controlată
+
+---
+
+## 13. RELATION TO ADMIN / CONTROL / TELEGRAM DOCS
+
+Acest reality report pornește de la stack-ul strategic și supporting docs majore.
+
+Totuși, aceeași logică de inventariere și clasificare trebuie extinsă ulterior și asupra:
+- admin panel docs
+- observability tooling docs
+- Telegram distribution docs
+- other control plane docs
+
+Nu este permis ca zonele non-strategice să rămână într-un haos documentar separat.
+
+---
+
+## 14. FORBIDDEN ASSUMPTIONS
+
+Sunt interzise următoarele presupuneri:
+
+- "dacă este în docs, sigur este activ"
+- "dacă este vechi dar util, îl ținem fără statut"
+- "dacă există două variante apropiate, le folosim pe ambele"
+- "backupurile și drafturile pot fi consultate ca pseudo-canon"
+- "migrarea path-urilor se poate face fără inventar"
+- "putem trece la cod înainte de închiderea realității documentare"
+
+---
+
+## 15. CANONICAL END STATE EXPECTATION
+
+Starea țintă derivată din acest reality report este:
+
+- root set canonic mic și stabil
+- supporting docs clar separate
+- transitional docs temporare și controlate
+- deprecated docs excluse din lanțul activ
+- path-uri oficiale gata de normalizare
+- fundament suficient pentru audit final pre-cod
+
+---
+
+## 16. FINAL PRINCIPLE
+
+Acest document stabilește realitatea documentară oficială folosită pentru următoarea fază de migrare controlată.
+
+Nu mai lucrăm pe presupuneri despre ce este canonic.
+Lucrăm pe un inventar explicit, clasificat și auditat.
+
+Aceasta este baza formală pentru:
+- normalizarea finală de path-uri
+- deprecarea controlată
+- auditul final de consistență
+- și abia după aceea, alinierea codului Python.

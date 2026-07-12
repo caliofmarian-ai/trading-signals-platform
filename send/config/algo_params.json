@@ -1,0 +1,39 @@
+{
+  "algo_version": "1.0.0",
+
+  "thresholds": {
+    "pre": 40,
+    "confirm": 60,
+    "open": 80
+  },
+
+  "weights": {
+    "trend": 1.0,
+    "momentum": 1.0
+  },
+
+  "expiry": {
+    "min_minutes": 2,
+    "max_minutes": 10
+  },
+
+  "buffer": {
+    "modes": {
+      "SMALL": {
+        "atr_mult": 0.3
+      },
+      "MEDIUM": {
+        "atr_mult": 0.6
+      },
+      "LARGE": {
+        "atr_mult": 1.0
+      }
+    }
+  },
+
+  "gates": {
+    "spike_filter": true,
+    "sr_gate": true,
+    "feasibility": true
+  }
+}

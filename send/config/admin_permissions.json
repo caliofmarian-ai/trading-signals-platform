@@ -1,0 +1,90 @@
+{
+  "permissions": {
+
+    "admin.view": [
+      "owner",
+      "primary_admin",
+      "strategy_admin",
+      "research_admin",
+      "analyst",
+      "moderator",
+      "affiliate_admin"
+    ],
+
+    "strategy.view": [
+      "owner",
+      "primary_admin",
+      "strategy_admin",
+      "research_admin",
+      "analyst"
+    ],
+
+    "strategy.thresholds.write": [
+      "owner",
+      "primary_admin",
+      "strategy_admin"
+    ],
+
+    "strategy.sr.write": [
+      "owner",
+      "primary_admin",
+      "strategy_admin"
+    ],
+
+    "strategy.spike.write": [
+      "owner",
+      "primary_admin",
+      "strategy_admin"
+    ],
+
+    "strategy.symbols.write": [
+      "owner",
+      "primary_admin",
+      "strategy_admin"
+    ],
+
+    "engine.view": [
+      "owner",
+      "primary_admin",
+      "strategy_admin",
+      "research_admin",
+      "analyst"
+    ],
+
+    "debug.view": [
+      "owner",
+      "primary_admin",
+      "strategy_admin",
+      "research_admin",
+      "analyst"
+    ],
+
+    "reports.view": [
+      "owner",
+      "primary_admin",
+      "strategy_admin",
+      "research_admin",
+      "analyst"
+    ],
+
+    "roles.view": [
+      "owner",
+      "primary_admin"
+    ],
+
+    "roles.write": [
+      "owner"
+    ],
+
+    "affiliate.view": [
+      "owner",
+      "primary_admin",
+      "affiliate_admin"
+    ],
+
+    "affiliate.view.any": [
+      "owner",
+      "primary_admin"
+    ]
+  }
+}

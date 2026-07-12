@@ -1,0 +1,14 @@
+# BinaryBot — Admin Router
+# Extracted from bot_service.py
+
+from typing import Dict, Any
+from core import bot_service
+
+
+def render_admin_panel(user_id: int) -> Dict[str, Any]:
+    return bot_service.render_admin_panel(user_id)
+
+
+def handle_admin_command(chat_id: int, user_id: int) -> Dict[str, Any]:
+    return bot_service.handle_admin_command(chat_id, user_id)
+

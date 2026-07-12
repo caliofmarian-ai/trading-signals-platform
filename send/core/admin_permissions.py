@@ -1,0 +1,326 @@
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from functools import lru_cache
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+
+ROLES_CONFIG_PATH = os.getenv("ADMIN_ROLES_CONFIG", "/opt/binarybot/config/admin_roles.json")
+
+ROLE_OWNER = "OWNER"
+ROLE_PRIMARY_ADMIN = "PRIMARY_ADMIN"
+ROLE_STRATEGY_ADMIN = "STRATEGY_ADMIN"
+ROLE_RESEARCH_ADMIN = "RESEARCH_ADMIN"
+ROLE_AFFILIATE_ADMIN = "AFFILIATE_ADMIN"
+ROLE_MODERATOR = "MODERATOR"
+ROLE_ANALYST = "ANALYST"
+ROLE_USER = "USER"
+
+ALL_ROLES = {
+    ROLE_OWNER,
+    ROLE_PRIMARY_ADMIN,
+    ROLE_STRATEGY_ADMIN,
+    ROLE_RESEARCH_ADMIN,
+    ROLE_AFFILIATE_ADMIN,
+    ROLE_MODERATOR,
+    ROLE_ANALYST,
+    ROLE_USER,
+}
+
+# Higher index = lower authority
+ROLE_PRIORITY = {
+    ROLE_OWNER: 0,
+    ROLE_PRIMARY_ADMIN: 1,
+    ROLE_STRATEGY_ADMIN: 2,
+    ROLE_RESEARCH_ADMIN: 2,
+    ROLE_ANALYST: 3,
+    ROLE_MODERATOR: 4,
+    ROLE_AFFILIATE_ADMIN: 4,
+    ROLE_USER: 99,
+}
+
+# Canonical permission surface for admin tier.
+PERMISSION_MATRIX: Dict[str, Set[str]] = {
+    ROLE_OWNER: {
+        "admin.view",
+        "engine.view",
+        "engine.restart",
+        "strategy.view",
+        "strategy.thresholds.write",
+        "strategy.sr.write",
+        "strategy.spike.write",
+        "strategy.symbols.write",
+        "reports.view",
+        "debug.view",
+        "channels.view",
+        "channels.test",
+        "roles.view",
+        "roles.write",
+        "affiliate.view.any",
+        "affiliate.view.own",
+    },
+    ROLE_PRIMARY_ADMIN: {
+        "admin.view",
+        "engine.view",
+        "engine.restart",
+        "strategy.view",
+        "strategy.thresholds.write",
+        "strategy.sr.write",
+        "strategy.spike.write",
+        "strategy.symbols.write",
+        "reports.view",
+        "debug.view",
+        "channels.view",
+        "channels.test",
+        "roles.view",
+        "affiliate.view.any",
+    },
+    ROLE_STRATEGY_ADMIN: {
+        "admin.view",
+        "engine.view",
+        "strategy.view",
+        "strategy.thresholds.write",
+        "strategy.sr.write",
+        "strategy.spike.write",
+        "strategy.symbols.write",
+        "reports.view",
+        "debug.view",
+    },
+    ROLE_RESEARCH_ADMIN: {
+        "admin.view",
+        "engine.view",
+        "strategy.view",
+        "reports.view",
+        "debug.view",
+    },
+    ROLE_ANALYST: {
+        "admin.view",
+        "engine.view",
+        "strategy.view",
+        "reports.view",
+        "debug.view",
+    },
+    ROLE_MODERATOR: {
+        "admin.view",
+        "engine.view",
+        "channels.view",
+    },
+    ROLE_AFFILIATE_ADMIN: {
+        "admin.view",
+        "affiliate.view.own",
+    },
+    ROLE_USER: set(),
+}
+
+
+@dataclass(frozen=True)
+class AffiliateScope:
+    affiliate_code: str
+    telegram_id: int
+    referral_code: str = ""
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return None
+
+
+def _load_json_file(path: str) -> Dict[str, Any]:
+    if not os.path.exists(path):
+        return {}
+
+    with open(path, "r", encoding="utf-8") as f:
+        raw = f.read().strip()
+
+    if not raw:
+        return {}
+
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+@lru_cache(maxsize=1)
+def load_roles_config() -> Dict[str, Any]:
+    """
+    Loads admin role configuration.
+
+    Expected shape example:
+    {
+      "owner": [123],
+      "primary_admin": [456],
+      "strategy_admin": [789],
+      "research_admin": [],
+      "analyst": [],
+      "moderator": [],
+      "affiliate_admin": {
+        "trader_x": {
+          "telegram_id": 111,
+          "referral_code": "TRADER_X"
+        }
+      }
+    }
+    """
+    data = _load_json_file(ROLES_CONFIG_PATH)
+
+    # Optional environment fallback for owner.
+    owner_env = os.getenv("OWNER_TELEGRAM_ID", "").strip()
+    owner_id = _safe_int(owner_env)
+    if owner_id is not None:
+        owners = data.get("owner", [])
+        if not isinstance(owners, list):
+            owners = []
+        if owner_id not in owners:
+            owners.append(owner_id)
+        data["owner"] = owners
+
+    return data
+
+
+def reload_roles_config() -> Dict[str, Any]:
+    load_roles_config.cache_clear()
+    return load_roles_config()
+
+
+def _ids_from_key(data: Dict[str, Any], key: str) -> Set[int]:
+    raw = data.get(key, [])
+    if not isinstance(raw, list):
+        return set()
+
+    result: Set[int] = set()
+    for item in raw:
+        value = _safe_int(item)
+        if value is not None:
+            result.add(value)
+    return result
+
+
+def _affiliate_scopes(data: Dict[str, Any]) -> Dict[int, AffiliateScope]:
+    raw = data.get("affiliate_admin", {})
+    if not isinstance(raw, dict):
+        return {}
+
+    result: Dict[int, AffiliateScope] = {}
+    for affiliate_code, payload in raw.items():
+        if not isinstance(payload, dict):
+            continue
+
+        telegram_id = _safe_int(payload.get("telegram_id"))
+        if telegram_id is None:
+            continue
+
+        result[telegram_id] = AffiliateScope(
+            affiliate_code=str(affiliate_code),
+            telegram_id=telegram_id,
+            referral_code=str(payload.get("referral_code", affiliate_code)),
+        )
+    return result
+
+
+def get_user_roles(user_id: int) -> List[str]:
+    data = load_roles_config()
+    roles: List[str] = []
+
+    if user_id in _ids_from_key(data, "owner"):
+        roles.append(ROLE_OWNER)
+    if user_id in _ids_from_key(data, "primary_admin"):
+        roles.append(ROLE_PRIMARY_ADMIN)
+    if user_id in _ids_from_key(data, "strategy_admin"):
+        roles.append(ROLE_STRATEGY_ADMIN)
+    if user_id in _ids_from_key(data, "research_admin"):
+        roles.append(ROLE_RESEARCH_ADMIN)
+    if user_id in _ids_from_key(data, "analyst"):
+        roles.append(ROLE_ANALYST)
+    if user_id in _ids_from_key(data, "moderator"):
+        roles.append(ROLE_MODERATOR)
+    if user_id in _affiliate_scopes(data):
+        roles.append(ROLE_AFFILIATE_ADMIN)
+
+    if not roles:
+        roles.append(ROLE_USER)
+
+    return sorted(roles, key=lambda r: ROLE_PRIORITY.get(r, 999))
+
+
+def get_primary_role(user_id: int) -> str:
+    roles = get_user_roles(user_id)
+    return roles[0] if roles else ROLE_USER
+
+
+def get_affiliate_scope(user_id: int) -> Optional[AffiliateScope]:
+    data = load_roles_config()
+    return _affiliate_scopes(data).get(user_id)
+
+
+def is_owner(user_id: int) -> bool:
+    return ROLE_OWNER in get_user_roles(user_id)
+
+
+def is_primary_admin(user_id: int) -> bool:
+    return ROLE_PRIMARY_ADMIN in get_user_roles(user_id) or is_owner(user_id)
+
+
+def list_permissions_for_user(user_id: int) -> Set[str]:
+    roles = get_user_roles(user_id)
+    permissions: Set[str] = set()
+    for role in roles:
+        permissions.update(PERMISSION_MATRIX.get(role, set()))
+    return permissions
+
+
+def has_permission(user_id: int, permission: str, target_affiliate_code: Optional[str] = None) -> bool:
+    """
+    Permission rules:
+    - OWNER bypasses everything.
+    - PRIMARY_ADMIN inherits broad admin capabilities.
+    - AFFILIATE_ADMIN may only view own affiliate scope.
+    """
+    if is_owner(user_id):
+        return True
+
+    permissions = list_permissions_for_user(user_id)
+    if permission in permissions:
+        return True
+
+    # Scoped affiliate access:
+    if permission == "affiliate.view":
+        if "affiliate.view.any" in permissions:
+            return True
+        if "affiliate.view.own" in permissions:
+            scope = get_affiliate_scope(user_id)
+            if scope is None:
+                return False
+            if target_affiliate_code is None:
+                return True
+            return target_affiliate_code == scope.affiliate_code or target_affiliate_code == scope.referral_code
+
+    return False
+
+
+def require_permission(user_id: int, permission: str, target_affiliate_code: Optional[str] = None) -> Tuple[bool, str]:
+    ok = has_permission(user_id, permission, target_affiliate_code=target_affiliate_code)
+    if ok:
+        return True, ""
+
+    role = get_primary_role(user_id)
+    return False, f"unauthorized: role={role} permission={permission}"
+
+
+def debug_identity(user_id: int) -> Dict[str, Any]:
+    scope = get_affiliate_scope(user_id)
+    return {
+        "user_id": user_id,
+        "roles": get_user_roles(user_id),
+        "primary_role": get_primary_role(user_id),
+        "permissions": sorted(list_permissions_for_user(user_id)),
+        "affiliate_scope": None if scope is None else {
+            "affiliate_code": scope.affiliate_code,
+            "referral_code": scope.referral_code,
+        },
+    }
