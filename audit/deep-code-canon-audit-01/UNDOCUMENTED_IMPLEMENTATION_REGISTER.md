@@ -1,0 +1,13 @@
+# UNDOCUMENTED_IMPLEMENTATION_REGISTER
+
+| UI-ID | Implementation path / symbol | Behavior | Reachability | Operational impact | Possible governing domain | Recommended action |
+|---|---|---|---|---|---|---|
+| UI-001 | `core/signal_engine._extract_tps_metrics()` | Computes TPS, space/time/speed/stress ratios and writes `observability/tps_metrics.jsonl` | Active if engine imports | Useful diagnostics, but no dedicated canonical file except partial time/telemetry adjacency | TIME_MODEL / PERFORMANCE_ANALYTICS | Canonize explicitly or fold into telemetry spec |
+| UI-002 | `core/distribution_router.tier_dedup_key()` | Uses pipe-delimited `TIER|signal_id|stage` dedup key string | Active | State format can break if `signal_id` contains `|`; no cleanup policy | SIGNAL_DISTRIBUTION / state persistence | Canonize or migrate to structured map |
+| UI-003 | `core/outcome_service.OPEN_REGISTRY_JSON` format | Stores `activation_ts`, `vote_end_ts`, `created_ts` derived fields | Active | Helpful, but not canonical temporal telemetry implementation | OUTCOME_TRACKING / TRADE_TEMPORAL_TELEMETRY | Retain as internal until telemetry module is built |
+| UI-004 | `core/bot_service._load_outcomes_store()` | Maintains separate admin outcome store in `/opt/binarybot/state/outcomes.json` | Active via callback path | Diverges from canonical outcome store and doubles writes | OUTCOME_TRACKING | Remove rather than canonize |
+| UI-005 | `metrics/metrics_collector.py` | In-memory counters only, process-local | Orphan utility | Health/metrics reports can be misleading after restart | MONITORING | Retain as internal only if wired; otherwise remove |
+| UI-006 | `model_registry/registry.py` | Atomic model/version registry utility | Orphan utility | Could support evolution governance, but no canon-specific integration yet | AUTONOMOUS_EVOLUTION / GOVERNANCE | Canonize in evolution workflow or leave internal |
+| UI-007 | `journal/trade_journal.py` | Append-only trade journal independent of outcome/telemetry flows | Orphan utility | Could duplicate future canonical telemetry/outcome stores | TRADE_TEMPORAL_TELEMETRY / OUTCOME_TRACKING | Owner decision only if retained long term |
+| UI-008 | `alerts/alert_engine.py` | Statistical helper functions under “alerts” package, no alert dispatch | Orphan utility | Name suggests missing alerting behavior | PERFORMANCE_ANALYTICS / MONITORING | Retain as internal math helper or rename/remove |
+| UI-009 | `experiments/experiment_runner.py` results JSONL | Emits `experiment_result` records outside canonical event taxonomy | Orphan utility | Offline experimentation logs are ungoverned | AUTONOMOUS_EVOLUTION / RESEARCH | Canonize as offline experiment artifact or keep isolated |
