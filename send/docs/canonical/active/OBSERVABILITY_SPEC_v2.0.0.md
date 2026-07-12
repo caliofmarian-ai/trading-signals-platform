@@ -1,11 +1,24 @@
 # OBSERVABILITY_SPEC_v2.0.0
 
 
-Path: /opt/binarybot/docs/canonical/active/OBSERVABILITY_SPEC_v2.0.0.md  
+Path: `send/docs/canonical/active/OBSERVABILITY_SPEC_v2.0.0.md`  
 Version: 2.0.0  
 Status: Canonical Active Observability Specification  
 Owner: BinaryBot / DROPi Signals  
 Scope: End-to-end observability, auditability, rejection analytics, and semantic traceability across strategy, DecisionObject, FSM, and signal execution  
+
+---
+
+**AUTHORITY DECLARATION (OWNER-002 — canonical-reconciliation-01)**
+
+This document is the **system policy and architectural authority** for the observability domain of BinaryBot / DROPi Signals.
+
+- This document defines observability goals, principles, architecture, and system-level policy.
+- `OBSERVABILITY_LOGGING_SPEC_v2.0.0.md` is the implementation-level logging and telemetry contract for this domain. It governs the specific structure, format, event families, retention, and telemetry details required to satisfy this document's policy.
+- Where any conflict exists between this document and `OBSERVABILITY_LOGGING_SPEC_v2.0.0.md`, this document (`OBSERVABILITY_SPEC_v2.0.0.md`) governs on all matters of system policy and architecture. `OBSERVABILITY_LOGGING_SPEC_v2.0.0.md` governs on all matters of implementation-level logging mechanics, event schema detail, and telemetry structure.
+- No observability policy or architectural decision may be established exclusively in `OBSERVABILITY_LOGGING_SPEC_v2.0.0.md` without alignment with this document.
+
+---
 
 Linked Documents:
 - /opt/binarybot/docs/canonical/active/CANONICAL_STRATEGY_STACK_v1.0.0.md

@@ -2,7 +2,29 @@
 
 Version: 2.0.0  
 Status: Active Canonical  
-Path: /opt/binarybot/docs/canonical/active/SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md
+Path: `send/docs/canonical/active/SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md`
+
+---
+
+**SCOPE AND AUTHORITY DECLARATION (OWNER-003 — canonical-reconciliation-01)**
+
+This document and `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md` address complementary, non-overlapping domains within signal distribution. Their scopes are explicitly declared below.
+
+**This document (`SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md`) governs exclusively:**
+
+- Routing topology and the architectural structure of the distribution layer
+- Channel architecture: how delivery surfaces are organized, segmented, and mapped
+- Distribution structure: how modules relate to each other within the distribution system
+- Architectural boundaries: what belongs to the distribution layer vs. adjacent layers (strategy, presentation, admin, affiliate)
+- Ownership rules for the distribution router and delivery pathways
+- Failure, retry, and degraded-delivery architecture
+- The canonical authorization model for distribution paths
+
+**This document does not govern** entitlement rules, delivery tier eligibility, CONFIRM/OPEN_NOW routing policy, or daily reset behavior. Those belong to `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md`.
+
+Where any ambiguity arises about which document governs a specific distribution concern, apply the following rule: architectural and structural concerns (topology, boundaries, module ownership) belong to this document; entitlement, commercial routing, and operational delivery policy belong to `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md`.
+
+---
 
 Linked Documents:
 - SYSTEM_INVARIANTS_v2.0.0.md
