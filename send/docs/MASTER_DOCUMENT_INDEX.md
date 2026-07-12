@@ -1,8 +1,13 @@
 MASTER_DOCUMENT_INDEX.md
 
+> **STATUS: SUPERSEDED**  
+> This document has been superseded by `send/docs/canonical/active/CANONICAL_MASTER_INDEX_v1.0.0.md` (2026-07-12, OWNER-005 = C, canonical-reconciliation-01).  
+> This document is retained as a historical record. It is no longer the authoritative canonical master index.  
+> Do not update this document. Refer to `CANONICAL_MASTER_INDEX_v1.0.0.md` for the authoritative active canonical set.
+
 BinaryBot — Master Documentation Index
 Version: 1.0.0
-Status: Canonical
+Status: Superseded
 
 Linked Documents:
 All documents located in "/opt/binarybot/docs/ (root docs; active canon lives under /opt/binarybot/docs/canonical/active/)"

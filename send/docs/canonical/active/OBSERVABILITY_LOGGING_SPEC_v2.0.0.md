@@ -3,7 +3,20 @@
 BinaryBot — Observability, Telemetry, Logging & Auditability Specification  
 Version: 2.0.0  
 Status: CANONICAL  
-Path: /opt/binarybot/docs/canonical/active/OBSERVABILITY_LOGGING_SPEC_v2.0.0.md
+Path: `send/docs/canonical/active/OBSERVABILITY_LOGGING_SPEC_v2.0.0.md`
+
+---
+
+**AUTHORITY DECLARATION AND DEFERENCE CLAUSE (OWNER-002 — canonical-reconciliation-01)**
+
+This document is the **implementation-level logging and telemetry contract** for the observability domain of BinaryBot / DROPi Signals.
+
+- This document defers to `OBSERVABILITY_SPEC_v2.0.0.md` on all matters of **system policy** and **observability architecture**. The goals, principles, and architectural intent defined in `OBSERVABILITY_SPEC_v2.0.0.md` are binding on this document and on all implementations governed by it.
+- This document governs: event family definitions, telemetry structure, log format, persistence and retention mechanics, anomaly surfacing, and implementation-level logging detail.
+- Where any conflict exists between this document and `OBSERVABILITY_SPEC_v2.0.0.md`, `OBSERVABILITY_SPEC_v2.0.0.md` governs on policy and architecture; this document governs on implementation-level mechanics.
+- No implementation-level logging decision that contradicts an architectural rule in `OBSERVABILITY_SPEC_v2.0.0.md` is permissible.
+
+---
 
 Linked Documents:
 - DECISION_AUDIT_SPEC_v2.0.0.md

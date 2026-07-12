@@ -3,7 +3,29 @@
 BinaryBot — Signal Distribution, Entitlement Routing & Delivery Governance Specification  
 Version: 2.0.0  
 Status: CANONICAL  
-Path: /opt/binarybot/docs/canonical/active/SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md
+Path: `send/docs/canonical/active/SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md`
+
+---
+
+**SCOPE AND AUTHORITY DECLARATION (OWNER-003 — canonical-reconciliation-01)**
+
+This document and `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md` address complementary, non-overlapping domains within signal distribution. Their scopes are explicitly declared below.
+
+**This document (`SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md`) governs exclusively:**
+
+- Signal entitlement: which signal stages (PRE / CONFIRM / OPEN_NOW) may be delivered to which tiers
+- Delivery rules: what constitutes a valid delivery, what silences a route, what counts as entitlement consumption
+- Tier eligibility: which destinations are authorized for which signal lifecycle states
+- Route silencing and entitlement exhaustion behavior
+- Successful-delivery counting and daily reset behavior
+- Outcome-interface eligibility at the destination level
+- Commercial and operational distribution policy: the separation of signal truth from audience routing
+
+**This document does not govern** routing topology, channel architecture, module ownership boundaries, or distribution layer structure. Those belong to `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md`.
+
+Where any ambiguity arises about which document governs a specific distribution concern, apply the following rule: entitlement, commercial routing, and operational delivery policy belong to this document; architectural and structural concerns (topology, boundaries, module ownership) belong to `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md`.
+
+---
 
 Linked Documents:
 - TELEGRAM_UX_v2.0.0.md
