@@ -1,0 +1,409 @@
+# FSM_DECISION_ENGINE_SPEC_v1.0.0
+
+
+Path: /opt/binarybot/docs/canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md  
+Version: 1.0.0  
+Status: Canonical Active Decision Engine Specification  
+Owner: BinaryBot / DROPi Signals  
+Scope: Operational interpretation of strategic truth through FSM, after DecisionObject production and before signal execution  
+
+Linked Documents:
+- /opt/binarybot/docs/canonical/active/CANONICAL_STRATEGY_STACK_v1.0.0.md
+- /opt/binarybot/docs/canonical/active/ALGO_SPEC_v2.0.0.md
+- /opt/binarybot/docs/canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md
+- /opt/binarybot/docs/canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md
+- /opt/binarybot/docs/canonical/active/OBSERVABILITY_SPEC_v2.0.0.md
+- /opt/binarybot/docs/canonical/active/DECISION_AUDIT_SPEC_v2.0.0.md
+
+
+Depends on:
+- canonical/active/CANONICAL_STRATEGY_STACK_v1.0.0.md
+- canonical/active/ALGO_SPEC_v2.0.0.md
+- canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md
+- canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md
+- canonical/active/OBSERVABILITY_SPEC_v2.0.0.md
+
+---
+
+## 1. PURPOSE
+
+Acest document definește specificația canonică a layerului FSM din BinaryBot.
+
+FSM-ul are rolul de a:
+- consuma `DecisionObject`
+- interpreta operațional starea strategică
+- decide dacă setup-ul este acceptat, amânat, degradat sau respins
+- furniza ieșirea operațională necesară pentru signal engine și observability
+
+FSM-ul nu definește matematica strategiei.
+FSM-ul nu înlocuiește scoringul.
+FSM-ul nu produce `DecisionObject`.
+
+---
+
+## 2. CORE PRINCIPLE
+
+FSM-ul este **consumerul operațional** al adevărului strategic standardizat.
+
+Ordinea canonică blocată este:
+1. market model
+2. corridor engine
+3. time model
+4. scoring
+5. `DecisionObject`
+6. FSM
+7. signal engine
+
+Prin urmare:
+- FSM-ul este după `DecisionObject`
+- FSM-ul nu trebuie să reconstruiască matematica strategică din inputuri brute
+- FSM-ul nu trebuie să emită direct payload-ul final de semnal fără layerul de execuție
+
+---
+
+## 3. ROLE OF FSM
+
+FSM-ul are patru responsabilități fundamentale:
+
+1. **clasificare operațională**  
+   transformă starea strategică într-o stare operațională utilizabilă
+
+2. **control de tranziție**  
+   stabilește dacă sistemul intră în wait, confirm, open-now, reject sau alte stări canonice compatibile
+
+3. **stabilizare comportamentală**  
+   previne reacțiile haotice ale sistemului prin reguli explicite de tranziție
+
+4. **alimentare pentru execuție și audit**  
+   produce semnificația operațională necesară pentru signal engine și observability
+
+---
+
+## 4. WHAT FSM IS NOT
+
+FSM-ul nu este:
+- motorul matematic principal al strategiei
+- calculatorul primar de timp
+- producătorul corridorului
+- contractul strategic canonic
+- sistemul final de distribuire a semnalului
+- substitutul pentru observability
+
+---
+
+## 5. REQUIRED INPUT CONTRACT
+
+Inputul canonic pentru FSM este `DecisionObject`.
+
+Acesta este adevăr blocat.
+
+FSM-ul poate consuma și metadata auxiliară de runtime,
+dar adevărul strategic principal trebuie să vină prin `DecisionObject`.
+
+Sunt interzise ca pattern canonic primar:
+- FSM care pornește doar din score brut
+- FSM care pornește doar din `expiry_minutes`
+- FSM care parsează un dict informal legacy fără contract semantic clar
+
+---
+
+## 6. INPUT EXPECTATION FAMILIES
+
+FSM-ul trebuie să poată consuma din `DecisionObject` cel puțin următoarele familii de semnificație:
+
+- setup identity
+- market context
+- structure state
+- time feasibility
+- score semantics
+- strategic flags
+- reject / degrade semantics
+- observability-ready explanations
+
+Dacă aceste familii lipsesc,
+FSM-ul funcționează pe un contract incomplet.
+
+---
+
+## 7. OPERATIONAL PURPOSE OF FSM STATES
+
+Stările FSM nu descriu întreaga matematică a strategiei.
+Ele descriu **cum trebuie tratat operațional** un setup într-un anumit moment.
+
+Cu alte cuvinte:
+- strategia spune ce este setup-ul
+- FSM-ul spune ce facem cu el acum
+
+Această separare este obligatorie.
+
+---
+
+## 8. CANONICAL FSM OUTCOME FAMILIES
+
+FSM-ul trebuie să poată exprima cel puțin următoarele familii de outcome operațional:
+
+- `REJECT`
+- `WAIT`
+- `PREPARE`
+- `CONFIRM`
+- `OPEN_NOW`
+- `DEGRADED`
+- `BLOCKED`
+
+Numele exacte ale unor stări pot evolua dacă există migrare controlată,
+dar familiile de semnificație trebuie să rămână recognoscibile.
+
+---
+
+## 9. REJECT FAMILY
+
+`REJECT` înseamnă că setup-ul nu trebuie să continue spre execuție.
+
+Cauzele pot include:
+- structură invalidă
+- fezabilitate temporală insuficientă
+- score inacceptabil
+- conflict major între context și setup
+- hard blockers strategici
+
+`REJECT` trebuie să fie explicabil semantic,
+nu doar inferat din absența unui semnal.
+
+---
+
+## 10. WAIT FAMILY
+
+`WAIT` înseamnă că setup-ul nu este încă executabil,
+dar nici respins definitiv.
+
+Exemple de cauze:
+- context încă neclar
+- setup promițător dar incomplet
+- nevoie de confirmare suplimentară
+- timing insuficient matur
+
+`WAIT` trebuie să poată fi diferențiat clar de `REJECT`.
+
+---
+
+## 11. PREPARE FAMILY
+
+`PREPARE` descrie starea în care setup-ul a devenit relevant operațional,
+dar nu este încă în punctul final de execuție.
+
+Această familie este utilă pentru:
+- pre-alerting
+- focus handling
+- staged monitoring
+- pregătirea canalelor de observability și distribuție
+
+---
+
+## 12. CONFIRM FAMILY
+
+`CONFIRM` descrie starea în care condițiile operaționale cheie sunt suficient validate pentru apropierea de execuție.
+
+Aceasta nu înseamnă neapărat că execuția finală trebuie făcută instant.
+Dar înseamnă că setup-ul este într-o fază avansată de validare operațională.
+
+---
+
+## 13. OPEN_NOW FAMILY
+
+`OPEN_NOW` descrie starea în care setup-ul este considerat executabil imediat conform regulilor operaționale active.
+
+Aceasta este cea mai apropiată stare FSM de emiterea efectivă a semnalului,
+dar semnalul final este în continuare responsabilitatea signal engine-ului.
+
+---
+
+## 14. DEGRADED FAMILY
+
+`DEGRADED` descrie o stare în care setup-ul rămâne recognoscibil,
+dar cu încredere redusă sau condiții parțial deteriorate.
+
+Exemple:
+- score marginal
+- presiune temporală crescută
+- context instabil
+- target realism slab
+
+Această familie este critică pentru a evita binaritatea falsă accept/reject.
+
+---
+
+## 15. BLOCKED FAMILY
+
+`BLOCKED` descrie o stare în care setup-ul este oprit operațional de o regulă explicită,
+chiar dacă unele elemente strategice păreau promițătoare.
+
+Exemple:
+- interdicție de execuție
+- conflict de policy
+- focus gating
+- guardrail runtime
+- incompatibilitate cu starea generală a sistemului
+
+---
+
+## 16. TRANSITION PRINCIPLE
+
+Tranzițiile FSM trebuie să fie:
+- explicite
+- auditabile
+- reproductibile
+- bazate pe semnificație strategică standardizată
+
+Sunt interzise tranzițiile opace bazate pe combinații ad-hoc greu de urmărit.
+
+---
+
+## 17. FSM MUST NOT RE-DERIVE STRATEGY
+
+FSM-ul nu trebuie să rederive complet:
+- corridorul
+- time modelul
+- score-ul strategic
+- reject semantics strategice de bază
+
+FSM-ul poate interpreta aceste date,
+dar nu trebuie să fie sursa lor primară de adevăr.
+
+Aceasta este o regulă canonică majoră.
+
+---
+
+
+## 18A. ANCHOR ARCHITECTURE TRUTHS
+
+
+The canonical upstream order remains:
+
+- `Corridor Engine` is before `Time Model`.
+- `DecisionObject` is produced before FSM.
+
+
+
+This FSM specification explicitly adopts the following canonical truths:
+
+1. `DecisionObject` is produced before FSM.
+2. `Corridor Engine` is before `Time Model` in the strategic pipeline.
+
+FSM is therefore downstream of the standardized strategic contract and must not invert the upstream architecture.
+The FSM consumes a `DecisionObject` that already reflects structural and temporal interpretation performed in canonical order.
+
+---
+## 18. RELATION TO DECISIONOBJECT
+
+`DecisionObject` este contractul strategic oficial pe care FSM-ul îl consumă.
+
+Relația corectă este:
+- strategia produce `DecisionObject`
+- FSM-ul citește și interpretează `DecisionObject`
+- FSM-ul produce un verdict operațional standardizat
+
+FSM-ul nu trebuie să rescrie arbitrar contractul strategic.
+
+---
+
+## 19. REQUIRED OUTPUT SEMANTICS OF FSM
+
+Outputul FSM trebuie să poată exprima cel puțin:
+
+- state / outcome
+- reason family
+- execution readiness
+- degradation status
+- rejection status
+- explanation snippets
+- handoff readiness către signal engine
+- handoff semantics către observability
+
+Acest output nu trebuie să fie doar un string textual simplu.
+
+---
+
+## 20. RELATION TO SIGNAL ENGINE
+
+Signal engine-ul consumă verdictul operațional post-FSM.
+
+Asta înseamnă:
+- semnalul nu este emis direct din `DecisionObject`
+- semnalul nu este emis direct din scoring
+- semnalul este emis numai după interpretarea operațională a FSM-ului
+
+Această separare este critică pentru control și audit.
+
+---
+
+## 21. RELATION TO OBSERVABILITY
+
+Observability trebuie să poată vedea:
+- ce `DecisionObject` a intrat în FSM
+- ce stare FSM a rezultat
+- de ce a rezultat acea stare
+- dacă a existat degradare
+- dacă a existat reject
+- dacă setup-ul a progresat spre execuție
+
+Prin urmare, FSM-ul trebuie să emită semantică suficientă pentru audit.
+
+---
+
+## 22. REJECTION ANALYTICS REQUIREMENT
+
+FSM-ul trebuie să contribuie la analiza motivelor pentru care semnalele mor sau sunt respinse.
+
+Asta înseamnă că trebuie să existe semantică observabilă pentru:
+- reject stage
+- reject reason
+- degradation path
+- blocked path
+- wait path care nu a progresat
+
+Acest document susține direct arhitectura de decision audit.
+
+---
+
+## 23. FORBIDDEN FSM PATTERNS
+
+Sunt interzise ca modele canonice active:
+
+- FSM care produce singur adevărul strategic din brut
+- FSM care decide doar pe `expiry_minutes`
+- FSM care amestecă scoring, contract strategic și execuție într-un singur blob
+- FSM fără stare semantică explicită
+- FSM care transmite direct Telegram payload-ul ca adevăr principal
+- FSM care nu poate explica reject-ul
+
+---
+
+## 24. CODE ALIGNMENT RULE
+
+Orice implementare a FSM-ului trebuie să poată răspunde clar la întrebările:
+
+- unde primește `DecisionObject`?
+- care sunt stările canonice active?
+- cum sunt definite tranzițiile majore?
+- cum este exprimat reject-ul?
+- cum ajunge outputul la signal engine?
+- cum ajunge outputul la observability?
+
+Dacă aceste răspunsuri nu sunt clare,
+alinierea codului este incompletă.
+
+---
+
+## 25. FINAL PRINCIPLE
+
+FSM-ul este layerul care transformă adevărul strategic standardizat în decizie operațională standardizată.
+
+El trebuie să fie:
+- dependent de `DecisionObject`
+- separat de matematica strategică
+- separat de signal engine
+- auditabil
+- explicabil
+- compatibil cu rejection analytics
+
+Aceasta este specificația canonică activă a FSM decision engine-ului.

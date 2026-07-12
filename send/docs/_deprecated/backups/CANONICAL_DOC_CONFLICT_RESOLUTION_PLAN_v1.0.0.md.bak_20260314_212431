@@ -1,0 +1,327 @@
+# CANONICAL_DOC_CONFLICT_RESOLUTION_PLAN_v1.0.0
+
+Version: 1.0.0  
+Status: Canonical Active Path Normalization and Controlled Move Audit  
+Owner: BinaryBot / DROPi Signals  
+Scope: Controlled path normalization, move ordering, reference repair, and conflict-safe migration of canonical docs before final pre-code consistency audit  
+
+Depends on:
+- CANONICAL_STRATEGY_STACK_v1.0.0.md
+- DOCUMENT_NORMALIZATION_AND_DEPRECATION_PLAN_v1.0.0.md
+- CANONICAL_DOC_REALITY_REPORT_v1.0.0.md
+- ALGO_SPEC_v2.0.0.md
+- canonical/active/TIME_MODEL_UNIFIED_CANON_v2.0.0.md
+- SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md
+- DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md
+- FSM_DECISION_ENGINE_SPEC_v1.0.0.md
+- SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md
+- OBSERVABILITY_SPEC_v2.0.0.md
+
+---
+
+## 1. PURPOSE
+
+Acest document definește auditul canonic pentru normalizarea finală a path-urilor și pentru mutarea controlată a documentelor active,
+fără ruperea lanțului de referințe și fără introducerea unui nou haos documentar.
+
+Scopul lui este:
+- să definească ordinea sigură de mutare a documentelor
+- să stabilească ce documente rămân pe loc
+- să stabilească ce documente trebuie mutate în zona canonică activă
+- să definească regulile de reparare a referințelor
+- să definească tratamentul documentelor care devin deprecated după mutare
+- să pregătească auditul final de consistență înainte de cod
+
+Acest document este plan de execuție documentară controlată,
+nu specificație nouă de strategie.
+
+---
+
+## 2. CORE PRINCIPLE
+
+Mutarea documentelor nu trebuie făcută haotic și nici în masă fără control.
+
+Orice mutare trebuie să respecte:
+- integritatea lanțului canonic
+- claritatea statutelor
+- repararea referințelor
+- trasabilitatea istorică
+- evitarea dublurilor active post-mutare
+
+Scopul nu este doar să mutăm fișiere,
+ci să ieșim cu o structură documentară mai clară decât înainte.
+
+---
+
+## 3. CURRENT CANONICAL REALITY
+
+La momentul acestui audit,
+există un root set canonic activ clar definit și un set supporting activ clar definit.
+
+Totuși, path-urile nu sunt încă complet normalizate deoarece:
+- unele documente canonice active sunt încă în `docs/`
+- cel puțin un document root activ se află deja în `canonical/active/`
+- referințele dintre documente folosesc un mix de locații vechi și noi
+- mișcarea necontrolată ar putea rupe `Depends on` și alte referințe
+
+Prin urmare, normalizarea trebuie făcută în mod etapizat și auditat.
+
+---
+
+## 4. TARGET NORMALIZATION OBJECTIVE
+
+Obiectivul țintă este:
+
+- documentele root canonice active să aibă o schemă coerentă de localizare
+- documentele supporting active să fie separate clar de root set
+- documentele deprecated să rămână în afara lanțului activ
+- referințele interne să fie consistente după mutare
+- să existe o bază stabilă pentru auditul final pre-cod
+
+Aceasta este condiția de ieșire a normalizării.
+
+---
+
+## 5. ROOT DOCUMENTS THAT MAY REQUIRE CONTROLLED MOVE
+
+Conform realității actuale,
+următoarele documente root active trebuie evaluate pentru mutare controlată într-o zonă canonică activă coerentă:
+
+- `CANONICAL_STRATEGY_STACK_v1.0.0.md`
+- `ALGO_SPEC_v2.0.0.md`
+- `SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`
+- `DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
+- `FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
+- `SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`
+- `OBSERVABILITY_SPEC_v2.0.0.md`
+
+Documentul:
+- `canonical/active/TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
+
+este deja în locație canonică activă și devine reper pentru restul schemei.
+
+---
+
+## 6. ROOT DOCUMENTS THAT SHOULD REMAIN STABLE DURING FIRST MOVE DECISION
+
+În timpul primei decizii de mutare,
+următoarele documente trebuie considerate stabile și folosite ca bază de control:
+
+- `DOCUMENT_NORMALIZATION_AND_DEPRECATION_PLAN_v1.0.0.md`
+- `CANONICAL_DOC_REALITY_REPORT_v1.0.0.md`
+
+Aceste documente descriu regulile și inventarul.
+Nu este recomandat să fie mutate înainte de clarificarea root set-ului strategic.
+
+---
+
+## 7. SUPPORTING DOCS MOVE PRINCIPLE
+
+Documentele supporting active nu trebuie mutate înainte de închiderea corectă a root set-ului.
+
+Ordinea corectă este:
+1. stabilirea structurii finale pentru root canonical docs
+2. mutarea controlată a root docs și repararea referințelor
+3. validarea consistenței
+4. abia apoi evaluarea move/no-move pentru supporting docs
+
+Aceasta evită efectul de avalanșă în referințe.
+
+---
+
+## 8. CONTROLLED MOVE ORDER PRINCIPLE
+
+Dacă se decide migrarea root docs către o locație canonică activă unificată,
+mutarea trebuie făcută într-o ordine controlată.
+
+Ordinea recomandată de mutare este:
+1. root manifest / index document
+2. specs care sunt referite de multe alte documente
+3. specs de output / contract / FSM / execution / observability
+4. supporting docs, dacă este cazul
+
+Dar această ordine trebuie executată numai împreună cu repararea referințelor.
+
+---
+
+## 9. SAFE REFERENCE REPAIR RULE
+
+Orice mutare trebuie însoțită de:
+- inventarierea referințelor vechi
+- actualizarea referințelor relevante
+- audit post-mutare
+- confirmarea că documentele active indică doar path-uri valide
+
+Nu este permisă mutarea unui document activ fără verificarea downstream references.
+
+---
+
+## 10. NO BROKEN CHAIN RULE
+
+După fiecare mutare controlată,
+lanțul canonic trebuie să rămână funcțional.
+
+Asta înseamnă:
+- documentele active trebuie să se poată referi reciproc corect
+- path-urile din `Depends on` trebuie să fie valide sau planificate clar pentru actualizare sincronă
+- documentele migration nu trebuie să devină singurele punți către adevărul activ
+
+Dacă lanțul se rupe,
+migrarea este considerată defectă.
+
+---
+
+## 11. DEPRECATION AFTER MOVE RULE
+
+Dacă un document este mutat într-o locație nouă și activă,
+copiile vechi nu trebuie lăsate ca pseudo-active.
+
+Trebuie ales unul dintre modelele:
+- vechiul fișier devine deprecated explicit
+- vechiul fișier este păstrat doar ca redirector documentat, dacă există motiv serios
+- vechiul fișier este exclus clar din lanțul activ
+
+Nu este permisă coexistența ambiguă între path-ul vechi și cel nou.
+
+---
+
+## 12. REDIRECTOR / BRIDGE FILE CAUTION
+
+Fișierele bridge sau redirector pot fi tolerate doar temporar și doar dacă:
+- reduc riscul în timpul migrației
+- sunt clar marcate non-authoritative
+- au scop limitat
+- sunt eliminate sau depreciate după stabilizare
+
+Nu trebuie să devină un nou strat permanent de ambiguitate.
+
+---
+
+## 13. MINIMUM MOVE DECISION OUTPUT
+
+Auditul de controlled move trebuie să producă minimum, pentru fiecare document relevant:
+
+- current path
+- target path
+- move now / move later / stay
+- reason
+- references to repair
+- deprecation action after move
+- risk level
+
+Fără acest output,
+execuția mutării nu este suficient de sigură.
+
+---
+
+## 14. RISK FAMILIES
+
+Riscurile tipice ale mutării includ:
+
+- ruperea referințelor `Depends on`
+- existența simultană a două surse aparent active
+- menținerea accidentală a path-urilor vechi în documentele noi
+- supporting docs care indică locații expirate
+- confuzie între fișiere root și fișiere de suport
+- proliferare de bridge docs inutile
+
+Aceste riscuri trebuie tratate explicit.
+
+---
+
+## 15. PREFERRED END STATE FOR ROOT DOCS
+
+Starea preferată este ca root canonical docs să locuiască într-o schemă coerentă și recognoscibilă,
+aliniată cu existența deja confirmată a `canonical/active/TIME_MODEL_UNIFIED_CANON_v2.0.0.md`.
+
+Asta sugerează, ca direcție,
+o consolidare a root set-ului într-o zonă canonical active clară,
+cu condiția să fie făcută controlat și fără ruperi de referințe.
+
+---
+
+## 16. WHAT SHOULD NOT BE MOVED YET
+
+Nu trebuie mutate încă, în această fază,
+fără audit suplimentar:
+
+- documente deprecated
+- backupuri
+- drafturi temporare
+- repair files
+- supporting docs încă nevalidate complet
+- documente non-strategy admin/control/Telegram înainte de auditul lor dedicat
+
+Curățenia trebuie făcută în valuri controlate, nu prin mutarea tuturor lucrurilor deodată.
+
+---
+
+## 17. RELATION TO FINAL PRE-CODE CONSISTENCY AUDIT
+
+Acest plan este direct premergător auditului final pre-cod.
+
+Auditul final pre-cod va trebui să confirme:
+- setul activ final
+- path-urile finale oficiale
+- referințele valide
+- excluderea documentelor deprecated din adevărul activ
+- pregătirea setului supporting pentru audit de cod
+
+Fără această etapă,
+auditul final pre-cod ar sta pe teren instabil.
+
+---
+
+## 18. RELATION TO PYTHON PATCHING
+
+Nu trebuie începute patch-uri serioase în Python până când:
+- mutarea root docs este decisă și executată controlat sau blocată explicit ca stay
+- referințele active sunt validate
+- documentele deprecated nu mai pot confuza auditul
+- setul root și supporting este stabil
+
+Codul trebuie să derive din arhitectură documentară stabilizată.
+
+---
+
+## 19. FORBIDDEN MOVE PATTERNS
+
+Sunt interzise:
+
+- mutare în masă fără inventar și fără referințe reparate
+- mutare a supporting docs înainte de clarificarea root set-ului
+- păstrarea copiilor vechi ca pseudo-active
+- bridge docs lăsate permanent în lanțul activ
+- mutare + deprecări fără audit post-acțiune
+- trecerea la cod în timp ce path-urile canonice sunt încă ambigue
+
+---
+
+## 20. REQUIRED NEXT ACTION AFTER THIS PLAN
+
+După acest plan,
+următoarea acțiune corectă este:
+
+**un execution audit cu listă explicită de fișiere și decizii move/stay,
+urmat de patch-ul controlat de mutare și reparare de referințe.**
+
+Abia după acel pas,
+putem face auditul final de consistență înainte de cod.
+
+---
+
+## 21. FINAL PRINCIPLE
+
+Normalizarea path-urilor canonice nu este operațiune cosmetică.
+
+Ea este parte din consolidarea adevărului activ.
+
+Dacă este făcută bine,
+ieșim cu:
+- root docs clare
+- supporting docs clare
+- deprecated docs clar excluse
+- referințe stabile
+- bază sigură pentru audit final și apoi pentru patching Python
+
+Aceasta este regula canonică activă pentru controlled move și path normalization.

@@ -1,0 +1,667 @@
+# /opt/binarybot/core/distribution_router.py
+# BinaryBot — Tier Distribution Router (Channels + Admin Signals_Live topic)
+
+from __future__ import annotations
+
+import os
+import time
+from datetime import datetime
+from typing import Any, Dict, Optional, Tuple
+from zoneinfo import ZoneInfo
+
+from core import storage
+from core import telegram_publisher
+from core import observability_logger
+from core import outcome_service
+
+# -----------------------------
+# Paths / timezone
+# -----------------------------
+
+DIST_STATE_PATH = "/opt/binarybot/state/dist_state.json"
+CHANNEL_CONFIG_PATHS = [
+    "/opt/binarybot/config/channel_config.json",
+    "/opt/binarybot/config/channel-config.json",
+]
+
+LONDON_TZ = ZoneInfo("Europe/London")
+RESET_HOUR = 8
+RESET_MINUTE = 10
+
+TIERS = ("FREE", "BASIC", "PRO", "ELITE")
+
+
+# -----------------------------
+# Defaults (can be overridden by env)
+# -----------------------------
+
+DEFAULT_LIMITS = {
+    "FREE": 5,
+    "BASIC": 20,
+    "PRO": 50,
+    "ELITE": None,  # unlimited
+}
+
+
+# -----------------------------
+# State helpers
+# -----------------------------
+
+def _default_state() -> Dict[str, Any]:
+    return {
+        "version": "1.0.0",
+        "last_reset_london_date": None,  # "YYYY-MM-DD"
+        "tier_state": {t: "ACTIVE" for t in TIERS},
+        "open_signals_today": {t: 0 for t in TIERS},
+        "dedup": {},  # { "TIER|signal_id|stage": true }
+        "last_updated_ts": int(time.time()),
+    }
+
+
+def load_state() -> Dict[str, Any]:
+    st = storage.load_json(DIST_STATE_PATH, default=_default_state())
+    # ensure keys exist
+    st.setdefault("tier_state", {t: "ACTIVE" for t in TIERS})
+    st.setdefault("open_signals_today", {t: 0 for t in TIERS})
+    st.setdefault("dedup", {})
+    st.setdefault("last_reset_london_date", None)
+    return st
+
+
+def save_state(state: Dict[str, Any]) -> None:
+    state["last_updated_ts"] = int(time.time())
+    storage.save_json_atomic(DIST_STATE_PATH, state)
+
+
+# -----------------------------
+# Config helpers
+# -----------------------------
+
+def _load_channel_config_file() -> Dict[str, Any]:
+    for p in CHANNEL_CONFIG_PATHS:
+        try:
+            cfg = storage.load_json(p, default=None)
+            if isinstance(cfg, dict) and cfg:
+                return cfg
+        except Exception:
+            continue
+    return {}
+
+
+def load_config() -> Dict[str, Any]:
+    """
+    Returns:
+      {
+        "channels": { "FREE": int|None, "BASIC":..., "PRO":..., "ELITE":... },
+        "admin": { "group_id": int|None, "signals_live_topic_id": int|None },
+        "limits": { "FREE": int, "BASIC": int, "PRO": int, "ELITE": None },
+      }
+    """
+    cfg_file = _load_channel_config_file()
+
+    def _env_int(name: str) -> Optional[int]:
+        v = os.getenv(name)
+        if not v:
+            return None
+        try:
+            return int(v)
+        except Exception:
+            return None
+
+    # Channel IDs (prefer config file, fallback env)
+    channels = {
+        "FREE": cfg_file.get("FREE_CHANNEL_ID") if "FREE_CHANNEL_ID" in cfg_file else _env_int("FREE_CHANNEL_ID"),
+        "BASIC": cfg_file.get("BASIC_CHANNEL_ID") if "BASIC_CHANNEL_ID" in cfg_file else _env_int("BASIC_CHANNEL_ID"),
+        "PRO": cfg_file.get("PRO_CHANNEL_ID") if "PRO_CHANNEL_ID" in cfg_file else _env_int("PRO_CHANNEL_ID"),
+        "ELITE": cfg_file.get("ELITE_CHANNEL_ID") if "ELITE_CHANNEL_ID" in cfg_file else _env_int("ELITE_CHANNEL_ID"),
+    }
+
+    # Admin supergroup topic for internal live signals (same as ELITE)
+    admin = {
+        "group_id": _env_int("ADMIN_SUPERGROUP_ID") or _env_int("ADMIN_GROUP_ID"),
+        "signals_live_topic_id": _env_int("SIGNALS_LIVE_TOPIC_ID"),
+    }
+
+    # Limits (env overrides defaults)
+    def _limit(name: str, default: Optional[int]) -> Optional[int]:
+        v = os.getenv(name)
+        if not v:
+            return default
+        v = v.strip().upper()
+        if v in ("UNLIMITED", "NONE", "INF"):
+            return None
+        try:
+            return int(v)
+        except Exception:
+            return default
+
+    limits = {
+        "FREE": _limit("FREE_LIMIT", DEFAULT_LIMITS["FREE"]),
+        "BASIC": _limit("BASIC_LIMIT", DEFAULT_LIMITS["BASIC"]),
+        "PRO": _limit("PRO_LIMIT", DEFAULT_LIMITS["PRO"]),
+        "ELITE": None,
+    }
+
+    return {"channels": channels, "admin": admin, "limits": limits}
+
+
+# -----------------------------
+# Reset logic
+# -----------------------------
+
+def maybe_daily_reset(state: Dict[str, Any], now_ts: int) -> Tuple[Dict[str, Any], bool]:
+    now_ldn = datetime.fromtimestamp(now_ts, tz=LONDON_TZ)
+    today_str = now_ldn.date().isoformat()
+
+    # Only after 08:10 London
+    if (now_ldn.hour, now_ldn.minute) < (RESET_HOUR, RESET_MINUTE):
+        return state, False
+
+    if state.get("last_reset_london_date") == today_str:
+        return state, False
+
+    before = {
+        "tier_state": dict(state.get("tier_state", {})),
+        "open_signals_today": dict(state.get("open_signals_today", {})),
+        "last_reset_london_date": state.get("last_reset_london_date"),
+    }
+
+    # reset counters and states (ELITE stays ACTIVE)
+    state["last_reset_london_date"] = today_str
+    state["open_signals_today"] = {t: 0 for t in TIERS}
+    state["tier_state"] = {t: "ACTIVE" for t in TIERS}
+
+    save_state(state)
+
+    observability_logger.log_event(observability_logger.build_event(
+        event_type="tier_reset",
+        data={
+            "reset_time_london": f"{RESET_HOUR:02d}:{RESET_MINUTE:02d} Europe/London",
+            "effective_date_london": today_str,
+            "before": before,
+            "after": {
+                "tier_state": dict(state["tier_state"]),
+                "open_signals_today": dict(state["open_signals_today"]),
+                "last_reset_london_date": state["last_reset_london_date"],
+            },
+        },
+        module="distribution_router",
+        now_ts=now_ts
+    ))
+
+    return state, True
+
+
+def reset_daily_counters() -> None:
+    """
+    Kept for backwards compatibility with older scheduler_loop().
+    Correct reset is handled by maybe_daily_reset() inside route().
+    """
+    st = load_state()
+    now_ts = int(time.time())
+    maybe_daily_reset(st, now_ts)
+
+
+# -----------------------------
+# Dedup
+# -----------------------------
+
+def tier_dedup_key(tier: str, signal_id: str, stage: str) -> str:
+    return f"{tier}|{signal_id}|{stage}"
+
+
+def tier_dedup_check(state: Dict[str, Any], tier: str, signal_id: str, stage: str) -> bool:
+    key = tier_dedup_key(tier, signal_id, stage)
+    return bool(state.get("dedup", {}).get(key, False))
+
+
+def tier_dedup_mark(state: Dict[str, Any], tier: str, signal_id: str, stage: str) -> None:
+    key = tier_dedup_key(tier, signal_id, stage)
+    state.setdefault("dedup", {})[key] = True
+
+
+# -----------------------------
+# Rendering + feedback buttons
+# -----------------------------
+
+def render_signal_text(event: Dict[str, Any], tier_label: str) -> str:
+    stage = event.get("stage")
+    symbol = event.get("symbol")
+    direction = event.get("direction")
+    tf = event.get("timeframe")
+    score = event.get("score_total")
+    buffer_mode = event.get("buffer_mode")
+    expiry = event.get("expiry_minutes")
+
+    # Minimal, deterministic text (formatting can be upgraded later per TELEGRAM_UX.md)
+    lines = []
+    lines.append(f"📡 {stage} — {symbol} ({tf})")
+    lines.append(f"➡️ {direction} | Score: {score:.1f} | Buffer: {buffer_mode} | Exp: {expiry}m")
+    if tier_label:
+        lines.append(f"Tier: {tier_label}")
+    lines.append(f"ID: {event.get('signal_id')}")
+    return "\n".join(lines)
+
+
+def build_feedback_markup(signal_id: str) -> Dict[str, Any]:
+    # callback format expected by runtime/telegram_updates.py:
+    # "VOTE_|{signal_id}|WIN" etc.
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "✅ WIN", "callback_data": f"VOTE_|{signal_id}|WIN"},
+                {"text": "❌ LOSE", "callback_data": f"VOTE_|{signal_id}|LOSE"},
+                {"text": "⚪ MISSED", "callback_data": f"VOTE_|{signal_id}|MISSED"},
+            ]
+        ]
+    }
+
+
+# -----------------------------
+# Publishing core
+# -----------------------------
+
+def _log_tier_publish(now_ts: int, tier: str, event: Dict[str, Any], publish_decision: str,
+                     tier_state_before: str, tier_state_after: str,
+                     limit: Optional[int], counter_before: int, counter_after: int,
+                     counted: bool, telegram_ok: bool, message_id: Optional[int],
+                     error: Optional[str], dedup_key: str, was_duplicate: bool, dedup_action: str,
+                     chat_id: Optional[int]) -> None:
+
+    observability_logger.log_event(observability_logger.build_event(
+        event_type="tier_publish",
+        data={
+            "publish_decision": publish_decision,
+            "tier_state_before": tier_state_before,
+            "tier_state_after": tier_state_after,
+            "limit": limit,
+            "counter_before": counter_before,
+            "counter_after": counter_after,
+            "counted": counted,
+            "telegram": {
+                "ok": telegram_ok,
+                "message_id": message_id,
+                "error": error,
+            },
+            "dedup": {
+                "key": dedup_key,
+                "was_duplicate": was_duplicate,
+                "action": dedup_action,
+            },
+        },
+        module="distribution_router",
+        now_ts=now_ts,
+        extra={
+            "tier": tier,
+            "signal_id": event.get("signal_id"),
+            "stage": event.get("stage"),
+            "symbol": event.get("symbol"),
+            "chat_id": chat_id,
+            "message_id": message_id,
+        }
+    ))
+
+
+def _try_register_open_for_outcomes(signal_id: str, chat_id: int, message_id: int,
+                                    open_now_ts: int, expiry_minutes: int) -> None:
+    """
+    Registers mapping once (do not overwrite).
+    This enables vote validation in outcome_service even if buttons are clicked from
+    another destination (ELITE/admin topic).
+    """
+    try:
+        outcome_service.register_open_now(
+            signal_id=signal_id,
+            elite_chat_id=chat_id,
+            open_message_id=message_id,
+            open_now_ts=open_now_ts,
+            expiry_minutes=expiry_minutes
+        )
+    except Exception:
+        # outcome registration should never break distribution
+        pass
+
+
+def route(event: Dict[str, Any], now_ts: Optional[int] = None) -> None:
+    """
+    Rules implemented:
+    - Signals go to channels: FREE/BASIC/PRO/ELITE.
+    - Daily limits apply ONLY to OPEN_NOW and ONLY for FREE/BASIC/PRO.
+    - When tier becomes SILENT it receives NOTHING (PRE/CONFIRM/OPEN_NOW).
+    - ELITE is unlimited.
+    - Additionally: all signals that go to ELITE also go to ADMIN supergroup topic SIGNALS_LIVE.
+      (No limit; treated like ELITE.)
+    - Feedback buttons (WIN/LOSE/MISSED) only on OPEN_NOW in:
+        - ELITE channel
+        - ADMIN SIGNALS_LIVE topic
+    """
+    now_ts = int(now_ts or time.time())
+    cfg = load_config()
+
+    # --- Backward-compatible config normalization (supports legacy channel_config.json) ---
+    try:
+        if isinstance(cfg, dict):
+            # Legacy schema: cfg["tiers"][TIER]["channel_id"] + ["daily_limit"]
+            if "channels" not in cfg:
+                tiers_cfg = cfg.get("tiers", {}) or {}
+                cfg["channels"] = {t: (tiers_cfg.get(t, {}) or {}).get("channel_id") for t in TIERS}
+            if "limits" not in cfg:
+                tiers_cfg = cfg.get("tiers", {}) or {}
+                cfg["limits"] = {t: (tiers_cfg.get(t, {}) or {}).get("daily_limit") for t in TIERS}
+
+            # Legacy admin topic: cfg["admin"]["topics"]["signals_live"]
+            admin = cfg.get("admin", {}) or {}
+            if isinstance(admin, dict) and "signals_live_topic_id" not in admin:
+                topics = admin.get("topics", {}) or {}
+                if isinstance(topics, dict):
+                    if "signals_live" in topics:
+                        admin["signals_live_topic_id"] = topics.get("signals_live")
+                    elif "signals_live_topic_id" in topics:
+                        admin["signals_live_topic_id"] = topics.get("signals_live_topic_id")
+                cfg["admin"] = admin
+    except Exception:
+        pass
+    # --- end normalization ---
+
+    # --- Backward-compatible config normalization (supports legacy channel_config.json) ---
+    try:
+        if isinstance(cfg, dict):
+            # Legacy schema: cfg["tiers"][TIER]["channel_id"] + ["daily_limit"]
+            if "channels" not in cfg:
+                tiers_cfg = cfg.get("tiers", {}) or {}
+                cfg["channels"] = {t: (tiers_cfg.get(t, {}) or {}).get("channel_id") for t in TIERS}
+            if "limits" not in cfg:
+                tiers_cfg = cfg.get("tiers", {}) or {}
+                cfg["limits"] = {t: (tiers_cfg.get(t, {}) or {}).get("daily_limit") for t in TIERS}
+
+            # Legacy admin topic: cfg["admin"]["topics"]["signals_live"]
+            admin = cfg.get("admin", {}) or {}
+            if isinstance(admin, dict) and "signals_live_topic_id" not in admin:
+                topics = admin.get("topics", {}) or {}
+                if isinstance(topics, dict):
+                    if "signals_live" in topics:
+                        admin["signals_live_topic_id"] = topics.get("signals_live")
+                    elif "signals_live_topic_id" in topics:
+                        admin["signals_live_topic_id"] = topics.get("signals_live_topic_id")
+                cfg["admin"] = admin
+    except Exception:
+        pass
+    # --- end normalization ---
+    state = load_state()
+
+    # Daily reset (DST-safe, London time)
+    state, _ = maybe_daily_reset(state, now_ts)
+
+    stage = str(event.get("stage") or "")
+    signal_id = str(event.get("signal_id") or "")
+
+    if not stage or not signal_id:
+        observability_logger.log_warning(
+            "distribution_invalid_event",
+            {"missing": {"stage": stage, "signal_id": signal_id}},
+            now_ts=now_ts
+        )
+        return
+
+    # Build destinations:
+    # 1) Tier channels
+    # 2) Admin Signals_Live topic (mirror of ELITE)
+    channels = cfg["channels"]
+    limits = cfg["limits"]
+    admin_group_id = cfg["admin"].get("group_id")
+    admin_topic_id = cfg["admin"].get("signals_live_topic_id")
+
+    destinations = []  # list of dict: {name, chat_id, thread_id, is_tier, tier_name, applies_limits, feedback_enabled}
+    for tier in TIERS:
+        chat_id = channels.get(tier)
+        destinations.append({
+            "name": tier,
+            "chat_id": chat_id,
+            "thread_id": None,
+            "is_tier": True,
+            "tier_name": tier,
+            "applies_limits": tier in ("FREE", "BASIC", "PRO"),
+            "feedback_enabled": (tier == "ELITE"),
+        })
+
+    # Admin mirror (works like ELITE)
+    if admin_group_id and admin_topic_id:
+        destinations.append({
+            "name": "ADMIN_SIGNALS_LIVE",
+            "chat_id": int(admin_group_id),
+            "thread_id": int(admin_topic_id),
+            "is_tier": False,
+            "tier_name": "ELITE",  # treat as elite-like for semantics
+            "applies_limits": False,
+            "feedback_enabled": True,
+        })
+
+    # Publish to each destination
+    for dest in destinations:
+        chat_id = dest["chat_id"]
+        thread_id = dest["thread_id"]
+        tier = dest["tier_name"]
+
+        # Missing destination => DISABLED
+        if not chat_id:
+            # Log as disabled tier publish (for real tiers only)
+            if dest["is_tier"]:
+                _log_tier_publish(
+                    now_ts=now_ts,
+                    tier=tier,
+                    event=event,
+                    publish_decision="SKIPPED_DISABLED",
+                    tier_state_before=state["tier_state"].get(tier, "DISABLED"),
+                    tier_state_after=state["tier_state"].get(tier, "DISABLED"),
+                    limit=limits.get(tier),
+                    counter_before=state["open_signals_today"].get(tier, 0),
+                    counter_after=state["open_signals_today"].get(tier, 0),
+                    counted=False,
+                    telegram_ok=False,
+                    message_id=None,
+                    error="missing_channel_id",
+                    dedup_key=tier_dedup_key(tier, signal_id, stage),
+                    was_duplicate=False,
+                    dedup_action="skip_disabled",
+                    chat_id=None
+                )
+            continue
+
+        # Tier state checks (ONLY for actual tier channels)
+        tier_state_before = state["tier_state"].get(tier, "ACTIVE")
+
+        if dest["is_tier"]:
+            # If tier is SILENT -> block ALL stages
+            if tier_state_before == "SILENT":
+                _log_tier_publish(
+                    now_ts=now_ts,
+                    tier=tier,
+                    event=event,
+                    publish_decision="SKIPPED_SILENT",
+                    tier_state_before=tier_state_before,
+                    tier_state_after=tier_state_before,
+                    limit=limits.get(tier),
+                    counter_before=state["open_signals_today"].get(tier, 0),
+                    counter_after=state["open_signals_today"].get(tier, 0),
+                    counted=False,
+                    telegram_ok=False,
+                    message_id=None,
+                    error=None,
+                    dedup_key=tier_dedup_key(tier, signal_id, stage),
+                    was_duplicate=False,
+                    dedup_action="skip_silent",
+                    chat_id=int(chat_id)
+                )
+                continue
+
+            # If OPEN_NOW and limit reached -> block (and stay SILENT)
+            if stage == "OPEN_NOW" and dest["applies_limits"]:
+                lim = limits.get(tier)
+                if isinstance(lim, int):
+                    counter = int(state["open_signals_today"].get(tier, 0))
+                    if counter >= lim:
+                        state["tier_state"][tier] = "SILENT"
+                        save_state(state)
+
+                        _log_tier_publish(
+                            now_ts=now_ts,
+                            tier=tier,
+                            event=event,
+                            publish_decision="SKIPPED_LIMIT",
+                            tier_state_before=tier_state_before,
+                            tier_state_after="SILENT",
+                            limit=lim,
+                            counter_before=counter,
+                            counter_after=counter,
+                            counted=False,
+                            telegram_ok=False,
+                            message_id=None,
+                            error="limit_reached",
+                            dedup_key=tier_dedup_key(tier, signal_id, stage),
+                            was_duplicate=False,
+                            dedup_action="skip_limit",
+                            chat_id=int(chat_id)
+                        )
+                        continue
+
+        # Tier dedup (for real tiers) + mirror dedup (use pseudo-tier key)
+        dedup_tier_key = tier if dest["is_tier"] else "ADMIN_SIGNALS_LIVE"
+        dedup_key = tier_dedup_key(dedup_tier_key, signal_id, stage)
+        was_dup = tier_dedup_check(state, dedup_tier_key, signal_id, stage)
+        if was_dup:
+            _log_tier_publish(
+                now_ts=now_ts,
+                tier=tier,
+                event=event,
+                publish_decision="DUPLICATE_SUPPRESSED",
+                tier_state_before=tier_state_before,
+                tier_state_after=tier_state_before,
+                limit=limits.get(tier),
+                counter_before=state["open_signals_today"].get(tier, 0),
+                counter_after=state["open_signals_today"].get(tier, 0),
+                counted=False,
+                telegram_ok=False,
+                message_id=None,
+                error=None,
+                dedup_key=dedup_key,
+                was_duplicate=True,
+                dedup_action="suppress",
+                chat_id=int(chat_id)
+            )
+            continue
+
+ # Build message + optional markup
+        text = render_signal_text(event, tier_label=(tier if dest["is_tier"] else "ADMIN"))
+        reply_markup = None
+
+        # Feedback buttons only on OPEN_NOW and only in ELITE + admin signals_live mirror
+        feedback_enabled = bool(dest["feedback_enabled"]) and (stage == "OPEN_NOW")
+        if feedback_enabled:
+            reply_markup = build_feedback_markup(signal_id)
+
+        # Publish
+        counter_before = int(state["open_signals_today"].get(tier, 0))
+        lim = limits.get(tier)
+        tier_state_after = tier_state_before
+        counted = False
+
+        try:
+            resp = telegram_publisher.send_message(
+                chat_id=int(chat_id),
+                text=text,
+                reply_markup=reply_markup,
+                thread_id=thread_id
+            )
+
+            ok = bool(resp.get("ok"))
+            msg_id = None
+            if ok:
+                msg_id = resp.get("result", {}).get("message_id")
+
+            # mark dedup on attempt (only if telegram ok)
+            if ok:
+                tier_dedup_mark(state, dedup_tier_key, signal_id, stage)
+
+                # Count only OPEN_NOW published successfully AND tier is FREE/BASIC/PRO
+                if dest["is_tier"] and stage == "OPEN_NOW" and dest["applies_limits"]:
+                    state["open_signals_today"][tier] = counter_before + 1
+                    counted = True
+
+                    # if reached limit -> SILENT
+                    if isinstance(lim, int) and state["open_signals_today"][tier] >= lim:
+                        state["tier_state"][tier] = "SILENT"
+                        tier_state_after = "SILENT"
+
+                # outcomes register (first successful OPEN_NOW with feedback buttons)
+                if stage == "OPEN_NOW" and feedback_enabled and msg_id:
+                    _try_register_open_for_outcomes(
+                        signal_id=signal_id,
+                        chat_id=int(chat_id),
+                        message_id=int(msg_id),
+                        open_now_ts=int(event.get("created_ts") or now_ts),
+                        expiry_minutes=int(event.get("expiry_minutes") or 0),
+                    )
+
+                save_state(state)
+
+                _log_tier_publish(
+                    now_ts=now_ts,
+                    tier=tier if dest["is_tier"] else "ELITE",
+                    event=event,
+                    publish_decision="PUBLISHED",
+                    tier_state_before=tier_state_before,
+                    tier_state_after=tier_state_after,
+                    limit=lim,
+                    counter_before=counter_before,
+                    counter_after=int(state["open_signals_today"].get(tier, 0)),
+                    counted=counted,
+                    telegram_ok=True,
+                    message_id=msg_id,
+                    error=None,
+                    dedup_key=dedup_key,
+                    was_duplicate=False,
+                    dedup_action="publish",
+                    chat_id=int(chat_id)
+                )
+            else:
+                # failed publish
+                _log_tier_publish(
+                    now_ts=now_ts,
+                    tier=tier if dest["is_tier"] else "ELITE",
+                    event=event,
+                    publish_decision="FAILED",
+                    tier_state_before=tier_state_before,
+                    tier_state_after=tier_state_before,
+                    limit=lim,
+                    counter_before=counter_before,
+                    counter_after=counter_before,
+                    counted=False,
+                    telegram_ok=False,
+                    message_id=None,
+                    error=str(resp),
+                    dedup_key=dedup_key,
+                    was_duplicate=False,
+                    dedup_action="fail",
+                    chat_id=int(chat_id)
+                )
+
+        except Exception as e:
+            _log_tier_publish(
+                now_ts=now_ts,
+                tier=tier if dest["is_tier"] else "ELITE",
+                event=event,
+                publish_decision="FAILED",
+                tier_state_before=tier_state_before,
+                tier_state_after=tier_state_before,
+                limit=lim,
+                counter_before=counter_before,
+                counter_after=counter_before,
+                counted=False,
+                telegram_ok=False,
+                message_id=None,
+                error=str(e),
+                dedup_key=dedup_key,
+                was_duplicate=False,
+                dedup_action="exception",
+                chat_id=int(chat_id)
+            )

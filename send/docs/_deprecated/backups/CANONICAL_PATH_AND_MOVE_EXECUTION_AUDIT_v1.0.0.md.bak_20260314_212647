@@ -1,0 +1,268 @@
+# CANONICAL_PATH_AND_MOVE_EXECUTION_AUDIT_v1.0.0
+
+Version: 1.0.0  
+Status: Canonical Active Controlled Move Execution Audit  
+Owner: BinaryBot / DROPi Signals  
+Scope: Explicit move/stay decisions, target paths, reference repair requirements, deprecation actions, and execution readiness for canonical path normalization before final pre-code consistency audit  
+
+Depends on:
+- canonical/active/CANONICAL_STRATEGY_STACK_v1.0.0.md
+- DOCUMENT_NORMALIZATION_AND_DEPRECATION_PLAN_v1.0.0.md
+- CANONICAL_DOC_REALITY_REPORT_v1.0.0.md
+- CANONICAL_DOC_CONFLICT_RESOLUTION_PLAN_v1.0.0.md
+- canonical/active/ALGO_SPEC_v2.0.0.md
+- canonical/active/TIME_MODEL_UNIFIED_CANON_v2.0.0.md
+- canonical/active/SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md
+- canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md
+- canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md
+- canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md
+- canonical/active/OBSERVABILITY_SPEC_v2.0.0.md
+
+---
+
+## 1. PURPOSE
+
+Acest document definește auditul executabil pentru mutarea controlată a documentelor canonice și pentru normalizarea finală a path-urilor.
+
+Scopul lui este:
+- să decidă explicit pentru fiecare document relevant: move now / stay / move later
+- să definească target path-ul pentru documentele mutate
+- să identifice referințele care trebuie reparate
+- să definească acțiunea de deprecare după mutare
+- să reducă riscul de lanț rupt între documentele active
+- să pregătească pasul de execuție reală a mutărilor
+
+Acest document nu execută mutările.
+El definește **planul de execuție concret** pentru ele.
+
+---
+
+## 2. CORE PRINCIPLE
+
+Nu mutăm documente pentru estetică.
+Mutăm documente doar dacă mutarea:
+- clarifică statutul canonic
+- reduce ambiguitatea
+- nu rupe lanțul activ
+- poate fi auditată și reparată corect
+
+Dacă o mutare nu trece acest test, documentul trebuie să rămână pe loc până la o fereastră mai sigură.
+
+---
+
+## 3. EXECUTION DECISION MODEL
+
+Pentru fiecare document relevant, decizia trebuie să fie una dintre:
+
+- **MOVE_NOW** — documentul este gata de mutare imediată, cu reference repair controlat
+- **STAY_NOW** — documentul rămâne temporar pe loc pentru a evita ruperea lanțului
+- **MOVE_LATER** — documentul trebuie mutat, dar nu în primul val
+- **DEPRECATE** — documentul nu mai trebuie să rămână în lanțul activ
+- **EXCLUDE** — document tehnic, backup, draft sau istoric, exclus din lanțul activ
+
+---
+
+## 4. ROOT ACTIVE SET DECISION TABLE
+
+### 4.1 Root active docs
+
+| Document | Current Path | Target Path | Decision | Reference Repair Needed | Deprecation Action | Risk |
+|---|---|---|---|---|---|---|
+| canonical/active/CANONICAL_STRATEGY_STACK_v1.0.0.md | docs/ | docs/canonical/active/ | MOVE_NOW | yes | old path deprecated after move | medium |
+| canonical/active/ALGO_SPEC_v2.0.0.md | docs/ | docs/canonical/active/ | MOVE_NOW | yes | old path deprecated after move | medium |
+| canonical/active/TIME_MODEL_UNIFIED_CANON_v2.0.0.md | docs/canonical/active/ | same | STAY_NOW | no | none | low |
+| canonical/active/SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md | docs/ | docs/canonical/active/ | MOVE_NOW | yes | old path deprecated after move | medium |
+| canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md | docs/ | docs/canonical/active/ | MOVE_NOW | yes | old path deprecated after move | medium |
+| canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md | docs/ | docs/canonical/active/ | MOVE_NOW | yes | old path deprecated after move | medium |
+| canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md | docs/ | docs/canonical/active/ | MOVE_NOW | yes | old path deprecated after move | medium |
+| canonical/active/OBSERVABILITY_SPEC_v2.0.0.md | docs/ | docs/canonical/active/ | MOVE_NOW | yes | old path deprecated after move | medium |
+
+---
+
+## 5. SUPPORTING ACTIVE SET DECISION TABLE
+
+### 5.1 Supporting docs
+
+| Document | Current Path | Target Path | Decision | Reference Repair Needed | Deprecation Action | Risk |
+|---|---|---|---|---|---|---|
+| DOCUMENT_NORMALIZATION_AND_DEPRECATION_PLAN_v1.0.0.md | docs/ | docs/canonical/supporting/ or stay docs/ | MOVE_LATER | yes | none yet | medium |
+| CANONICAL_DOC_REALITY_REPORT_v1.0.0.md | docs/ | docs/canonical/supporting/ or stay docs/ | MOVE_LATER | yes | none yet | medium |
+| CANONICAL_DOC_CONFLICT_RESOLUTION_PLAN_v1.0.0.md | docs/ | docs/canonical/supporting/ or stay docs/ | MOVE_LATER | yes | none yet | medium |
+| CANONICAL_CODE_ALIGNMENT_MATRIX_v1.0.0.md | docs/ | docs/canonical/supporting/ or stay docs/ | STAY_NOW | audit first | none yet | medium |
+| CANONICAL_CODE_ALIGNMENT_AUDIT_v1.0.0.md | docs/ | docs/canonical/supporting/ or stay docs/ | STAY_NOW | audit first | none yet | medium |
+| CANONICAL_REFACTOR_PLAN_v1.0.0.md | docs/ | docs/canonical/supporting/ or stay docs/ | STAY_NOW | audit first | none yet | medium |
+| IMPLEMENTATION_STEP_PLAN_v1.0.0.md | docs/ | docs/canonical/supporting/ or stay docs/ | STAY_NOW | audit first | none yet | medium |
+
+---
+
+## 6. DOCUMENTS EXCLUDED FROM FIRST MOVE WAVE
+
+Următoarele clase sunt excluse din primul val de mutare:
+
+- `_deprecated_*`
+- `*.bak_*`
+- `*.new`
+- `*.repair`
+- fișiere temporare generate pentru rescue / formatting
+- bridge docs temporare fără autoritate finală
+- documente non-strategy admin / Telegram / other control plane neauditate încă în acest val
+
+Acestea au decizia:
+**EXCLUDE**
+
+---
+
+## 7. FIRST MOVE WAVE
+
+Primul val de mutare trebuie să includă numai root canonical active docs, pentru că acestea definesc coloana vertebrală a sistemului.
+
+Ordinea recomandată de execuție în wave 1:
+
+1. `canonical/active/CANONICAL_STRATEGY_STACK_v1.0.0.md`
+2. `canonical/active/ALGO_SPEC_v2.0.0.md`
+3. `canonical/active/SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`
+4. `canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
+5. `canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
+6. `canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`
+7. `canonical/active/OBSERVABILITY_SPEC_v2.0.0.md`
+
+`TIME_MODEL_UNIFIED_CANON_v2.0.0.md` rămâne anchor stabil și nu se mută.
+
+---
+
+## 8. TARGET PATHS FOR FIRST MOVE WAVE
+
+Target path-ul recomandat pentru wave 1 este:
+
+- `docs/canonical/active/canonical/active/CANONICAL_STRATEGY_STACK_v1.0.0.md`
+- `docs/canonical/active/canonical/active/ALGO_SPEC_v2.0.0.md`
+- `docs/canonical/active/canonical/active/SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`
+- `docs/canonical/active/canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
+- `docs/canonical/active/canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
+- `docs/canonical/active/canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`
+- `docs/canonical/active/canonical/active/OBSERVABILITY_SPEC_v2.0.0.md`
+
+Aceasta consolidează root set-ul într-o singură zonă recognoscibilă.
+
+---
+
+## 9. REFERENCE REPAIR MATRIX
+
+După wave 1, trebuie reparate minimum următoarele tipuri de referințe:
+
+- `Depends on` din toate root docs mutate
+- orice referință internă către vechile path-uri din `docs/`
+- supporting docs care pointează către root docs vechi
+- documente supporting active care citează explicit noile locații active
+- eventuale documente migration care trebuie să spună clar că noile path-uri sunt autoritare
+
+---
+
+## 10. DEPRECATION ACTIONS AFTER WAVE 1
+
+După mutarea fiecărui document din wave 1:
+- path-ul vechi nu trebuie lăsat pseudo-activ
+- copia veche trebuie fie:
+  - mutată într-o zonă deprecated clară,
+  - fie prefixată clar deprecated,
+  - fie înlocuită de un bridge explicit non-authoritative, dacă alegem temporar această soluție
+
+Modelul preferat este:
+**move real + deprecated copy clară**
+nu dubluri active.
+
+---
+
+## 11. RISK ASSESSMENT BY WAVE
+
+### 11.1 Wave 1 risk
+Risc mediu controlabil, deoarece:
+- documentele sunt deja stabilizate ca conținut
+- referințele pot fi reparate sincron
+- root set-ul devine mai clar
+
+### 11.2 Supporting wave risk
+Risc mai mare, pentru că:
+- supporting docs se citesc unele pe altele
+- unele nu au fost încă reauditate complet
+- mutarea lor prea devreme poate produce zgomot inutil
+
+Prin urmare, supporting wave trebuie lăsat pentru după validarea wave 1.
+
+---
+
+## 12. STAY / MOVE_LATER JUSTIFICATION
+
+Documentele supporting rămân `STAY_NOW` sau `MOVE_LATER` deoarece:
+- nu blochează direct înțelegerea root set-ului
+- nu sunt principalul risc pentru auditul imediat pre-cod
+- necesită un val suplimentar de audit de referințe
+- mutarea lor acum ar amesteca două probleme: consolidarea root și reorganizarea governance docs
+
+---
+
+## 13. REQUIRED OUTPUT OF EXECUTION PATCH
+
+Patch-ul real de mutare trebuie să producă minimum:
+- backup înainte de mutări
+- listă exactă de fișiere mutate
+- listă de fișiere vechi depreciate
+- listă de referințe reparate
+- audit post-mutare
+- dovadă că noile path-uri există
+- dovadă că referințele principale nu mai pointează către vechile path-uri active
+
+---
+
+## 14. NO SILENT MOVE RULE
+
+Nu este permisă mutarea tăcută a documentelor.
+
+Fiecare mutare trebuie să fie:
+- explicită
+- auditată
+- documentată
+- reversibilă prin backup
+- verificată post-acțiune
+
+Fără această disciplină, mutarea devine sursă de haos.
+
+---
+
+## 15. PRE-CODE GATE
+
+Înainte de a declara documentația gata pentru audit pe cod,
+trebuie să fie adevărate toate cele de mai jos:
+
+- wave 1 root move executat sau blocat explicit ca stay, cu justificare
+- referințele root validate
+- deprecated docs excluse din lanțul activ
+- reality report actualizat implicit de rezultatul mutării
+- root set recognoscibil și stabil
+
+Fără asta, nu trecem legitim la cod.
+
+---
+
+## 16. REQUIRED NEXT ACTION
+
+Următoarea acțiune corectă după acest audit este:
+
+**patch-ul real pentru wave 1 root move + reference repair + post-move audit**
+
+Acesta trebuie să fie primul patch documentar de mutare efectivă.
+
+---
+
+## 17. FINAL PRINCIPLE
+
+Acest audit transformă ideea de normalizare într-un plan executabil.
+
+De aici înainte, nu mai întrebăm generic „ce mutăm?”.
+Avem deja o decizie clară:
+- root active docs: MOVE_NOW în wave 1
+- time canon: STAY
+- supporting docs: STAY_NOW / MOVE_LATER
+- deprecated / backups / drafts: EXCLUDE
+
+Aceasta este baza formală pentru patch-ul real de controlled move.

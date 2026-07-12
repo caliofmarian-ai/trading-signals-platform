@@ -1,0 +1,29 @@
+{
+  "owner": [
+    7553887987
+  ],
+
+  "primary_admin": [
+6766367444
+],
+
+  "strategy_admin": [],
+
+  "research_admin": [],
+
+  "analyst": [],
+
+  "moderator": [],
+
+  "affiliate_admin": {
+    "AFF001": {
+      "telegram_id": 0,
+      "display_name": "Example Affiliate",
+      "commission_percent": 30,
+      "channels": [
+        "VIP_SIGNALS",
+        "FOREX_SIGNALS"
+      ]
+    }
+  }
+}

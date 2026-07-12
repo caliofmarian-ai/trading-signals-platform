@@ -1,0 +1,176 @@
+from core.storage import config_path
+# /opt/binarybot/core/signal_engine.py
+# BinaryBot — Signal Engine (one tick)
+
+from __future__ import annotations
+
+import time
+from typing import Any, Dict, List
+
+from core import storage
+from core import candle_adapter
+from core import fsm_runtime
+from core import distribution_router
+from core import observability_logger
+
+from core.strategy_v2 import decide
+
+
+ACTIVE_SYMBOLS_PATH = config_path("active_symbols.json")
+SETTINGS_PATH = config_path("settings.json")
+ALGO_PARAMS_PATH = config_path("algo_params.json")
+
+
+def _load_active_symbols() -> List[str]:
+    """
+    Supports BOTH formats:
+      A) {"symbols": ["EUR/USD", ...]}
+      B) {"forex":[...], "crypto":[...]}   <-- your current format
+    """
+    cfg = storage.load_json(ACTIVE_SYMBOLS_PATH, default={})
+    out: List[str] = []
+
+    if isinstance(cfg, dict):
+        if isinstance(cfg.get("symbols"), list):
+            out = [str(x).strip() for x in cfg["symbols"] if str(x).strip()]
+        else:
+            # new format
+            for k in ("forex", "crypto"):
+                if isinstance(cfg.get(k), list):
+                    out.extend([str(x).strip() for x in cfg[k] if str(x).strip()])
+
+    # unique, stable order
+    seen = set()
+    cleaned = []
+    for s in out:
+        if s not in seen:
+            seen.add(s)
+            cleaned.append(s)
+
+    return cleaned
+
+
+def _load_settings() -> Dict[str, Any]:
+    return storage.load_json(SETTINGS_PATH, default={"buffer_mode": "MEDIUM"})
+
+
+def _load_algo_params() -> Dict[str, Any]:
+    return storage.load_json(ALGO_PARAMS_PATH, default={})
+
+
+def _make_signal_event(decision: Dict[str, Any], now_ts: int) -> Dict[str, Any]:
+    # Minimal normalized SignalEvent for router
+    return {
+        "event_type": "signal_event",
+        "stage": decision["kind"],  # PRE / CONFIRM / OPEN_NOW
+        "signal_id": decision["signal_id"],
+        "symbol": decision["symbol"],
+        "timeframe": decision.get("timeframe") or "M1",
+        "direction": decision["direction"],
+        "score_total": float(decision["score_total"]),
+        "buffer_mode": decision["buffer_mode"],
+        "buffer_price": float(decision["buffer_price"]),
+        "expiry_minutes": int(decision["expiry_minutes"]),
+        "candle_ts": int(decision["candle_ts"]),
+        "created_ts": int(now_ts),
+        "payload": decision.get("debug") or {},
+    }
+
+
+def run_once(now_ts: int) -> None:
+    settings = _load_settings()
+    params = _load_algo_params()
+    buffer_mode = settings.get("buffer_mode", "MEDIUM")
+
+    symbols = _load_active_symbols()
+
+    # log if empty (so we know why nothing happens)
+    if not symbols:
+        observability_logger.log_warning(
+    warn_type="NO_ACTIVE_SYMBOLS",
+    message="active_symbols.json produced empty symbol list",
+    context={
+        "module": "signal_engine",
+        "active_symbols_path": ACTIVE_SYMBOLS_PATH
+    },
+    source={"module": "signal_engine", "function": "run_once"}
+)
+        return
+
+    state = fsm_runtime.load_state()
+
+    # Mode selection
+    watchlist = state.get("watchlist", []) if isinstance(state, dict) else []
+    in_focus = isinstance(watchlist, list) and len(watchlist) > 0
+
+    scan_symbols = watchlist if in_focus else symbols
+
+    for symbol in scan_symbols:
+        try:
+            # NOTE: market_client must return raw candles; adapter normalizes
+            from runtime.market_client import get_candles  # local import to avoid boot cycles
+
+            raw_m1 = get_candles(symbol, "1min")
+            raw_m5 = get_candles(symbol, "5min")
+
+            candles_m1 = candle_adapter.normalize(raw_m1, symbol=symbol, timeframe="M1")
+            candles_m5 = candle_adapter.normalize(raw_m5, symbol=symbol, timeframe="M5")
+
+            candle_adapter.validate(candles_m1)
+            candle_adapter.validate(candles_m5)
+
+            # want_open_now gate: allowed only if in focus mode
+            want_open_now = bool(in_focus)
+
+            decision = decide(
+                candles_m1=candles_m1,
+                candles_m5=candles_m5,
+                params=params,
+                buffer_mode=buffer_mode,
+                want_open_now=want_open_now,
+                context={}
+            )
+
+            # Always log the decision (observability)
+            ev = observability_logger.build_event(
+                "decision",
+                {
+                    "symbol": symbol,
+                    "decision_kind": decision.get("kind"),
+                    "signal_id": decision.get("signal_id"),
+                    "score_total": decision.get("score_total"),
+                    "buffer_mode": decision.get("buffer_mode"),
+                    "expiry_minutes": decision.get("expiry_minutes"),
+                    "candle_ts": decision.get("candle_ts"),
+                    "gates": decision.get("gates"),
+                    "debug": decision.get("debug"),
+                },
+                source={"module": "signal_engine", "function": "run_once"},
+            )
+            observability_logger.log_event(ev)
+
+            # Apply FSM transition (and persist)
+            state, transition_info = fsm_runtime.apply_transition(state, decision, now_ts)
+            fsm_runtime.save_state(state)
+
+            if transition_info:
+                ev = observability_logger.build_event(
+                    "fsm_transition",
+                    transition_info,
+                    source={"module": "signal_engine", "function": "run_once"},
+                )
+                observability_logger.log_event(ev)
+
+            # Emit only PRE/CONFIRM/OPEN_NOW
+            if decision.get("kind") in ("PRE", "CONFIRM", "OPEN_NOW"):
+                event = _make_signal_event(decision, now_ts)
+                distribution_router.route(event, now_ts)
+
+        except Exception as e:
+            observability_logger.log_error({
+                "event_type": "error",
+                "module": "signal_engine",
+                "symbol": symbol,
+                "error": str(e),
+            })
+            continue

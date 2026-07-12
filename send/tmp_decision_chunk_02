@@ -1,0 +1,120 @@
+def log_warning(
+    *,
+    warn_type: str,
+    message: str,
+    context: Optional[Dict[str, Any]] = None,
+    source: Optional[Dict[str, Any]] = None,
+) -> None:
+    e = build_error(
+        severity="WARNING",
+        error_type=warn_type,
+        message=message,
+        context=context,
+        stack=None,
+        source=source,
+    )
+    log_event(e)
+
+
+def proof(kind: str, payload: Dict[str, Any], now_ts: int) -> None:
+    """
+    Writes a proof entry to admin_proofs.jsonl and optionally mirrors to Telegram admin proof topic.
+
+===== signal_engine.py =====
+# /opt/binarybot/core/signal_engine.py
+# BinaryBot — Signal Engine (one tick)
+
+from __future__ import annotations
+
+import time
+from typing import Any, Dict, List
+
+from core import storage
+from core import candle_adapter
+from core import fsm_runtime
+from core import distribution_router
+from core import observability_logger
+
+from core.strategy_v2 import decide
+
+
+ACTIVE_SYMBOLS_PATH = "/opt/binarybot/config/active_symbols.json"
+SETTINGS_PATH = "/opt/binarybot/config/settings.json"
+ALGO_PARAMS_PATH = "/opt/binarybot/config/algo_params.json"
+
+
+def _load_active_symbols() -> List[str]:
+    """
+    Supports BOTH formats:
+      A) {"symbols": ["EUR/USD", ...]}
+      B) {"forex":[...], "crypto":[...]}   <-- your current format
+    """
+    cfg = storage.load_json(ACTIVE_SYMBOLS_PATH, default={})
+    out: List[str] = []
+
+    if isinstance(cfg, dict):
+        if isinstance(cfg.get("symbols"), list):
+            out = [str(x).strip() for x in cfg["symbols"] if str(x).strip()]
+        else:
+            # new format
+            for k in ("forex", "crypto"):
+                if isinstance(cfg.get(k), list):
+                    out.extend([str(x).strip() for x in cfg[k] if str(x).strip()])
+
+    # unique, stable order
+    seen = set()
+    cleaned = []
+    for s in out:
+        if s not in seen:
+            seen.add(s)
+            cleaned.append(s)
+
+    return cleaned
+
+
+def _load_settings() -> Dict[str, Any]:
+    return storage.load_json(SETTINGS_PATH, default={"buffer_mode": "MEDIUM"})
+
+
+def _load_algo_params() -> Dict[str, Any]:
+    return storage.load_json(ALGO_PARAMS_PATH, default={})
+
+
+def _make_signal_event(decision: Dict[str, Any], now_ts: int) -> Dict[str, Any]:
+    # Minimal normalized SignalEvent for router
+    return {
+        "event_type": "SIGNAL_EVENT",
+        "stage": decision["kind"],  # PRE / CONFIRM / OPEN_NOW
+        "signal_id": decision["signal_id"],
+        "symbol": decision["symbol"],
+        "timeframe": decision.get("timeframe") or "M1",
+        "direction": decision["direction"],
+        "score_total": float(decision["score_total"]),
+        "buffer_mode": decision["buffer_mode"],
+        "buffer_price": float(decision["buffer_price"]),
+        "expiry_minutes": int(decision["expiry_minutes"]),
+        "candle_ts": int(decision["candle_ts"]),
+        "created_ts": int(now_ts),
+        "payload": decision.get("debug") or {},
+    }
+
+
+def run_once(now_ts: int) -> None:
+    settings = _load_settings()
+    params = _load_algo_params()
+    buffer_mode = settings.get("buffer_mode", "MEDIUM")
+
+    symbols = _load_active_symbols()
+
+    # log if empty (so we know why nothing happens)
+    if not symbols:
+        observability_logger.log_warning(
+    warn_type="NO_ACTIVE_SYMBOLS",
+    message="active_symbols.json produced empty symbol list",
+    context={
+        "module": "signal_engine",
+        "active_symbols_path": ACTIVE_SYMBOLS_PATH
+    },
+    source={"module": "signal_engine", "function": "run_once"}
+)
+        return

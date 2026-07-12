@@ -1,0 +1,34 @@
+{
+  "algo_version": "string",
+  "strategy_v2": {
+    "ema_fast": "integer",
+    "ema_slow": "integer",
+    "rsi_period": "integer",
+    "rsi_call": "number",
+    "rsi_put": "number",
+    "min_avg_range": {
+      "FOREX_DEFAULT": "number",
+      "FOREX_JPY": "number",
+      "CRYPTO_USD": "number"
+    },
+    "scores": {
+      "CALL": "integer",
+      "PUT": "integer",
+      "NO_SIGNAL": "integer"
+    }
+  },
+  "buffer_multipliers": {
+    "SMALL": "number",
+    "MEDIUM": "number",
+    "LARGE": "number"
+  },
+  "expiry_limits_minutes": {
+    "min": "integer",
+    "max": "integer"
+  },
+  "score_thresholds": {
+    "PRE": "integer",
+    "CONFIRM": "integer",
+    "OPEN": "integer"
+  }
+}

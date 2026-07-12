@@ -1,0 +1,375 @@
+# DECISION_OBJECT_INTEGRATION_AUDIT
+
+Status: Satellite / Non-Canonical Reference
+Canonical Position: Supporting document only; does not define active canonical truth.
+Primary Active Canon: Refer to active canonical documents under /opt/binarybot/docs/canonical/active/
+
+---
+
+BINARYBOT CANONICAL SPECIFICATION
+
+DECISION OBJECT INTEGRATION AUDIT
+
+Version: 1.0.0
+Status: Canonical Audit
+Scope: Canonical Documentation Consistency
+Target: Strategy Engine / Corridor Engine / Signal Engine / FSM / Observability
+
+Dependencies:
+
+- STRATEGY_ENGINE_ARCHITECTURE_MAP_v1.0.0.md
+- canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md
+
+---
+
+1. PURPOSE OF THIS DOCUMENT
+
+Acest document definește auditul de integrare canonică al obiectului de decizie ("DecisionObject") în documentația existentă.
+
+Scopul acestui audit este:
+
+- verificarea compatibilității documentelor canonice existente cu noul model al strategiei
+- identificarea conflictelor conceptuale
+- identificarea documentelor care necesită patch sau rescriere
+- stabilirea planului de aliniere a documentației
+
+Acest audit este pasul obligatoriu înainte de modificarea codului.
+
+---
+
+2. CANONICAL BASELINE
+
+Documentele care devin referința oficială a sistemului sunt:
+
+STRATEGY_ENGINE_ARCHITECTURE_MAP_v1.0.0
+DECISION_OBJECT_CANONICAL_SPEC_v1.0.0
+
+Aceste documente definesc:
+
+- arhitectura completă a strategiei
+- contractul JSON oficial al strategiei
+- separarea modelului matematic de execuția semnalului
+
+Toate documentele existente trebuie aliniate la această bază.
+
+---
+
+3. DOCUMENTS SUBJECT TO AUDIT
+
+Următoarele documente trebuie auditate:
+
+ALGO_SPEC
+SR_CORRIDOR_ENGINE_SPEC
+SIGNAL_ENGINE_SPEC
+FSM_STATE_MACHINE_SPEC
+OBSERVABILITY_SPEC
+
+Aceste documente conțin logica operațională a sistemului.
+
+---
+
+4. AUDIT TARGETS
+
+Auditul verifică cinci categorii majore:
+
+Strategy Logic
+Time Model
+Corridor Engine
+Signal Engine
+FSM Logic
+
+Fiecare categorie trebuie verificată pentru compatibilitate cu "DecisionObject".
+
+---
+
+5. ALGO_SPEC AUDIT
+
+Rolul documentului
+
+"ALGO_SPEC" descrie logica matematică a strategiei.
+
+Acest document trebuie să producă:
+
+DecisionObject
+
+și nu mesaje de execuție.
+
+---
+
+Verificări
+
+Documentul trebuie să conțină explicit:
+
+market_model
+time_model
+scoring_model
+decision_fsm
+
+și să producă structura:
+
+DecisionObject
+
+---
+
+Conflicte posibile
+
+Documentele vechi pot conține:
+
+expiry_minutes
+recommended expiry
+direct signal generation
+
+Aceste concepte trebuie eliminate.
+
+Strategia nu produce semnalul final.
+
+Strategia produce DecisionObject.
+
+---
+
+6. TIME MODEL AUDIT
+
+Trebuie verificat dacă documentația separă corect:
+
+model_expiry_minutes
+
+de:
+
+execution expiry
+
+---
+
+Regula canonică
+
+model_expiry_minutes ≠ trade_expiry
+
+Modelul temporal este utilizat pentru:
+
+- feasibility
+- scoring
+- corridor evaluation
+
+Execuția este derivată ulterior.
+
+---
+
+7. CORRIDOR ENGINE AUDIT
+
+Documentul "SR_CORRIDOR_ENGINE_SPEC" trebuie verificat.
+
+Corridor engine trebuie să producă exclusiv:
+
+corridor_valid
+corridor_width
+corridor_open_ok
+
+---
+
+Interdicție canonică
+
+Corridor engine nu trebuie să calculeze:
+
+expiry
+recommended expiry
+expiry optimization
+
+Aceste calcule aparțin Time Model.
+
+---
+
+8. SIGNAL ENGINE AUDIT
+
+"SIGNAL_ENGINE_SPEC" trebuie verificat pentru compatibilitate cu noul contract.
+
+Signal Engine trebuie să consume:
+
+DecisionObject.execution
+
+și să construiască mesajele pentru trader.
+
+---
+
+Interdicție
+
+Signal Engine nu poate recalcula:
+
+expiry
+strategy metrics
+scoring
+
+Signal Engine este doar un translator de decizie.
+
+---
+
+9. FSM STATE MACHINE AUDIT
+
+FSM trebuie să conțină exclusiv stările canonice:
+
+NO_SIGNAL
+REJECT
+PRE
+CONFIRM
+OPEN_NOW
+
+---
+
+Verificări
+
+Fiecare stare trebuie să fie corelată cu "DecisionObject".
+
+PRE
+
+nu conține expiry extern
+
+---
+
+CONFIRM
+
+livrează:
+
+confirm_expiry_min_minutes
+confirm_expiry_max_minutes
+
+---
+
+OPEN_NOW
+
+livrează:
+
+open_now_expiry_minutes
+
+---
+
+10. OBSERVABILITY AUDIT
+
+Documentele de observability trebuie să înregistreze:
+
+DecisionObject
+state transitions
+decision_reason
+rejected_by
+diagnostics
+
+---
+
+Obiectiv
+
+Sistemul trebuie să permită analiza:
+
+de ce a fost generat semnalul
+de ce a fost respins
+de ce s-a degradat
+
+---
+
+11. CONFLICT TYPES
+
+Auditul identifică trei tipuri de conflicte.
+
+---
+
+TYPE 1 — Conceptual Conflict
+
+Exemple:
+
+expiry calculat în corridor engine
+signal generat direct din strategie
+
+Acestea contrazic noul model.
+
+---
+
+TYPE 2 — Terminology Conflict
+
+Exemple:
+
+expiry_minutes
+trade_expiry
+recommended expiry
+
+Acestea trebuie înlocuite cu termenii canonici.
+
+---
+
+TYPE 3 — Structural Conflict
+
+Exemple:
+
+documente care nu produc DecisionObject
+module care consumă date diferite
+
+---
+
+12. PATCH STRATEGY
+
+Auditul produce Wave 2 canonical patches.
+
+---
+
+Patch 1
+
+ALGO_SPEC_PATCH
+
+Scop:
+
+alinierea strategiei la "DecisionObject".
+
+---
+
+Patch 2
+
+SR_CORRIDOR_ENGINE_PATCH
+
+Scop:
+
+eliminarea logicii de expiry.
+
+---
+
+Patch 3
+
+SIGNAL_ENGINE_PATCH
+
+Scop:
+
+alinierea la contractul "DecisionObject.execution".
+
+---
+
+13. POST-AUDIT PHASE
+
+După finalizarea patch-urilor documentare:
+
+urmează etapa:
+
+CODE REALITY AUDIT
+
+Această etapă compară:
+
+documentația canonică
+vs
+codul real
+
+---
+
+14. FINAL PRINCIPLE
+
+În arhitectura BinaryBot:
+
+DOCUMENTATION
+controls
+IMPLEMENTATION
+
+Strategia este definită de documentația canonică.
+
+Codul trebuie să implementeze această documentație.
+
+Această regulă garantează:
+
+- consistența sistemului
+- auditabilitatea deciziilor
+- stabilitatea evoluției strategiei.
+
+## Non-Canonical Usage Note
+
+This document is retained as a supporting/satellite reference only. It must not be treated as active canonical truth. Where conflict exists, active canonical documents in /opt/binarybot/docs/canonical/active/ take precedence.

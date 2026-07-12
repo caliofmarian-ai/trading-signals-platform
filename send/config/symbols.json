@@ -1,0 +1,11 @@
+{
+  "forex": [
+    "EUR/USD","GBP/USD","USD/JPY","USD/CHF","USD/CAD","AUD/USD","NZD/USD",
+    "EUR/JPY","GBP/JPY","AUD/JPY","NZD/JPY",
+    "EUR/GBP","EUR/AUD","EUR/CAD","GBP/AUD","GBP/CAD","AUD/NZD"
+  ],
+  "crypto": [
+    "BTC/USD","ETH/USD","SOL/USD","BNB/USD","XRP/USD","ADA/USD","DOGE/USD",
+    "LTC/USD","DOT/USD","AVAX/USD"
+  ]
+}
