@@ -12,3 +12,7 @@ Repository baseline initialized from uploaded archive content without canonical 
 
 - [Document Inventory](./DOCUMENT_INVENTORY.md)
 - [Repository Baseline Report](./REPOSITORY_BASELINE_REPORT.md)
+
+## Audits
+
+- [Canonical Audit 01](./audit/canonical-audit-01/)
