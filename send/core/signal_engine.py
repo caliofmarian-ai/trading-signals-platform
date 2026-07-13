@@ -367,18 +367,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
 
                     try:
                         telemetry = _load_trade_temporal_telemetry()
-                        reg = telemetry.register_open_now_trade(event, now_ts)
-                        ev_reg = observability_logger.build_event(
-                            "decision",
-                            {
-                                "decision_kind": "OPEN_NOW_REGISTERED",
-                                "symbol": event.get("symbol"),
-                                "signal_id": event.get("signal_id"),
-                                "telemetry_register_status": reg.get("status") if isinstance(reg, dict) else None,
-                            },
-                            source={"module": "signal_engine", "function": "run_once"},
-                        )
-                        observability_logger.log_event(ev_reg)
+                        telemetry.register_open_now_trade(event, now_ts)
                     except Exception as reg_err:
                         try:
                             observability_logger.log_warning(

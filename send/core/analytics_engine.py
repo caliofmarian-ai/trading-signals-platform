@@ -2,7 +2,9 @@
 # BinaryBot — Analytics Engine (performance & research)
 
 from __future__ import annotations
-
+ 
+import hashlib
+import json
 import os
 import time
 from typing import Dict, Any, List
@@ -14,6 +16,22 @@ OUTCOMES_PATH = "/opt/binarybot/outcomes/outcomes.jsonl"
 
 ANALYTICS_DIR = "/opt/binarybot/analytics"
 AGGREGATES_PATH = os.path.join(ANALYTICS_DIR, "aggregates.json")
+ 
+ 
+def _member_ref_for_user(user_id: int) -> str | None:
+    salt = os.getenv("COMMUNITY_FEEDBACK_SALT", "").strip()
+    if not salt:
+        return None
+    digest = hashlib.sha256(f"{int(user_id)}:{salt}".encode("utf-8")).hexdigest().upper()
+    return f"M-{digest[:8]}"
+
+
+def _safe_json_loads(line: str) -> Dict[str, Any]:
+    try:
+        obj = json.loads(line)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
 
 
 def recompute(now_ts: int) -> Dict[str, Any]:
@@ -27,7 +45,7 @@ def recompute(now_ts: int) -> Dict[str, Any]:
     try:
         with open(OUTCOMES_PATH, "r") as f:
             for line in f:
-                rec = storage.safe_json_loads(line)
+                rec = _safe_json_loads(line)
 
                 signal_id = rec.get("signal_id")
                 outcome = rec.get("outcome")
@@ -90,13 +108,14 @@ def get_user_stats(user_id: int, range_days: int) -> Dict[str, Any]:
     wins = 0
     loses = 0
     missed = 0
-
+    member_ref = _member_ref_for_user(user_id)
+ 
     try:
         with open(OUTCOMES_PATH, "r") as f:
             for line in f:
-                rec = storage.safe_json_loads(line)
-
-                if rec.get("user_id") != user_id:
+                rec = _safe_json_loads(line)
+ 
+                if rec.get("user_id") not in {user_id, member_ref}:
                     continue
 
                 outcome = rec.get("outcome")
