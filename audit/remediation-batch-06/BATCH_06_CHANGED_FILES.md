@@ -13,6 +13,9 @@
 ## Created test files
 - `tests/batch_06/test_fsm_restart_recovery.py`
 
+## Modified regression tests
+- `tests/batch_05/test_admin_control_plane.py`
+
 ## Created remediation records
 - `audit/remediation-batch-06/BATCH_06_STATE_PATH_INVENTORY.md`
 - `audit/remediation-batch-06/BATCH_06_LIFECYCLE_FLOW_BEFORE.md`

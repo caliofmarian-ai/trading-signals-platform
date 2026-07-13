@@ -43,6 +43,9 @@
 - Updated `send/snapshots/snapshot_manager.py` to use atomic snapshot creation, schema validation, and rollback-aware restore.
 - Extended `send/schema/event_schema.json` with `recovery_started` and `recovery_completed` event families required by the restart/recovery contract.
 
+### Regression test maintenance directly required by BATCH-06
+- Updated `tests/batch_05/test_admin_control_plane.py` so the historical BATCH-05 guard no longer fails once explicit BATCH-06 remediation records exist.
+
 ## BATCH-05 permissions fallback re-inspection
 
 Result: **permitted; unchanged**.
