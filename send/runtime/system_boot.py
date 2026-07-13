@@ -8,15 +8,29 @@ import threading
 import time
 from pathlib import Path
 
+from core import storage
+
 
 def _load_env_file() -> None:
     """
-    Load /opt/binarybot/.env into os.environ before runtime imports.
+    Load a runtime env file into os.environ before runtime imports.
     Does not override variables that already exist in the environment.
     """
-    env_path = Path("/opt/binarybot/.env")
+    override = os.getenv("BINARYBOT_ENV_FILE", "").strip()
+    if override:
+        env_path = Path(override).expanduser()
+        if not env_path.is_absolute():
+            raise RuntimeError(f"BINARYBOT_ENV_FILE must be an absolute path: {override}")
+        if not env_path.is_file():
+            raise RuntimeError(f"BINARYBOT_ENV_FILE does not exist: {env_path}")
+    else:
+        candidates = [
+            Path(storage.root_path(".env")),
+            Path(storage.root_path("config", ".env")),
+        ]
+        env_path = next((candidate for candidate in candidates if candidate.is_file()), None)
 
-    if not env_path.exists():
+    if env_path is None:
         return
 
     for raw_line in env_path.read_text(encoding="utf-8").splitlines():

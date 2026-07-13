@@ -46,6 +46,7 @@ def update_symbol_replacement_score(symbol: str, score: float, now_ts: int):
 
 from core.storage import config_path
 
+import importlib
 import json
 import os
 import time
@@ -56,7 +57,6 @@ from core import candle_adapter
 from core import fsm_runtime
 from core import distribution_router
 from core import observability_logger
-from core import trade_temporal_telemetry
 
 from core.strategy_v2 import decide
 
@@ -245,6 +245,15 @@ def _log_tps_metrics(decision: Dict[str, Any], now_ts: int) -> None:
         pass
 
 
+def _load_trade_temporal_telemetry():
+    try:
+        return importlib.import_module("core.trade_temporal_telemetry")
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "trade_temporal_telemetry module is unavailable; OPEN_NOW telemetry remains deferred by GAP-001/OWNER-004"
+        ) from exc
+
+
 def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, scheduler_stage=None) -> None:
     now_ts = int(now_ts or time.time())
 
@@ -357,7 +366,8 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                         pass
 
                     try:
-                        reg = trade_temporal_telemetry.register_open_now_trade(event, now_ts)
+                        telemetry = _load_trade_temporal_telemetry()
+                        reg = telemetry.register_open_now_trade(event, now_ts)
                         ev_reg = observability_logger.build_event(
                             "decision",
                             {

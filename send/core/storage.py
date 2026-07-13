@@ -16,9 +16,44 @@ import json
 import os
 import tempfile
 import time
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Union
 
 JsonType = Union[Dict[str, Any], List[Any]]
+_PACKAGE_BASE_DIR = Path(__file__).resolve().parents[1]
+
+
+class StoragePathError(ValueError):
+    pass
+
+
+def base_dir() -> str:
+    raw = os.getenv("BINARYBOT_BASE_DIR", "").strip()
+    if raw:
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            raise StoragePathError(f"BINARYBOT_BASE_DIR must be an absolute path: {raw}")
+        if not candidate.exists():
+            raise StoragePathError(f"BINARYBOT_BASE_DIR does not exist: {candidate}")
+        if not candidate.is_dir():
+            raise StoragePathError(f"BINARYBOT_BASE_DIR must point to a directory: {candidate}")
+        return str(candidate)
+    return str(_PACKAGE_BASE_DIR)
+
+
+def root_path(*parts: str) -> str:
+    return os.path.join(base_dir(), *parts)
+
+
+def config_path(name: str) -> str:
+    config_dir = Path(root_path("config"))
+    if not config_dir.is_dir():
+        raise StoragePathError(f"config directory not found under base dir: {config_dir}")
+    return str(config_dir / name)
+
+
+def state_path(name: str) -> str:
+    return root_path("state", name)
 
 
 def _ensure_dir(path: str) -> None:
@@ -102,7 +137,7 @@ def append_jsonl(path: str, record: Dict[str, Any]) -> None:
 
 
 @contextlib.contextmanager
-def with_lock(lock_name: str, base_dir: str = "/opt/binarybot/state/.locks", timeout_sec: float = 10.0) -> Iterator[None]:
+def with_lock(lock_name: str, base_dir: Optional[str] = None, timeout_sec: float = 10.0) -> Iterator[None]:
     """
     Cross-process lock using lockfile + O_EXCL create.
     This works fine for a single host.
@@ -114,8 +149,9 @@ def with_lock(lock_name: str, base_dir: str = "/opt/binarybot/state/.locks", tim
       - "active_symbols"
       - "outcomes"
     """
-    os.makedirs(base_dir, exist_ok=True)
-    lock_path = os.path.join(base_dir, f"{lock_name}.lock")
+    lock_dir = base_dir or state_path(".locks")
+    os.makedirs(lock_dir, exist_ok=True)
+    lock_path = os.path.join(lock_dir, f"{lock_name}.lock")
 
     start = time.time()
     fd: Optional[int] = None
