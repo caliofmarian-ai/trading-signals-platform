@@ -37,7 +37,7 @@ from core.strategy_v2 import decide
 ACTIVE_SYMBOLS_PATH = config_path("active_symbols.json")
 SETTINGS_PATH = config_path("admin_settings.json")
 ALGO_PARAMS_PATH = config_path("algo_params.json")
-TPS_METRICS_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "observability", "tps_metrics.jsonl")
+TPS_METRICS_PATH = os.path.join(os.getenv("OBS_DIR", storage.root_path("observability")), "tps_metrics.jsonl")
 
 
 def _load_active_symbols() -> List[str]:
