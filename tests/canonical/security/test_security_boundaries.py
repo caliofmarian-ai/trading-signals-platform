@@ -5,8 +5,15 @@ import json
 from pathlib import Path
 
 
+def _wire_outcome_paths(outcome, root: Path) -> None:
+    outcome.OUTCOMES_JSONL = str(root / "outcomes" / "outcomes.jsonl")
+    outcome.OPEN_REGISTRY_JSON = str(root / "outcomes" / "open_now_registry.json")
+    outcome.OUTCOMES_INDEX_JSON = str(root / "outcomes" / "outcomes_index.json")
+
+
 def test_outcome_service_fails_closed_when_security_config_missing(canonical_runtime_root: Path, monkeypatch):
     outcome = importlib.import_module("core.outcome_service")
+    _wire_outcome_paths(outcome, canonical_runtime_root)
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setattr(outcome, "_elite_membership_ok", lambda user_id: (True, "ok"))
@@ -36,6 +43,7 @@ def test_unauthorized_admin_command_cannot_mutate_config(canonical_runtime_root:
 
 def test_outcome_rejects_unauthorized_callback_context(canonical_runtime_root: Path, monkeypatch):
     outcome = importlib.import_module("core.outcome_service")
+    _wire_outcome_paths(outcome, canonical_runtime_root)
 
     monkeypatch.setattr(outcome, "_elite_membership_ok", lambda user_id: (True, "ok"))
 

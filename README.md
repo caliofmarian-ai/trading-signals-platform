@@ -21,3 +21,8 @@ Repository baseline initialized from uploaded archive content without canonical 
 
 - [Canonical Audit 01](./audit/canonical-audit-01/)
 - [Canonical Reconciliation 01](./audit/canonical-reconciliation-01/)
+
+## Canonical offline tests
+
+- Default offline command: `PYTHONPATH=send python -m pytest -q tests`
+- Canonical BATCH-08 test reports: `audit/remediation-batch-08/`

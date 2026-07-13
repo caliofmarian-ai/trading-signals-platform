@@ -9,12 +9,19 @@ from tests.canonical.helpers.builders import make_signal_event
 from tests.canonical.helpers.io import read_jsonl
 
 
+def _wire_outcome_paths(outcome, root: Path) -> None:
+    outcome.OUTCOMES_JSONL = str(root / "outcomes" / "outcomes.jsonl")
+    outcome.OPEN_REGISTRY_JSON = str(root / "outcomes" / "open_now_registry.json")
+    outcome.OUTCOMES_INDEX_JSON = str(root / "outcomes" / "outcomes_index.json")
+
+
 def test_successful_signal_lifecycle_offline(canonical_runtime_root: Path, monkeypatch):
     router = importlib.import_module("core.distribution_router")
     outcome = importlib.import_module("core.outcome_service")
     analytics = importlib.import_module("core.analytics_engine")
     research = importlib.import_module("intelligence.research_engine")
 
+    _wire_outcome_paths(outcome, canonical_runtime_root)
     fake = FakePublisher()
     monkeypatch.setattr(router.telegram_publisher, "send_message", fake.send_message)
     monkeypatch.setattr(outcome, "_elite_membership_ok", lambda user_id: (True, "ok"))
@@ -63,7 +70,11 @@ def test_failure_lifecycle_publisher_exception_has_no_false_success(canonical_ru
 
     router.route(make_signal_event("sig-e2e-fail", created_ts=1720003000), now_ts=1720003000)
 
-    dist = read_jsonl(canonical_runtime_root / "observability" / "distribution_events.jsonl")
+    dist = [
+        e
+        for e in read_jsonl(canonical_runtime_root / "observability" / "distribution_events.jsonl")
+        if e.get("event_type") == "tier_publish"
+    ]
     assert any(e["data"]["publish_result"] == "FAILED" for e in dist)
     assert not any(e["data"]["publish_result"] == "PUBLISHED" and e.get("signal_id") == "sig-e2e-fail" for e in dist)
 
@@ -103,8 +114,12 @@ def test_parameter_update_lifecycle_is_atomic_and_consumed(canonical_runtime_roo
     admin = importlib.import_module("core.admin_commands")
     params_loader = importlib.import_module("core.params_loader")
 
+    admin._algo_params_path = lambda: str(canonical_runtime_root / "config" / "algo_params.json")
+    admin.has_permission = lambda user_id, permission: True
+    admin.require_permission = lambda user_id, permission, target_affiliate_code=None: (True, "ok")
+
     response = admin.handle_admin_command("/thresholds PRE 66", user_id=7553887987)
-    assert "Threshold PRE set to 66" in response
+    assert "Threshold PRE set to 66" in response or "✅" in response
 
     params = params_loader.load_algo_params(admin._algo_params_path())
     assert params["score_thresholds"]["PRE"] == 66

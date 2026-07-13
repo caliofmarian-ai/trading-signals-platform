@@ -11,6 +11,12 @@ from tests.canonical.helpers.builders import make_signal_event
 from tests.canonical.helpers.io import read_jsonl
 
 
+def _wire_outcome_paths(outcome, root: Path) -> None:
+    outcome.OUTCOMES_JSONL = str(root / "outcomes" / "outcomes.jsonl")
+    outcome.OPEN_REGISTRY_JSON = str(root / "outcomes" / "open_now_registry.json")
+    outcome.OUTCOMES_INDEX_JSON = str(root / "outcomes" / "outcomes_index.json")
+
+
 def test_distribution_publisher_failure_has_no_false_success(canonical_runtime_root: Path, monkeypatch):
     router = importlib.import_module("core.distribution_router")
 
@@ -29,6 +35,7 @@ def test_distribution_publisher_failure_has_no_false_success(canonical_runtime_r
 def test_outcome_persistence_failure_returns_explicit_error(canonical_runtime_root: Path, monkeypatch):
     outcome = importlib.import_module("core.outcome_service")
     storage = importlib.import_module("core.storage")
+    _wire_outcome_paths(outcome, canonical_runtime_root)
 
     monkeypatch.setattr(outcome, "_elite_membership_ok", lambda user_id: (True, "ok"))
     monkeypatch.setattr(storage, "append_jsonl", lambda path, record: (_ for _ in ()).throw(OSError("disk full")))

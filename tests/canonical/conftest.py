@@ -63,6 +63,12 @@ def canonical_runtime_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
     monkeypatch.setenv("COMMUNITY_FEEDBACK_SALT", "offline-salt")
     monkeypatch.setenv("TZ", "UTC")
 
+    purge_prefixes = ("core", "runtime", "state_store", "monitoring", "snapshots", "intelligence")
+    for name in list(sys.modules.keys()):
+        if name.startswith(purge_prefixes):
+            sys.modules.pop(name, None)
+    importlib.invalidate_caches()
+
     return root
 
 

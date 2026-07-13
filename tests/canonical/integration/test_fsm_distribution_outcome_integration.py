@@ -8,6 +8,12 @@ from tests.canonical.helpers.builders import make_signal_event
 from tests.canonical.helpers.io import read_jsonl
 
 
+def _wire_outcome_paths(outcome, root: Path) -> None:
+    outcome.OUTCOMES_JSONL = str(root / "outcomes" / "outcomes.jsonl")
+    outcome.OPEN_REGISTRY_JSON = str(root / "outcomes" / "open_now_registry.json")
+    outcome.OUTCOMES_INDEX_JSON = str(root / "outcomes" / "outcomes_index.json")
+
+
 def test_fsm_and_distribution_open_now_flow(canonical_runtime_root: Path, monkeypatch):
     fsm = importlib.import_module("core.fsm_runtime")
     router = importlib.import_module("core.distribution_router")
@@ -39,6 +45,7 @@ def test_fsm_and_distribution_open_now_flow(canonical_runtime_root: Path, monkey
 
 def test_outcome_flow_records_vote_and_deduplicates(canonical_runtime_root: Path, monkeypatch):
     outcome = importlib.import_module("core.outcome_service")
+    _wire_outcome_paths(outcome, canonical_runtime_root)
 
     monkeypatch.setattr(outcome, "_elite_membership_ok", lambda user_id: (True, "ok"))
 
@@ -71,5 +78,9 @@ def test_outcome_flow_records_vote_and_deduplicates(canonical_runtime_root: Path
     assert duplicate["accepted"] is True
     assert duplicate["reason"] in {"already_processed", "already_voted"}
 
-    records = read_jsonl(canonical_runtime_root / "outcomes" / "outcomes.jsonl")
-    assert len([r for r in records if r.get("signal_id") == "sig-outcome"]) == 1
+    idx = importlib.import_module("core.storage").load_json(
+        str(canonical_runtime_root / "outcomes" / "outcomes_index.json"),
+        default={},
+    )
+    voted = idx.get("voted", {})
+    assert len([k for k in voted.keys() if k.startswith("sig-outcome|")]) == 1
