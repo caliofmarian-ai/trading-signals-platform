@@ -18,6 +18,7 @@
 - `scripts/railway_start.py`
 - `send/runtime/runtime_status.py`
 - `tests/batch_10/test_railway_deployment_preparation.py`
+- `audit/railway-deployment-preparation-01/CHANGED_FILES.md`
 - `audit/railway-deployment-preparation-01/RAILWAY_PREPARATION_SCOPE.md`
 - `audit/railway-deployment-preparation-01/PRODUCTION_PROCESS_MODEL.md`
 - `audit/railway-deployment-preparation-01/PRODUCTION_DEPENDENCY_REPORT.md`
