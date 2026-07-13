@@ -60,9 +60,10 @@ _load_env_file()
 from runtime.engine_loop import start_engine
 from runtime.telegram_updates import poll_updates
 from runtime.distribution_scheduler import scheduler_loop
+from runtime import runtime_status
 from core import fsm_runtime
 from core import distribution_router
-from core.observability_logger import build_event, log_event
+from core.observability_logger import build_event, log_event, log_warning
 from monitoring.restart_guard import mark_graceful_shutdown, record_start
 from snapshots import snapshot_manager
 
@@ -70,11 +71,44 @@ from snapshots import snapshot_manager
 _SHUTDOWN_MARKED = False
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _should_start_telegram_thread() -> bool:
+    if not _env_flag("ENABLE_TELEGRAM", default=False):
+        log_warning(
+            warn_type="telegram_disabled",
+            message="Telegram polling disabled by environment",
+            context={"component": "telegram_polling", "reason": "disabled_by_env"},
+            source={"module": "system_boot", "function": "_should_start_telegram_thread"},
+        )
+        return False
+
+    if os.getenv("TELEGRAM_BOT_TOKEN", "").strip():
+        return True
+
+    log_warning(
+        warn_type="telegram_token_missing",
+        message="Telegram polling disabled because TELEGRAM_BOT_TOKEN is missing",
+        context={"component": "telegram_polling", "reason": "token_missing"},
+        source={"module": "system_boot", "function": "_should_start_telegram_thread"},
+    )
+    return False
+
+
 def _mark_graceful_shutdown() -> None:
     global _SHUTDOWN_MARKED
     if _SHUTDOWN_MARKED:
         return
     _SHUTDOWN_MARKED = True
+    try:
+        runtime_status.write_status("stopping", "BinaryBot runtime stopping")
+    except Exception:
+        pass
     try:
         snapshot_manager.create_snapshot()
     except Exception as exc:
@@ -101,6 +135,10 @@ def _mark_graceful_shutdown() -> None:
                 "source": {"module": "system_boot", "function": "_mark_graceful_shutdown"},
             }
         )
+    try:
+        runtime_status.write_status("stopped", "BinaryBot runtime stopped gracefully")
+    except Exception:
+        pass
 
 
 def _handle_shutdown_signal(signum, _frame) -> None:
@@ -125,6 +163,11 @@ def start_system() -> None:
     _register_shutdown_hooks()
 
     start_info = record_start()
+    runtime_status.write_status(
+        "starting",
+        "BinaryBot runtime bootstrap starting",
+        shadow_mode=_env_flag("SHADOW_MODE", default=False),
+    )
     log_event(
         build_event(
             "recovery_started",
@@ -144,6 +187,11 @@ def start_system() -> None:
         fsm_runtime.load_state()
         distribution_router.load_state()
     except Exception as exc:
+        runtime_status.write_status(
+            "blocked",
+            "Runtime state validation failed during boot",
+            error=str(exc),
+        )
         log_event(
             build_event(
                 "recovery_completed",
@@ -170,6 +218,11 @@ def start_system() -> None:
         return
 
     if start_info["crash_loop"]:
+        runtime_status.write_status(
+            "blocked",
+            "Runtime boot blocked by restart guard",
+            crash_loop=True,
+        )
         log_event(
             build_event(
                 "recovery_completed",
@@ -219,15 +272,21 @@ def start_system() -> None:
     # engine thread
     engine_thread = threading.Thread(target=start_engine, daemon=True)
 
-    # telegram polling thread
-    telegram_thread = threading.Thread(target=poll_updates, daemon=True)
-
     # scheduler thread
     scheduler_thread = threading.Thread(target=scheduler_loop, daemon=True)
 
     engine_thread.start()
-    telegram_thread.start()
+    telegram_enabled = _should_start_telegram_thread()
+    if telegram_enabled:
+        telegram_thread = threading.Thread(target=poll_updates, daemon=True)
+        telegram_thread.start()
     scheduler_thread.start()
+    runtime_status.write_status(
+        "running",
+        "BinaryBot runtime running",
+        telegram_enabled=telegram_enabled,
+        shadow_mode=_env_flag("SHADOW_MODE", default=False),
+    )
 
     # keep main thread alive
     while True:

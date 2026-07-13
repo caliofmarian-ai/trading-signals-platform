@@ -3,7 +3,13 @@ import requests
 from datetime import datetime, timezone
 
 BASE_URL = "https://api.twelvedata.com/time_series"
-API_KEY = os.getenv("TWELVE_DATA_API_KEY")
+
+
+def _api_key() -> str:
+    token = os.getenv("TWELVE_DATA_API_KEY", "").strip()
+    if not token:
+        raise RuntimeError("TWELVE_DATA_API_KEY missing")
+    return token
 
 
 def fetch_klines(symbol: str, interval: str, limit: int = 50):
@@ -14,7 +20,7 @@ def fetch_klines(symbol: str, interval: str, limit: int = 50):
         "symbol": symbol,
         "interval": interval,
         "outputsize": limit,
-        "apikey": API_KEY,
+        "apikey": _api_key(),
     }
 
     last_exc = None
