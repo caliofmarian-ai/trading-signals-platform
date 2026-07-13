@@ -27,6 +27,8 @@ from core.admin_views import (
     render_symbols,
     render_unauthorized,
 )
+from core import params_loader as _params_loader
+from core import storage as _storage
 
 CONFIG_DIR = "/opt/binarybot/config"
 OBS_DIR = "/opt/binarybot/observability"
@@ -39,6 +41,13 @@ ADMIN_EVENTS_PATH = os.path.join(OBS_DIR, "admin_events.jsonl")
 ADMIN_PROOFS_PATH = os.path.join(OBS_DIR, "admin_proofs.jsonl")
 ENGINE_EVENTS_PATH = os.path.join(OBS_DIR, "engine_events.jsonl")
 
+# Canonical algo_params.json path resolved via storage when possible.
+def _algo_params_path() -> str:
+    try:
+        return _storage.config_path("algo_params.json")
+    except Exception:
+        return ALGO_PARAMS_PATH
+
 
 def _safe_load_json(path: str, default: Any) -> Any:
     if not os.path.exists(path):
@@ -48,12 +57,6 @@ def _safe_load_json(path: str, default: Any) -> Any:
             return json.load(f)
     except Exception:
         return default
-
-
-def _safe_write_json(path: str, data: Any) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def _append_jsonl(path: str, payload: Dict[str, Any]) -> None:
@@ -80,22 +83,24 @@ def _parse_command(text: str) -> List[str]:
 
 
 def _load_algo_params() -> Dict[str, Any]:
-    data = _safe_load_json(ALGO_PARAMS_PATH, {})
-    if not isinstance(data, dict):
-        data = {}
-    data.setdefault("thresholds", {})
-    data["thresholds"].setdefault("pre", 70)
-    data["thresholds"].setdefault("confirm", 75)
-    data["thresholds"].setdefault("open", 80)
-    data.setdefault("sr_buffer", 0.0006)
-    data.setdefault("spike", {})
-    data["spike"].setdefault("wick_ratio", 5.0)
-    data["spike"].setdefault("atr_jump", 2.2)
-    return data
+    """Load the canonical algo params for admin display. Returns empty dict on error."""
+    try:
+        return _params_loader.load_algo_params(_algo_params_path())
+    except (_params_loader.ParamsValidationError, _params_loader.ParamsMigrationError):
+        return {}
+    except (FileNotFoundError, OSError):
+        return {}
 
 
-def _save_algo_params(params: Dict[str, Any]) -> None:
-    _safe_write_json(ALGO_PARAMS_PATH, params)
+def _save_algo_params_validated(params: Dict[str, Any]) -> None:
+    """
+    Validate params against the canonical contract, then write atomically.
+    Raises ParamsValidationError if validation fails — does NOT write in that case.
+    """
+    _params_loader.validate_algo_params(params)
+    path = _algo_params_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    _storage.save_json_atomic(path, params)
 
 
 def _load_active_symbols_raw() -> Any:
@@ -133,10 +138,10 @@ def _save_active_symbols(symbols: List[str]) -> None:
         first_key = next(iter(existing.keys()))
         if isinstance(existing[first_key], list):
             existing[first_key] = normalized
-            _safe_write_json(ACTIVE_SYMBOLS_PATH, existing)
+            _storage.save_json_atomic(ACTIVE_SYMBOLS_PATH, existing)
             return
 
-    _safe_write_json(ACTIVE_SYMBOLS_PATH, normalized)
+    _storage.save_json_atomic(ACTIVE_SYMBOLS_PATH, normalized)
 
 
 def _load_admin_settings() -> Dict[str, Any]:
@@ -262,27 +267,52 @@ def _known_roles_for_view() -> Dict[str, List[str]]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Canonical parameter mutation helpers
+# All write functions:
+#   1. Load current canonical params (raw JSON, not validated, to allow partial files)
+#   2. Apply the mutation
+#   3. Validate full result via params_loader.validate_algo_params()
+#   4. Write atomically — only if validation passes
+# ---------------------------------------------------------------------------
+
+def _load_raw_algo_params() -> Dict[str, Any]:
+    """Load the raw JSON without validation (for mutation-then-revalidate pattern)."""
+    path = _algo_params_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def _set_threshold(field: str, value: int) -> str:
-    params = _load_algo_params()
-    params.setdefault("thresholds", {})
-    params["thresholds"][field] = value
-    _save_algo_params(params)
+    """Mutate score_thresholds.<FIELD> and persist atomically after full validation."""
+    params = _load_raw_algo_params()
+    params.setdefault("score_thresholds", {})
+    params["score_thresholds"][field.upper()] = value
+    _save_algo_params_validated(params)
     return f"Threshold {field.upper()} set to {value}."
 
 
 def _set_sr(value: float) -> str:
-    params = _load_algo_params()
-    params["sr_buffer"] = value
-    _save_algo_params(params)
-    return f"SR buffer set to {value}."
+    """Mutate sr_required_multiplier and persist atomically after full validation."""
+    params = _load_raw_algo_params()
+    params["sr_required_multiplier"] = value
+    _save_algo_params_validated(params)
+    return f"SR required multiplier set to {value}."
 
 
 def _set_spike(field: str, value: float) -> str:
-    params = _load_algo_params()
-    params.setdefault("spike", {})
-    params["spike"][field] = value
-    _save_algo_params(params)
-    return f"Spike {field} set to {value}."
+    """Mutate spike_filters.<field> and persist atomically after full validation."""
+    params = _load_raw_algo_params()
+    params.setdefault("spike_filters", {})
+    params["spike_filters"][field] = value
+    _save_algo_params_validated(params)
+    return f"Spike filter {field} set to {value}."
 
 
 def _symbols_add(symbol: str) -> str:
@@ -334,8 +364,8 @@ def handle_admin_command(text: str, user_id: int) -> str:
             if len(parts) != 3:
                 return render_error("Usage: /thresholds PRE|CONFIRM|OPEN <value>")
 
-            field = parts[1].strip().lower()
-            if field not in {"pre", "confirm", "open"}:
+            field = parts[1].strip().upper()
+            if field not in {"PRE", "CONFIRM", "OPEN"}:
                 return render_error("Threshold must be PRE, CONFIRM, or OPEN.")
 
             try:
@@ -343,10 +373,13 @@ def handle_admin_command(text: str, user_id: int) -> str:
             except Exception:
                 return render_error("Threshold value must be numeric.")
 
-            if value < 50 or value > 95:
-                return render_error("Threshold must be between 50 and 95.")
+            if value < 0 or value > 100:
+                return render_error("Threshold must be between 0 and 100.")
 
-            message = _set_threshold(field, value)
+            try:
+                message = _set_threshold(field, value)
+            except _params_loader.ParamsValidationError as exc:
+                return render_error(f"Threshold update rejected: {exc}")
             _audit(user_id, "/thresholds", "OK", {"field": field, "value": value})
             return render_ok(message)
 
@@ -355,7 +388,9 @@ def handle_admin_command(text: str, user_id: int) -> str:
                 ok, reason = require_permission(user_id, "strategy.view")
                 if not ok:
                     return render_error(reason)
-                return render_ok(f"SR buffer = {_load_algo_params().get('sr_buffer', 'N/A')}")
+                return render_ok(
+                    f"SR required multiplier = {_load_algo_params().get('sr_required_multiplier', 'N/A')}"
+                )
 
             ok, reason = require_permission(user_id, "strategy.sr.write")
             if not ok:
@@ -366,10 +401,13 @@ def handle_admin_command(text: str, user_id: int) -> str:
             except Exception:
                 return render_error("SR value must be numeric.")
 
-            if value < 0.0001 or value > 0.002:
-                return render_error("SR buffer must be between 0.0001 and 0.002.")
+            if value <= 0 or value > 10.0:
+                return render_error("SR required multiplier must be > 0 and <= 10.0.")
 
-            message = _set_sr(value)
+            try:
+                message = _set_sr(value)
+            except _params_loader.ParamsValidationError as exc:
+                return render_error(f"SR update rejected: {exc}")
             _audit(user_id, "/sr", "OK", {"value": value})
             return render_ok(message)
 
@@ -385,18 +423,28 @@ def handle_admin_command(text: str, user_id: int) -> str:
                 return render_error(reason)
 
             if len(parts) != 3:
-                return render_error("Usage: /spike wick_ratio|atr_jump <value>")
+                return render_error(
+                    "Usage: /spike wick_body_ratio_max|range_z_max|jump_vs_atr_max <value>"
+                )
 
             field = parts[1].strip().lower()
-            if field not in {"wick_ratio", "atr_jump"}:
-                return render_error("Field must be wick_ratio or atr_jump.")
+            if field not in {"wick_body_ratio_max", "range_z_max", "jump_vs_atr_max"}:
+                return render_error(
+                    "Field must be wick_body_ratio_max, range_z_max, or jump_vs_atr_max."
+                )
 
             try:
                 value = float(parts[2])
             except Exception:
                 return render_error("Spike value must be numeric.")
 
-            message = _set_spike(field, value)
+            if value <= 0:
+                return render_error("Spike filter value must be > 0.")
+
+            try:
+                message = _set_spike(field, value)
+            except _params_loader.ParamsValidationError as exc:
+                return render_error(f"Spike update rejected: {exc}")
             _audit(user_id, "/spike", "OK", {"field": field, "value": value})
             return render_ok(message)
 
