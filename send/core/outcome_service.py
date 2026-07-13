@@ -12,9 +12,9 @@ from core import observability_logger
 from core import storage
 
 
-OUTCOMES_JSONL = "/opt/binarybot/outcomes/outcomes.jsonl"
-OPEN_REGISTRY_JSON = "/opt/binarybot/outcomes/open_now_registry.json"
-OUTCOMES_INDEX_JSON = "/opt/binarybot/outcomes/outcomes_index.json"
+OUTCOMES_JSONL = storage.root_path("outcomes", "outcomes.jsonl")
+OPEN_REGISTRY_JSON = storage.root_path("outcomes", "open_now_registry.json")
+OUTCOMES_INDEX_JSON = storage.root_path("outcomes", "outcomes_index.json")
 
 VOTE_WINDOW_GRACE_SECONDS = 5 * 60
 ALLOWED_OUTCOMES = {"WIN", "LOSE", "MISSED"}
