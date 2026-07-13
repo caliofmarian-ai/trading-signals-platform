@@ -11,6 +11,7 @@ from core import storage
 from core import telegram_publisher
 from core.admin_commands import handle_admin_command as handle_admin_command_v2
 from core import observability_logger
+from core import outcome_service
 
 # ---- Paths (canonical) ----
 BASE_DIR = "/opt/binarybot"
@@ -272,7 +273,7 @@ def handle_admin_command(chat_id: int, user_id: int) -> Dict[str, Any]:
 
 
 # ---------------- Callback handlers ----------------
-def handle_callback(chat_id: int, user_id: int, data: str) -> Dict[str, Any]:
+def handle_callback(chat_id: int, user_id: int, data: str, message_id: Optional[int] = None) -> Dict[str, Any]:
     if not in_admin_context(chat_id):
         return {"text": "Access denied (wrong chat).", "reply_markup": None}
 
@@ -288,20 +289,21 @@ def handle_callback(chat_id: int, user_id: int, data: str) -> Dict[str, Any]:
         signal_id = (parts[1] or "").strip()
         outcome = (parts[2] or "").strip().upper()
 
-        res = _record_outcome(
+        res = outcome_service.handle_vote_callback(
+            user_id=user_id,
             signal_id=signal_id,
             outcome=outcome,
-            user_id=user_id,
-            admin_chat_id=chat_id,
+            now_ts=int(time.time()),
+            chat_id=chat_id,
+            message_id=message_id,
         )
+ 
+        if res.get("accepted"):
+            if res.get("reason") == "already_processed":
+                return {"text": "Outcome already recorded.", "reply_markup": None}
+            return {"text": f"OUTCOME: {outcome}", "reply_markup": None}
 
-        if not res.get("ok"):
-            return {"text": f"Outcome error: {res.get('error')}", "reply_markup": None}
-
-        if res.get("already_set"):
-            return {"text": f"Already set: {outcome}", "reply_markup": None}
-
-        return {"text": f"OUTCOME: {outcome}", "reply_markup": None}
+        return {"text": f"Outcome rejected: {res.get('reason')}", "reply_markup": None}
 
     if data.startswith("OUTCOME:"):
         parts = data.split(":", 2)
@@ -330,10 +332,16 @@ def handle_callback(chat_id: int, user_id: int, data: str) -> Dict[str, Any]:
     
     # ---- Outcome voting (public buttons) ----
     if data.startswith("VOTE_"):
-        from core import outcome_tracker
-        signal_id, outcome = data.split("|")[1:]
-        result = outcome_tracker.register_vote(signal_id, outcome, user_id, chat_id)
-        return {"text": result, "reply_markup": None}
+        res = outcome_service.handle_vote_callback_data(
+            callback_data=data,
+            user_id=user_id,
+            now_ts=int(time.time()),
+            chat_id=chat_id,
+            message_id=message_id,
+        )
+        if res.get("accepted"):
+            return {"text": "Outcome recorded.", "reply_markup": None}
+        return {"text": f"Outcome rejected: {res.get('reason')}", "reply_markup": None}
 
     if data == "ADMIN_STATUS":
         return _ui_status()
@@ -539,6 +547,7 @@ def process_update(update: Dict[str, Any]) -> None:
     try:
         msg = update.get("message") or {}
         cb = update.get("callback_query") or {}
+        text = ""
 
         if msg:
             chat_id = int(msg["chat"]["id"])
@@ -558,8 +567,10 @@ def process_update(update: Dict[str, Any]) -> None:
             data = cb.get("data") or ""
             chat_id = int(cb["message"]["chat"]["id"])
             user_id = int(cb["from"]["id"])
+            msg_obj = cb.get("message") or {}
+            message_id = msg_obj.get("message_id")
 
-            res = handle_callback(chat_id, user_id, data)
+            res = handle_callback(chat_id, user_id, data, message_id=message_id)
 
             if "send_document" in res:
                 doc = res["send_document"]
@@ -571,8 +582,6 @@ def process_update(update: Dict[str, Any]) -> None:
                 )
 
             # Edit callback message for outcome buttons; otherwise normal panel behavior
-            msg_obj = cb.get("message") or {}
-            message_id = msg_obj.get("message_id")
             original_text = msg_obj.get("text", "") or ""
 
             if data.startswith("VOTE_|") and message_id:

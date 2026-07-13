@@ -80,25 +80,81 @@ def process_update(update: Dict[str, Any]):
 
     # callback button
     if "callback_query" in update:
-
+ 
         cb = update["callback_query"]
-
+ 
         data = cb.get("data")
+        callback_id = cb.get("id")
         user_id = cb["from"]["id"]
-
+        message = cb.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        message_id = message.get("message_id")
+ 
         if data and data.startswith("VOTE_"):
-
-            parts = data.split("|")
-
-            if len(parts) == 3:
-                signal_id = parts[1]
-                outcome = parts[2]
-
-                outcome_service.handle_vote_callback(
-                    user_id=user_id,
-                    signal_id=signal_id,
-                    outcome=outcome,
-                    now_ts=int(time.time())
-                )
-
+            result = outcome_service.handle_vote_callback_data(
+                callback_data=data,
+                user_id=int(user_id),
+                now_ts=int(time.time()),
+                chat_id=int(chat_id) if chat_id is not None else None,
+                message_id=int(message_id) if message_id is not None else None,
+            )
+            _answer_callback_query(callback_id, result)
+            return
+ 
         bot_service.process_update(update)
+
+
+def _answer_callback_query(callback_id: Any, result: Dict[str, Any]) -> None:
+    if not callback_id:
+        return
+
+    accepted = bool(result.get("accepted"))
+    reason = str(result.get("reason") or "")
+    if accepted and reason == "ok":
+        text = "Outcome recorded."
+        show_alert = False
+    elif accepted and reason == "already_processed":
+        text = "Outcome already recorded."
+        show_alert = False
+    else:
+        text = {
+            "elite_membership_required": "Elite membership required.",
+            "unknown_signal_id": "Unknown signal.",
+            "unauthorized_callback_context": "Unauthorized callback context.",
+            "malformed_callback_payload": "Malformed callback payload.",
+            "missing_callback_payload": "Missing callback payload.",
+            "unknown_action": "Unknown callback action.",
+            "invalid_outcome": "Invalid outcome.",
+            "already_voted": "Outcome already submitted.",
+            "vote_window_closed": "Vote window closed.",
+            "too_early": "Vote not open yet.",
+            "bot_token_missing": "Outcome processing unavailable.",
+            "elite_channel_id_missing": "Outcome processing unavailable.",
+            "community_feedback_salt_missing": "Outcome processing unavailable.",
+            "outcome_security_config_missing": "Outcome processing unavailable.",
+            "persistence_failed": "Outcome could not be recorded.",
+        }.get(reason, "Outcome rejected.")
+        show_alert = False
+
+    try:
+        requests.post(
+            f"{_base_url()}/answerCallbackQuery",
+            json={
+                "callback_query_id": callback_id,
+                "text": text,
+                "show_alert": show_alert,
+            },
+            timeout=10,
+        )
+    except Exception:
+        observability_logger.log_warning(
+            warn_type="callback_ack_failed",
+            message="Failed to acknowledge Telegram callback",
+            context={
+                "callback_query_id": str(callback_id),
+                "result_reason": reason,
+                "accepted": accepted,
+            },
+            source={"module": "telegram_updates", "function": "_answer_callback_query"},
+        )

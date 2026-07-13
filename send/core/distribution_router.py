@@ -402,8 +402,18 @@ def _log_tier_publish(
     ))
 
 
-def _try_register_open_for_outcomes(signal_id: str, chat_id: int, message_id: int,
-                                    open_now_ts: int, expiry_minutes: int) -> None:
+def _try_register_open_for_outcomes(
+    signal_id: str,
+    chat_id: int,
+    message_id: int,
+    open_now_ts: int,
+    expiry_minutes: int,
+    *,
+    symbol: Optional[str] = None,
+    direction: Optional[str] = None,
+    timeframe: Optional[str] = None,
+    callback_route: str = "ELITE",
+) -> None:
     """
     Registers mapping once (do not overwrite).
     This enables vote validation in outcome_service even if buttons are clicked from
@@ -415,7 +425,12 @@ def _try_register_open_for_outcomes(signal_id: str, chat_id: int, message_id: in
             elite_chat_id=chat_id,
             open_message_id=message_id,
             open_now_ts=open_now_ts,
-            expiry_minutes=expiry_minutes
+            expiry_minutes=expiry_minutes,
+            symbol=symbol,
+            direction=direction,
+            timeframe=timeframe,
+            telemetry_trade_id=signal_id,
+            callback_route=callback_route,
         )
     except Exception:
         # outcome registration should never break distribution
@@ -677,6 +692,10 @@ def route(event: Dict[str, Any], now_ts: Optional[int] = None) -> None:
                         message_id=int(msg_id),
                         open_now_ts=int(event.get("created_ts") or now_ts),
                         expiry_minutes=int(event.get("expiry_minutes") or 0),
+                        symbol=event.get("symbol"),
+                        direction=event.get("direction"),
+                        timeframe=event.get("timeframe"),
+                        callback_route=route_name,
                     )
 
                 save_state(state)

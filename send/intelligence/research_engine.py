@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Dict, Any
 
@@ -15,6 +16,14 @@ ENGINE_LOG = os.path.join(OBS_DIR, "engine_events.jsonl")
 DIST_LOG = os.path.join(OBS_DIR, "distribution_events.jsonl")
 
 
+def _safe_json_loads(line: str) -> Dict[str, Any]:
+    try:
+        obj = json.loads(line)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
 def compute_signal_funnel() -> Dict[str, Any]:
 
     pre = 0
@@ -24,7 +33,7 @@ def compute_signal_funnel() -> Dict[str, Any]:
     try:
         with open(ENGINE_LOG, "r") as f:
             for line in f:
-                rec = storage.safe_json_loads(line)
+                rec = _safe_json_loads(line)
 
                 if rec.get("event_type") != "signal_event":
                     continue
@@ -59,7 +68,7 @@ def compute_outcome_stats():
     try:
         with open(OUTCOMES_PATH, "r") as f:
             for line in f:
-                rec = storage.safe_json_loads(line)
+                rec = _safe_json_loads(line)
 
                 outcome = rec.get("outcome")
 
