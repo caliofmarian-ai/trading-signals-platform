@@ -2,60 +2,97 @@ import os
 import json
 import datetime
 from collections import defaultdict
+from typing import Any, Dict, List, Optional, Tuple
 
 
-SETTINGS_PATH = "/opt/binarybot/config/intelligence_settings.json"
+# Default settings path is env-var overridable; no /opt/binarybot/ hard-requirement.
+_DEFAULT_SETTINGS_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "config",
+    "intelligence_settings.json",
+)
+SETTINGS_PATH = os.getenv("STRATEGY_AUDITOR_SETTINGS", _DEFAULT_SETTINGS_PATH)
 
 
-def load_settings():
-    if not os.path.exists(SETTINGS_PATH):
-        raise RuntimeError("Missing intelligence_settings.json")
+def load_settings(path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Load strategy auditor settings.
 
-    with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+    Accepts an explicit path argument; falls back to STRATEGY_AUDITOR_SETTINGS
+    env var; falls back to project-relative config/intelligence_settings.json.
+    Raises RuntimeError clearly if the file is missing.
+    """
+    resolved = path or SETTINGS_PATH
+    if not os.path.exists(resolved):
+        raise RuntimeError(
+            f"Strategy auditor settings file not found: {resolved}. "
+            "Set STRATEGY_AUDITOR_SETTINGS env var to override the path."
+        )
+    with open(resolved, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def _read_jsonl(path):
-    if not os.path.exists(path):
-        return []
+def _read_jsonl(path: str) -> Tuple[List[Dict[str, Any]], int]:
+    """
+    Read a JSONL file and return (valid_records, invalid_count).
 
-    out = []
+    Invalid lines are counted and reported, not silently dropped.
+    Missing files return ([], 0) without error.
+    """
+    if not os.path.exists(path):
+        return [], 0
+
+    records: List[Dict[str, Any]] = []
+    invalid_count = 0
 
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
+        for line_number, line in enumerate(f, start=1):
             line = line.strip()
-
             if not line:
                 continue
-
             try:
                 obj = json.loads(line)
-                out.append(obj)
-            except Exception:
-                continue
+                if not isinstance(obj, dict):
+                    invalid_count += 1
+                    continue
+                records.append(obj)
+            except json.JSONDecodeError:
+                invalid_count += 1
 
-    return out
+    return records, invalid_count
 
 
-def load_all_events(settings):
+def load_all_events(settings: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Load all event sources defined in settings["sources"].
 
+    Returns the event collections plus per-source invalid record counts.
+    """
     sources = settings["sources"]
 
-    engine = _read_jsonl(sources["engine_events"])
-    fsm = _read_jsonl(sources["fsm_events"])
-    distribution = _read_jsonl(sources["distribution_events"])
-    errors = _read_jsonl(sources["error_events"])
+    engine_records, engine_invalid = _read_jsonl(sources["engine_events"])
+    fsm_records, fsm_invalid = _read_jsonl(sources["fsm_events"])
+    distribution_records, distribution_invalid = _read_jsonl(sources["distribution_events"])
+    error_records, error_invalid = _read_jsonl(sources["error_events"])
 
-    outcomes = []
+    outcomes: List[Dict[str, Any]] = []
+    outcomes_invalid = 0
     if os.path.exists(sources["outcomes"]):
-        outcomes = _read_jsonl(sources["outcomes"])
+        outcomes, outcomes_invalid = _read_jsonl(sources["outcomes"])
 
     return {
-        "engine": engine,
-        "fsm": fsm,
-        "distribution": distribution,
-        "errors": errors,
+        "engine": engine_records,
+        "fsm": fsm_records,
+        "distribution": distribution_records,
+        "errors": error_records,
         "outcomes": outcomes,
+        "invalid_counts": {
+            "engine": engine_invalid,
+            "fsm": fsm_invalid,
+            "distribution": distribution_invalid,
+            "errors": error_invalid,
+            "outcomes": outcomes_invalid,
+        },
     }
 
 
@@ -321,8 +358,16 @@ def compute_symbol_health(decisions, settings):
     return result
 
 
-def build_report(events, settings):
+def build_report(events: Dict[str, Any], settings: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build the daily strategy audit report from loaded events.
 
+    The report includes:
+    - input_sources: number of valid and invalid records per source
+    - period: the UTC date analyzed
+    - findings derived only from valid, deduplicated decision events
+    - Does not mutate runtime config or live strategy parameters.
+    """
     decisions = filter_decision_events(events["engine"])
 
     decision_distribution = compute_decision_distribution(decisions)
@@ -341,8 +386,32 @@ def build_report(events, settings):
 
     now = datetime.datetime.utcnow().strftime("%Y-%m-%d")
 
-    report = {
+    invalid_counts = events.get("invalid_counts", {})
+
+    report: Dict[str, Any] = {
         "date": now,
+        "input_sources": {
+            "engine_events": {
+                "valid": len(events.get("engine", [])),
+                "invalid": invalid_counts.get("engine", 0),
+            },
+            "fsm_events": {
+                "valid": len(events.get("fsm", [])),
+                "invalid": invalid_counts.get("fsm", 0),
+            },
+            "distribution_events": {
+                "valid": len(events.get("distribution", [])),
+                "invalid": invalid_counts.get("distribution", 0),
+            },
+            "error_events": {
+                "valid": len(events.get("errors", [])),
+                "invalid": invalid_counts.get("errors", 0),
+            },
+            "outcomes": {
+                "valid": len(events.get("outcomes", [])),
+                "invalid": invalid_counts.get("outcomes", 0),
+            },
+        },
         "decisions": decision_distribution["total"],
         "pre": decision_distribution["PRE"],
         "confirm": decision_distribution["CONFIRM"],
@@ -356,12 +425,24 @@ def build_report(events, settings):
         "heatmap": heatmap,
         "bottleneck": bottleneck,
         "symbol_health": symbol_health,
+        "limitations": [] if decision_distribution["total"] > 0 else [
+            "No decision events found in engine log."
+        ],
     }
 
     return report
 
 
-def write_reports(report, settings):
+def write_reports(report: Dict[str, Any], settings: Dict[str, Any]) -> None:
+    """
+    Write report outputs atomically.
+
+    - JSON report: written atomically via tempfile + os.replace to prevent
+      partial overwrites. Failed write preserves the last valid report.
+    - Markdown report: written atomically in the same manner.
+    - Does not mutate runtime config or live strategy parameters.
+    """
+    import tempfile
 
     output_dir = settings["reports"]["output_dir"]
 
@@ -380,33 +461,53 @@ def write_reports(report, settings):
     )
 
     if settings["reports"]["write_json"]:
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2)
+        fd, tmp_path = tempfile.mkstemp(prefix=".tmp_", suffix=".json", dir=output_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, json_path)
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
 
     if settings["reports"]["write_markdown"]:
-
-        with open(md_path, "w", encoding="utf-8") as f:
-
-            f.write("# Strategy Audit\n\n")
-
-            f.write(f"Date: {report['date']}\n\n")
-
-            f.write("## Decision Distribution\n\n")
-            f.write(json.dumps({
+        content_parts = [
+            "# Strategy Audit\n\n",
+            f"Date: {report['date']}\n\n",
+            "## Decision Distribution\n\n",
+            json.dumps({
                 "PRE": report["pre"],
                 "CONFIRM": report["confirm"],
                 "OPEN_NOW": report["open_now"],
                 "REJECT": report["rejects"],
-            }, indent=2))
+            }, indent=2),
+            "\n\n## Top Reject Reasons\n\n",
+            json.dumps(report["top_reject_reasons"], indent=2),
+            "\n\n## Heatmap\n\n",
+            json.dumps(report["heatmap"], indent=2),
+            "\n\n## Bottleneck\n\n",
+            json.dumps(report["bottleneck"], indent=2),
+            "\n\n## Symbol Health\n\n",
+            json.dumps(report["symbol_health"], indent=2),
+        ]
+        content = "".join(content_parts)
 
-            f.write("\n\n## Top Reject Reasons\n\n")
-            f.write(json.dumps(report["top_reject_reasons"], indent=2))
-
-            f.write("\n\n## Heatmap\n\n")
-            f.write(json.dumps(report["heatmap"], indent=2))
-
-            f.write("\n\n## Bottleneck\n\n")
-            f.write(json.dumps(report["bottleneck"], indent=2))
-
-            f.write("\n\n## Symbol Health\n\n")
-            f.write(json.dumps(report["symbol_health"], indent=2))
+        fd, tmp_path = tempfile.mkstemp(prefix=".tmp_", suffix=".md", dir=output_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, md_path)
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass

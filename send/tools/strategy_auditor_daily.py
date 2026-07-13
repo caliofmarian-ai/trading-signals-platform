@@ -1,7 +1,7 @@
 import sys
 import traceback
 
-from strategy_auditor_lib import (
+from tools.strategy_auditor_lib import (
     load_settings,
     load_all_events,
     build_report,

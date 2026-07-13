@@ -3,7 +3,8 @@ import json
 from typing import Optional, Dict, Any
 
 
-REPORTS_DIR = "/opt/binarybot/analytics/reports"
+_ANALYTICS_BASE = os.getenv("ANALYTICS_DIR", "/opt/binarybot/analytics")
+REPORTS_DIR = os.path.join(_ANALYTICS_BASE, "reports")
 
 
 def _safe_load_json(path: str) -> Optional[Dict[str, Any]]:
