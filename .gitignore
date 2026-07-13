@@ -1,0 +1,47 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pycache
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Runtime logs (should not be version-controlled)
+*.log
+engine.log
+
+# Temporary decision/patch working files
+tmp_decision_*
+
+# Development archives
+*.zip
+
+# Pytest cache
+.pytest_cache/
+.cache/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lock files written by storage.with_lock
+send/state/.locks/
+
+# Runtime observability output (test artifacts and live write targets)
+# Note: existing empty placeholder *.jsonl files in send/observability/ remain tracked;
+# new test-generated content accumulation is suppressed here.
+send/observability/*.jsonl.tmp

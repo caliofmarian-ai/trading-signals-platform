@@ -30,16 +30,16 @@ from core.admin_views import (
 from core import params_loader as _params_loader
 from core import storage as _storage
 
-CONFIG_DIR = "/opt/binarybot/config"
-OBS_DIR = "/opt/binarybot/observability"
-REPORTS_DIR = "/opt/binarybot/analytics/reports"
+CONFIG_DIR = _storage.root_path("config")
+OBS_DIR = os.getenv("OBS_DIR", _storage.root_path("observability"))
+REPORTS_DIR = os.path.join(os.getenv("ANALYTICS_DIR", _storage.root_path("analytics")), "reports")
 
 ALGO_PARAMS_PATH = os.path.join(CONFIG_DIR, "algo_params.json")
 ACTIVE_SYMBOLS_PATH = os.path.join(CONFIG_DIR, "active_symbols.json")
 ADMIN_SETTINGS_PATH = os.path.join(CONFIG_DIR, "admin_settings.json")
-ADMIN_EVENTS_PATH = os.path.join(OBS_DIR, "admin_events.jsonl")
-ADMIN_PROOFS_PATH = os.path.join(OBS_DIR, "admin_proofs.jsonl")
-ENGINE_EVENTS_PATH = os.path.join(OBS_DIR, "engine_events.jsonl")
+ADMIN_EVENTS_PATH = os.path.join(os.getenv("OBS_DIR", _storage.root_path("observability")), "admin_events.jsonl")
+ADMIN_PROOFS_PATH = os.path.join(os.getenv("OBS_DIR", _storage.root_path("observability")), "admin_proofs.jsonl")
+ENGINE_EVENTS_PATH = os.path.join(os.getenv("OBS_DIR", _storage.root_path("observability")), "engine_events.jsonl")
 
 # Canonical algo_params.json path resolved via storage when possible.
 def _algo_params_path() -> str:

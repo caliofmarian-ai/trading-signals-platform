@@ -384,7 +384,7 @@ def build_report(events: Dict[str, Any], settings: Dict[str, Any]) -> Dict[str, 
 
     symbol_health = compute_symbol_health(decisions, settings)
 
-    now = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
 
     invalid_counts = events.get("invalid_counts", {})
 
