@@ -8,37 +8,9 @@ def update_symbol_replacement_score(symbol: str, score: float, now_ts: int):
     It only exposes symbol strength to the scheduler.
     """
 
-    try:
-        from core import fsm_runtime
-        from core.scan_scheduler import _focus_state_path
-        import json
-        import os
+    from core import fsm_runtime
 
-        path = _focus_state_path()
-
-        if not os.path.isfile(path):
-            return
-
-        with open(path, "r", encoding="utf-8") as f:
-            state = json.load(f)
-
-        if not isinstance(state, dict):
-            return
-
-        per_symbol = state.setdefault("per_symbol", {})
-        ps = per_symbol.setdefault(symbol, {})
-
-        ps["replacement_score"] = float(score)
-        ps["replacement_score_ts"] = int(now_ts)
-
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False, indent=2)
-
-        os.replace(tmp, path)
-
-    except Exception:
-        pass
+    fsm_runtime.update_symbol_replacement_score(symbol=symbol, score=score, now_ts=now_ts)
 
 
 # /opt/binarybot/core/signal_engine.py
@@ -57,12 +29,13 @@ from core import candle_adapter
 from core import fsm_runtime
 from core import distribution_router
 from core import observability_logger
+from state_store import state_store as runtime_state_store
 
 from core.strategy_v2 import decide
 
 
 ACTIVE_SYMBOLS_PATH = config_path("active_symbols.json")
-SETTINGS_PATH = config_path("settings.json")
+SETTINGS_PATH = config_path("admin_settings.json")
 ALGO_PARAMS_PATH = config_path("algo_params.json")
 TPS_METRICS_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "observability", "tps_metrics.jsonl")
 
@@ -73,7 +46,7 @@ def _load_active_symbols() -> List[str]:
       A) {"symbols": ["EUR/USD", ...]}
       B) {"forex":[...], "crypto":[...]}   <-- current format
     """
-    cfg = storage.load_json(ACTIVE_SYMBOLS_PATH, default={})
+    cfg = runtime_state_store.load_active_symbols(path=ACTIVE_SYMBOLS_PATH)
     out: List[str] = []
 
     if isinstance(cfg, dict):
@@ -95,7 +68,7 @@ def _load_active_symbols() -> List[str]:
 
 
 def _load_settings() -> Dict[str, Any]:
-    return storage.load_json(SETTINGS_PATH, default={"buffer_mode": "MEDIUM"})
+    return runtime_state_store.load_settings(path=SETTINGS_PATH)
 
 
 def _load_algo_params() -> Dict[str, Any]:
@@ -254,6 +227,23 @@ def _load_trade_temporal_telemetry():
         ) from exc
 
 
+def _normalize_decision_for_fsm(decision: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    kind = str(decision.get("kind") or "").strip().upper()
+    symbol = str(decision.get("symbol") or "").strip()
+    if not symbol:
+        return decision
+
+    watchlist = state.get("watchlist", []) if isinstance(state, dict) else []
+    if kind == "CONFIRM" and symbol not in watchlist:
+        debug = dict(decision.get("debug") or {})
+        debug["fsm_normalized_from"] = "CONFIRM"
+        normalized = dict(decision)
+        normalized["kind"] = "PRE"
+        normalized["debug"] = debug
+        return normalized
+    return decision
+
+
 def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, scheduler_stage=None) -> None:
     now_ts = int(now_ts or time.time())
 
@@ -276,6 +266,17 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
         return
 
     state = fsm_runtime.load_state()
+    state, maintenance_events = fsm_runtime.reconcile_state(state, now_ts, active_symbols=symbols)
+    if maintenance_events:
+        fsm_runtime.save_state(state)
+        for maintenance_event in maintenance_events:
+            observability_logger.log_event(
+                observability_logger.build_event(
+                    "fsm_transition",
+                    maintenance_event,
+                    source={"module": "signal_engine", "function": "run_once"},
+                )
+            )
 
     watchlist = state.get("watchlist", []) if isinstance(state, dict) else []
     natural_in_focus = isinstance(watchlist, list) and len(watchlist) > 0
@@ -310,6 +311,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                 want_open_now=want_open_now,
                 context={}
             )
+            decision = _normalize_decision_for_fsm(decision, state)
 
             debug_payload = decision.get("debug") or {}
             threshold_block = debug_payload.get("thresholds") or {}
@@ -384,6 +386,17 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                             pass
 
                 distribution_router.route(event, now_ts)
+
+                if decision.get("kind") == "OPEN_NOW":
+                    state, close_event = fsm_runtime.complete_open_now(state, decision, now_ts)
+                    fsm_runtime.save_state(state)
+                    observability_logger.log_event(
+                        observability_logger.build_event(
+                            "fsm_transition",
+                            close_event,
+                            source={"module": "signal_engine", "function": "run_once"},
+                        )
+                    )
 
         except Exception as e:
             observability_logger.log_error({

@@ -13,12 +13,13 @@ from core import storage
 from core import telegram_publisher
 from core import observability_logger
 from core import outcome_service
+from state_store import state_store as runtime_state_store
 
 # -----------------------------
 # Paths / timezone
 # -----------------------------
 
-DIST_STATE_PATH = "/opt/binarybot/state/dist_state.json"
+DIST_STATE_PATH = runtime_state_store.DIST_STATE_PATH
 CHANNEL_CONFIG_PATHS = [
     storage.config_path("channel_config.json"),
     storage.config_path("channel-config.json"),
@@ -117,29 +118,15 @@ def _normalize_legacy_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
 # -----------------------------
 
 def _default_state() -> Dict[str, Any]:
-    return {
-        "version": "1.0.0",
-        "last_reset_london_date": None,  # "YYYY-MM-DD"
-        "tier_state": {t: "ACTIVE" for t in TIERS},
-        "open_signals_today": {t: 0 for t in TIERS},
-        "dedup": {},  # { "TIER|signal_id|stage": true }
-        "last_updated_ts": int(time.time()),
-    }
+    return runtime_state_store.default_dist_state()
 
 
 def load_state() -> Dict[str, Any]:
-    st = storage.load_json(DIST_STATE_PATH, default=_default_state())
-    # ensure keys exist
-    st.setdefault("tier_state", {t: "ACTIVE" for t in TIERS})
-    st.setdefault("open_signals_today", {t: 0 for t in TIERS})
-    st.setdefault("dedup", {})
-    st.setdefault("last_reset_london_date", None)
-    return st
+    return runtime_state_store.load_dist_state(path=DIST_STATE_PATH)
 
 
 def save_state(state: Dict[str, Any]) -> None:
-    state["last_updated_ts"] = int(time.time())
-    storage.save_json_atomic(DIST_STATE_PATH, state)
+    runtime_state_store.save_dist_state(state, path=DIST_STATE_PATH)
 
 
 # -----------------------------
