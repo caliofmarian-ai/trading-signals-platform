@@ -67,7 +67,7 @@ def register_open_now(
     _save_registry(reg)
 
     observability_logger.log_event({
-        "event_type": "outcome_register_open_now",
+        "event_type": "outcome_panel_enabled",
         "signal_id": str(signal_id),
         "tier": "ELITE",
         "data": {
@@ -175,14 +175,18 @@ def handle_vote_callback(
     # Membership check (ELITE only)
     ok_member, member_reason = _elite_membership_ok(int(user_id))
     if not ok_member:
-        observability_logger.log_warning({
-            "event_type": "warning",
-            "module": "outcome_service",
-            "warning": "OUTCOME_REJECTED_NOT_ELITE",
-            "user_id": int(user_id),
-            "signal_id": signal_id,
-            "data": {"reason": member_reason}
-        })
+        observability_logger.log_warning(
+            warn_type="membership_verification_failed",
+            message="Outcome submission rejected because ELITE membership verification failed",
+            context={
+                "user_id": int(user_id),
+                "signal_id": signal_id,
+                "failure_reason": member_reason,
+                "route": "ELITE",
+            },
+            source={"module": "outcome_service", "function": "handle_vote_callback"},
+            correlation={"signal_id": signal_id, "tier": "ELITE", "user_id": int(user_id)},
+        )
         return {"accepted": False, "reason": "elite_membership_required"}
 
     reg = _load_registry()

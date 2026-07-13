@@ -8,7 +8,7 @@ import uuid
 import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional, Union
 
 try:
     from . import storage  # type: ignore
@@ -21,11 +21,14 @@ except Exception:
     telegram_publisher = None
 
 
-SCHEMA_VERSION = os.getenv("EVENT_SCHEMA_VERSION", "1.0.0")
+SCHEMA_VERSION = os.getenv("EVENT_SCHEMA_VERSION", "2.0.0")
 SERVICE_NAME = os.getenv("SERVICE_NAME", "binarybot")
 ENV_NAME = os.getenv("BOT_ENV", "prod")
 BOT_VERSION = os.getenv("BOT_VERSION", "0.0.0")
 GIT_SHA = os.getenv("GIT_SHA", "")
+
+PACKAGE_ROOT = os.path.dirname(os.path.dirname(__file__))
+EVENT_SCHEMA_PATH = os.path.join(PACKAGE_ROOT, "schema", "event_schema.json")
 
 OBS_DIR = os.getenv("OBS_DIR", "/opt/binarybot/observability")
 ENGINE_LOG = os.getenv("ENGINE_EVENTS_LOG", os.path.join(OBS_DIR, "engine_events.jsonl"))
@@ -33,9 +36,12 @@ FSM_LOG = os.getenv("FSM_EVENTS_LOG", os.path.join(OBS_DIR, "fsm_events.jsonl"))
 DIST_LOG = os.getenv("DIST_EVENTS_LOG", os.path.join(OBS_DIR, "distribution_events.jsonl"))
 ADMIN_PROOFS_LOG = os.getenv("ADMIN_PROOFS_LOG", os.path.join(OBS_DIR, "admin_proofs.jsonl"))
 ERROR_LOG = os.getenv("ERROR_EVENTS_LOG", os.path.join(OBS_DIR, "error_events.jsonl"))
+OUTCOMES_LOG = os.getenv("OUTCOMES_LOG", os.path.join("/opt/binarybot/outcomes", "outcomes.jsonl"))
 
 ADMIN_PROOF_CHAT_ID = os.getenv("ADMIN_PROOF_CHAT_ID", "")
 ADMIN_PROOF_THREAD_ID = os.getenv("ADMIN_PROOF_THREAD_ID", "")
+
+_SCHEMA_CACHE: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -69,82 +75,218 @@ def _append_jsonl_fallback(path: str, record: Dict[str, Any]) -> None:
     line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
     with open(path, "a", encoding="utf-8") as f:
         f.write(line + "\n")
+        f.flush()
+        os.fsync(f.fileno())
 
 
-def _append_jsonl(path: str, record: Dict[str, Any]) -> None:
-    if storage and hasattr(storage, "append_jsonl"):
-        storage.append_jsonl(path, record)  # type: ignore
-    else:
-        _append_jsonl_fallback(path, record)
+def _load_schema() -> Dict[str, Any]:
+    global _SCHEMA_CACHE
+    if _SCHEMA_CACHE is None:
+        with open(EVENT_SCHEMA_PATH, "r", encoding="utf-8") as f:
+            _SCHEMA_CACHE = json.load(f)
+    return _SCHEMA_CACHE
+
+
+def get_event_schema() -> Dict[str, Any]:
+    return _load_schema()
+
+
+def _event_sinks() -> Dict[str, str]:
+    return {
+        "engine": ENGINE_LOG,
+        "fsm": FSM_LOG,
+        "distribution": DIST_LOG,
+        "admin_proofs": ADMIN_PROOFS_LOG,
+        "error": ERROR_LOG,
+        "outcomes": OUTCOMES_LOG,
+    }
+
+
+def _append_jsonl(path: str, record: Dict[str, Any], *, sink: str) -> None:
+    lock_name = "outcomes" if sink == "outcomes" else f"observability_{sink}"
+    if storage and hasattr(storage, "with_lock"):
+        with storage.with_lock(lock_name):  # type: ignore[attr-defined]
+            if storage and hasattr(storage, "append_jsonl"):
+                storage.append_jsonl(path, record)  # type: ignore[attr-defined]
+            else:
+                _append_jsonl_fallback(path, record)
+        return
+    _append_jsonl_fallback(path, record)
 
 
 def _host_obj() -> Dict[str, Any]:
     obj: Dict[str, Any] = {
         "hostname": _RUN.hostname,
         "pid": _RUN.pid,
-        "version": BOT_VERSION,
+        "app_version": BOT_VERSION,
     }
     if GIT_SHA:
         obj["git_sha"] = GIT_SHA
     return obj
 
 
+def _schema_field_specs() -> Dict[str, Any]:
+    return dict(_load_schema().get("common_correlation_fields", {}))
+
+
+def _normalize_source(source: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if source is None:
+        return {"module": "unknown", "function": "unknown"}
+    if not isinstance(source, dict):
+        raise ValueError("source must be a dict")
+
+    unknown = set(source.keys()) - {"module", "function", "line"}
+    if unknown:
+        raise ValueError(f"unknown source fields: {sorted(unknown)}")
+
+    module = str(source.get("module") or "unknown")
+    function = str(source.get("function") or "unknown")
+    normalized: Dict[str, Any] = {"module": module, "function": function}
+    if source.get("line") is not None:
+        normalized["line"] = int(source["line"])
+    return normalized
+
+
 def _base_envelope(source: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    env: Dict[str, Any] = {
+    return {
         "event_id": str(uuid.uuid4()),
+        "event_type": "",
         "schema_version": SCHEMA_VERSION,
         "ts_utc": _iso_utc_now(),
         "ts_epoch_ms": _epoch_ms(),
         "service": SERVICE_NAME,
         "env": ENV_NAME,
         "run_id": _RUN.run_id,
+        "source": _normalize_source(source),
         "host": _host_obj(),
+        "data": {},
     }
-    if source:
-        env["source"] = source
-    return env
 
 
-_ALLOWED_EVENT_TYPES = {
-    "engine_start",
-    "engine_stop",
-    "signal_event",
-    "decision",
-    "fsm_transition",
-    "tier_publish",
-    "tier_reset",
-    "admin_change",
-    "user_outcome",
-    "error",
-}
+def _allowed_correlation_fields() -> set[str]:
+    return set(_schema_field_specs().keys())
 
 
-def _validate_minimal(event: Dict[str, Any]) -> None:
-    if "event_type" not in event:
+def _merge_correlation_fields(event: Dict[str, Any], correlation: Optional[Dict[str, Any]]) -> None:
+    if correlation is None:
+        return
+    if not isinstance(correlation, dict):
+        raise ValueError("correlation must be a dict")
+
+    unknown = set(correlation.keys()) - _allowed_correlation_fields()
+    if unknown:
+        raise ValueError(f"unsupported correlation fields: {sorted(unknown)}")
+
+    for key, value in correlation.items():
+        if value is not None:
+            event[key] = value
+
+
+def _matches_type(value: Any, expected_type: str) -> bool:
+    if expected_type == "string":
+        return isinstance(value, str)
+    if expected_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected_type == "number":
+        return (isinstance(value, int) and not isinstance(value, bool)) or isinstance(value, float)
+    if expected_type == "boolean":
+        return isinstance(value, bool)
+    if expected_type == "object":
+        return isinstance(value, dict)
+    if expected_type == "array":
+        return isinstance(value, list)
+    if expected_type == "null":
+        return value is None
+    return False
+
+
+def _type_label(spec: Dict[str, Any]) -> str:
+    expected = spec.get("type", "value")
+    if isinstance(expected, list):
+        return " or ".join(expected)
+    return str(expected)
+
+
+def _validate_value(value: Any, spec: Dict[str, Any], *, path: str) -> None:
+    expected: Union[str, Iterable[str]] = spec.get("type", "object")
+    allowed_types = [expected] if isinstance(expected, str) else list(expected)
+
+    if not any(_matches_type(value, type_name) for type_name in allowed_types):
+        raise ValueError(f"{path} must be {_type_label(spec)}")
+
+    if "enum" in spec and value not in spec["enum"]:
+        raise ValueError(f"{path} must be one of {spec['enum']}")
+
+    if value is None:
+        return
+
+    if isinstance(value, dict):
+        if "required" not in spec and "optional" not in spec:
+            return
+        _validate_object(value, spec, path=path)
+        return
+
+    if isinstance(value, list):
+        item_spec = spec.get("items")
+        if item_spec is None:
+            return
+        for index, item in enumerate(value):
+            _validate_value(item, item_spec, path=f"{path}[{index}]")
+
+
+def _validate_object(obj: Dict[str, Any], spec: Dict[str, Any], *, path: str) -> None:
+    required = dict(spec.get("required", {}))
+    optional = dict(spec.get("optional", {}))
+    known_fields = set(required.keys()) | set(optional.keys())
+
+    missing = [field for field in required if field not in obj]
+    if missing:
+        raise ValueError(f"{path} missing required fields: {missing}")
+
+    unknown = sorted(set(obj.keys()) - known_fields)
+    if unknown:
+        raise ValueError(f"{path} contains unknown fields: {unknown}")
+
+    for field_name, field_spec in required.items():
+        _validate_value(obj[field_name], field_spec, path=f"{path}.{field_name}")
+    for field_name, field_spec in optional.items():
+        if field_name in obj:
+            _validate_value(obj[field_name], field_spec, path=f"{path}.{field_name}")
+
+
+def supported_event_types() -> list[str]:
+    return sorted(_load_schema().get("event_types", {}).keys())
+
+
+def validate_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(event, dict):
+        raise ValueError("event must be a dict")
+
+    schema = _load_schema()
+    event_type = event.get("event_type")
+    if not isinstance(event_type, str) or not event_type:
         raise ValueError("event missing event_type")
-    if event["event_type"] not in _ALLOWED_EVENT_TYPES:
-        raise ValueError(f"invalid event_type: {event['event_type']}")
-    for k in ("schema_version", "ts_utc", "ts_epoch_ms", "service", "env", "run_id", "host"):
-        if k not in event:
-            raise ValueError(f"event missing required field: {k}")
-    if "data" not in event:
-        raise ValueError("event missing data")
 
+    event_specs = schema.get("event_types", {})
+    if event_type not in event_specs:
+        raise ValueError(f"unsupported event_type: {event_type}")
 
-def _route_file(event_type: str) -> str:
-    if event_type in ("engine_start", "engine_stop", "decision", "signal_event"):
-        return ENGINE_LOG
-    if event_type == "fsm_transition":
-        return FSM_LOG
-    if event_type in ("tier_publish", "tier_reset"):
-        return DIST_LOG
-    if event_type == "admin_change":
-        return ADMIN_PROOFS_LOG
-    if event_type == "user_outcome":
-        return os.path.join("/opt/binarybot/outcomes", "outcomes.jsonl")
-    if event_type == "error":
-        return ERROR_LOG
-    return ERROR_LOG
+    required = dict(schema["envelope"]["required"])
+    required["event_type"] = {"type": "string", "enum": [event_type]}
+    required["data"] = {"type": "object"}
+
+    optional = dict(schema["envelope"].get("optional", {}))
+    optional.update(_schema_field_specs())
+
+    event_spec = event_specs[event_type]
+    required.update(event_spec.get("top_level_required", {}))
+    optional.update(event_spec.get("top_level_optional", {}))
+
+    _validate_object(event, {"required": required, "optional": optional}, path="event")
+    _validate_object(event["source"], schema["source"], path="event.source")
+    _validate_object(event["host"], schema["host"], path="event.host")
+    _validate_object(event["data"], event_spec["data"], path="event.data")
+    return event
 
 
 def build_event(
@@ -154,14 +296,14 @@ def build_event(
     source: Optional[Dict[str, Any]] = None,
     correlation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    e = _base_envelope(source=source)
-    e["event_type"] = event_type
-    if correlation:
-        for k, v in correlation.items():
-            if v is not None:
-                e[k] = v
-    e["data"] = data
-    return e
+    if not isinstance(data, dict):
+        raise ValueError("data must be a dict")
+
+    event = _base_envelope(source=source)
+    event["event_type"] = event_type
+    event["data"] = dict(data)
+    _merge_correlation_fields(event, correlation)
+    return validate_event(event)
 
 
 def _normalize_event(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -177,44 +319,66 @@ def _normalize_event(event: Dict[str, Any]) -> Dict[str, Any]:
     if not event_type:
         raise ValueError("event missing event_type")
 
-    # If it's already canonical enough, leave it alone.
     if "data" in event and "event_id" in event:
-        return event
+        return dict(event)
 
     source = event.get("source")
     if not isinstance(source, dict):
-        source = None
+        source = {
+            "module": str(event.get("module") or "unknown"),
+            "function": str(event.get("function") or "unknown"),
+        }
+
+    preserved_envelope = _base_envelope(source=source)
+    for key in ("event_id", "schema_version", "ts_utc", "ts_epoch_ms", "service", "env", "run_id", "host"):
+        if key in event and event[key] is not None:
+            preserved_envelope[key] = event[key]
 
     raw_data = dict(event)
-    raw_data.pop("event_id", None)
-    raw_data.pop("schema_version", None)
-    raw_data.pop("ts_utc", None)
-    raw_data.pop("ts_epoch_ms", None)
-    raw_data.pop("service", None)
-    raw_data.pop("env", None)
-    raw_data.pop("run_id", None)
-    raw_data.pop("host", None)
-    raw_data.pop("source", None)
-    raw_data.pop("event_type", None)
-    raw_data.pop("data", None)
+    for key in (
+        "event_id",
+        "event_type",
+        "schema_version",
+        "ts_utc",
+        "ts_epoch_ms",
+        "service",
+        "env",
+        "run_id",
+        "source",
+        "host",
+        "module",
+        "function",
+        "data",
+    ):
+        raw_data.pop(key, None)
 
-    if "data" in event and isinstance(event["data"], dict):
-        data = event["data"]
+    correlation: Dict[str, Any] = {}
+    for key in _allowed_correlation_fields():
+        if key in raw_data:
+            correlation[key] = raw_data.pop(key)
+
+    if isinstance(event.get("data"), dict):
+        data = dict(raw_data)
+        data.update(event["data"])
     else:
         data = raw_data
 
-    normalized = build_event(
-        event_type=str(event_type),
-        data=data,
-        source=source,
-    )
+    if preserved_envelope["event_type"] == "error" and "error_type" not in data and data.get("code") is not None:
+        data["error_type"] = data.pop("code")
 
-    # Preserve optional top-level correlation-ish fields if caller set them.
-    for key in ("signal_id", "tier", "symbol", "timeframe"):
-        if key in event and event[key] is not None:
-            normalized[key] = event[key]
+    preserved_envelope["event_type"] = str(event_type)
+    preserved_envelope["data"] = data
+    _merge_correlation_fields(preserved_envelope, correlation)
+    return preserved_envelope
 
-    return normalized
+
+def _route_file(event_type: str) -> tuple[str, str]:
+    schema = _load_schema()
+    sink = schema["event_types"][event_type]["sink"]
+    sinks = _event_sinks()
+    if sink not in sinks:
+        raise ValueError(f"unsupported sink: {sink}")
+    return sink, sinks[sink]
 
 
 def build_error(
@@ -231,9 +395,9 @@ def build_error(
         "error_type": error_type,
         "message": message,
     }
-    if stack:
+    if stack is not None:
         data["stack"] = stack
-    if context:
+    if context is not None:
         data["context"] = context
     return build_event("error", data, source=source)
 
@@ -246,9 +410,9 @@ def log_event(event: Dict[str, Any]) -> None:
     """
     try:
         normalized = _normalize_event(event)
-        _validate_minimal(normalized)
-        path = _route_file(str(normalized["event_type"]))
-        _append_jsonl(path, normalized)
+        validate_event(normalized)
+        sink, path = _route_file(str(normalized["event_type"]))
+        _append_jsonl(path, normalized, sink=sink)
     except Exception:
         try:
             err = build_error(
@@ -259,7 +423,7 @@ def log_event(event: Dict[str, Any]) -> None:
                 stack=traceback.format_exc(),
                 source={"module": "observability_logger", "function": "log_event"},
             )
-            _append_jsonl(ERROR_LOG, err)
+            _append_jsonl(ERROR_LOG, err, sink="error")
         except Exception:
             pass
 
@@ -268,7 +432,7 @@ def log_error(error: Dict[str, Any]) -> None:
     if error.get("event_type") != "error":
         error = build_error(
             severity="ERROR",
-            error_type=str(error.get("error_type", "error")),
+            error_type=str(error.get("error_type", error.get("code", "error"))),
             message=str(error.get("message", error.get("error", "error"))),
             context=error.get("context"),
             stack=error.get("stack") or error.get("trace"),
@@ -286,16 +450,16 @@ def log_warning(
     message: str,
     context: Optional[Dict[str, Any]] = None,
     source: Optional[Dict[str, Any]] = None,
+    correlation: Optional[Dict[str, Any]] = None,
 ) -> None:
-    e = build_error(
-        severity="WARNING",
-        error_type=warn_type,
-        message=message,
-        context=context,
-        stack=None,
-        source=source,
-    )
-    log_event(e)
+    data: Dict[str, Any] = {
+        "severity": "WARNING",
+        "code": warn_type,
+        "message": message,
+        "context": context or {},
+    }
+    event = build_event("warning", data, source=source, correlation=correlation)
+    log_event(event)
 
 
 def proof(kind: str, payload: Dict[str, Any], now_ts: int) -> None:
