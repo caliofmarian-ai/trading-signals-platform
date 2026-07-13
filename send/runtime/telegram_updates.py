@@ -13,12 +13,15 @@ from core import outcome_service
 from core import observability_logger
 
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+def _get_bot_token() -> str:
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN missing")
+    return token
 
-if not BOT_TOKEN:
-    raise RuntimeError("TELEGRAM_BOT_TOKEN missing")
 
-BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+def _base_url() -> str:
+    return f"https://api.telegram.org/bot{_get_bot_token()}"
 
 POLL_INTERVAL = 1.5
 
@@ -38,7 +41,7 @@ def poll_updates():
                 params["offset"] = LAST_UPDATE_ID
 
             r = requests.get(
-                f"{BASE_URL}/getUpdates",
+                f"{_base_url()}/getUpdates",
                 params=params,
                 timeout=35
             )

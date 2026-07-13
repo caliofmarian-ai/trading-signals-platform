@@ -6,12 +6,16 @@ import os
 import requests
 from typing import Dict, Any, Optional
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-if not BOT_TOKEN:
-    raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
+def _get_bot_token() -> str:
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
+    return token
 
-BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+def _base_url() -> str:
+    return f"https://api.telegram.org/bot{_get_bot_token()}"
 
 
 def send_message(
@@ -33,7 +37,7 @@ def send_message(
     if thread_id:
         payload["message_thread_id"] = thread_id
 
-    r = requests.post(f"{BASE_URL}/sendMessage", json=payload, timeout=10)
+    r = requests.post(f"{_base_url()}/sendMessage", json=payload, timeout=10)
     data = r.json()
 
     if not data.get("ok"):
@@ -61,7 +65,7 @@ def edit_message(
     if reply_markup:
         payload["reply_markup"] = reply_markup
 
-    r = requests.post(f"{BASE_URL}/editMessageText", json=payload, timeout=10)
+    r = requests.post(f"{_base_url()}/editMessageText", json=payload, timeout=10)
     data = r.json()
 
     if not data.get("ok"):
@@ -94,7 +98,7 @@ def send_document(
             data["message_thread_id"] = thread_id
 
         r = requests.post(
-            f"{BASE_URL}/sendDocument",
+            f"{_base_url()}/sendDocument",
             data=data,
             files=files,
             timeout=20
