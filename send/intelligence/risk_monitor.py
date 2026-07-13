@@ -32,11 +32,17 @@ def evaluate_risk() -> Dict[str, Any]:
 
     if win_rate < WIN_RATE_MIN:
 
-        observability_logger.log_warning({
-            "event_type": "risk_warning",
-            "reason": "low_win_rate",
-            "win_rate": win_rate
-        })
+        observability_logger.log_warning(
+            warn_type="LOW_WIN_RATE",
+            message="Risk monitor detected win rate below the canonical minimum",
+            context={
+                "reason": "low_win_rate",
+                "win_rate": win_rate,
+                "win_rate_min": WIN_RATE_MIN,
+                "total_outcomes": total,
+            },
+            source={"module": "risk_monitor", "function": "evaluate_risk"},
+        )
 
         return {
             "risk_level": "HIGH",
