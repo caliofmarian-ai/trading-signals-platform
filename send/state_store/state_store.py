@@ -1,41 +1,148 @@
 # /opt/binarybot/state_store/state_store.py
-# BinaryBot — State Store (Layer 6)
-# Purpose: single source of truth for persisted JSON states.
-# Uses core.storage for atomic writes + optional locks.
+# BinaryBot — Canonical runtime state store
 
 from __future__ import annotations
 
+import json
 import os
 import time
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional
 
-from core.storage import load_json, save_json_atomic, with_lock
+from core import storage
+from core.storage import save_json_atomic, with_lock
 
-BASE_DIR = "/opt/binarybot"
-STATE_DIR = os.path.join(BASE_DIR, "state")
 
-# Canonical state files (aligned with docs)
-FOCUS_STATE_PATH = os.path.join(STATE_DIR, "focus_state.json")          # FSMState
-DIST_STATE_PATH = os.path.join(STATE_DIR, "dist_state.json")            # DistState
-SETTINGS_PATH = os.path.join(BASE_DIR, "settings.json")                 # buffer_mode etc.
-ACTIVE_SYMBOLS_PATH = os.path.join(BASE_DIR, "active_symbols.json")     # symbol list
+class StateStoreError(RuntimeError):
+    pass
+
+
+class StateValidationError(StateStoreError):
+    pass
+
+
+class StateConflictError(StateStoreError):
+    pass
+
+
+_MISSING = object()
+
+FSM_STATE_VERSION = "1.1.0"
+RESTART_GUARD_VERSION = "1.1.0"
+
+
+def runtime_root() -> str:
+    return storage.base_dir()
+
+
+def config_dir() -> str:
+    return storage.root_path("config")
+
+
+def state_dir() -> str:
+    return storage.root_path("state")
+
+
+def outcomes_dir() -> str:
+    return storage.root_path("outcomes")
+
+
+def observability_dir() -> str:
+    return storage.root_path("observability")
+
+
+def snapshots_dir() -> str:
+    return storage.root_path("snapshots")
+
+
+FOCUS_STATE_PATH = storage.state_path("focus_state.json")
+DIST_STATE_PATH = storage.state_path("dist_state.json")
+RESTART_GUARD_PATH = storage.state_path("restart_guard.json")
+ACTIVE_SYMBOLS_PATH = storage.config_path("active_symbols.json")
+SETTINGS_PATH = storage.config_path("admin_settings.json")
 
 
 def _now_ts() -> int:
     return int(time.time())
 
 
-def ensure_state_dir() -> None:
-    os.makedirs(STATE_DIR, exist_ok=True)
+def _legacy_root_path(name: str) -> str:
+    return storage.root_path(name)
 
 
-# -------------------------
-# Defaults (safe boot)
-# -------------------------
+def _safe_int(value: Any, field_name: str) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except Exception as exc:
+        raise StateValidationError(f"{field_name} must be an integer or null") from exc
+
+
+def _safe_float(value: Any, field_name: str) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except Exception as exc:
+        raise StateValidationError(f"{field_name} must be a number or null") from exc
+
+
+def _safe_str(value: Any, field_name: str, *, allow_none: bool = True) -> Optional[str]:
+    if value is None and allow_none:
+        return None
+    if not isinstance(value, str):
+        raise StateValidationError(f"{field_name} must be a string")
+    normalized = value.strip()
+    if not normalized and not allow_none:
+        raise StateValidationError(f"{field_name} must be a non-empty string")
+    return normalized or None
+
+
+def _json_equal(left: Any, right: Any) -> bool:
+    return json.dumps(left, sort_keys=True, ensure_ascii=False) == json.dumps(right, sort_keys=True, ensure_ascii=False)
+
+
+def _read_json_file(path: str) -> Any:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except FileNotFoundError:
+        return _MISSING
+    except json.JSONDecodeError as exc:
+        raise StateValidationError(f"Invalid JSON in {path}: {exc.msg}") from exc
+    except OSError as exc:
+        raise StateValidationError(f"Unable to read {path}: {exc}") from exc
+
+
+def _emit_warning(code: str, message: str, context: Dict[str, Any]) -> None:
+    try:
+        from core import observability_logger
+
+        observability_logger.log_warning(
+            warn_type=code,
+            message=message,
+            context=context,
+            source={"module": "state_store", "function": "_emit_warning"},
+        )
+    except Exception:
+        pass
+
+
+@dataclass(frozen=True)
+class JsonArtifact:
+    name: str
+    canonical_path: str
+    legacy_paths: tuple[str, ...]
+    lock_name: str
+    default_factory: Callable[[], Dict[str, Any]]
+    validator: Callable[[Any], Dict[str, Any]]
+    required: bool = False
+
 
 def default_fsm_state() -> Dict[str, Any]:
     return {
-        "version": "1.0.0",
+        "version": FSM_STATE_VERSION,
         "mode": "WIDE_SCAN",
         "watchlist": [],
         "per_symbol": {},
@@ -46,7 +153,7 @@ def default_fsm_state() -> Dict[str, Any]:
 def default_dist_state() -> Dict[str, Any]:
     return {
         "version": "1.0.0",
-        "last_reset_epoch": 0,
+        "last_reset_london_date": None,
         "tier_state": {
             "FREE": "ACTIVE",
             "BASIC": "ACTIVE",
@@ -59,121 +166,480 @@ def default_dist_state() -> Dict[str, Any]:
             "PRO": 0,
             "ELITE": 0,
         },
-        "dedup": {},  # optional structure: tier -> signal_id -> stage -> bool
+        "dedup": {},
         "last_updated_ts": _now_ts(),
+    }
+
+
+def default_restart_guard_state() -> Dict[str, Any]:
+    now_ts = _now_ts()
+    return {
+        "version": RESTART_GUARD_VERSION,
+        "window_seconds": 60,
+        "max_restarts": 3,
+        "starts": [],
+        "last_shutdown": {"kind": "unknown", "ts": None},
+        "last_start_ts": None,
+        "last_updated_ts": now_ts,
     }
 
 
 def default_settings() -> Dict[str, Any]:
     return {
         "buffer_mode": "MEDIUM",
+        "engine_tick_interval": 2,
+        "feature_flags": {},
         "last_updated_ts": _now_ts(),
     }
 
 
 def default_active_symbols() -> Dict[str, Any]:
-    # keep as dict for future metadata; current canonical key: "symbols"
     return {
         "symbols": [],
         "last_updated_ts": _now_ts(),
     }
 
 
-# -------------------------
-# Loaders (with locks)
-# -------------------------
+def _normalize_symbol_state(symbol: str, raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise StateValidationError(f"per_symbol[{symbol}] must be an object")
 
-def load_fsm_state() -> Dict[str, Any]:
-    ensure_state_dir()
-    with with_lock("focus_state"):
-        return load_json(FOCUS_STATE_PATH, default_fsm_state())
+    normalized = dict(raw)
+    state = str(raw.get("state") or "IDLE").strip().upper()
+    if state not in {"IDLE", "WATCHLIST", "CONFIRMED", "LIVE_SENT", "COOLDOWN"}:
+        raise StateValidationError(f"per_symbol[{symbol}].state is unsupported: {state}")
 
-
-def save_fsm_state(state: Dict[str, Any]) -> None:
-    ensure_state_dir()
-    state["last_updated_ts"] = _now_ts()
-    with with_lock("focus_state"):
-        save_json_atomic(FOCUS_STATE_PATH, state)
-
-
-def load_dist_state() -> Dict[str, Any]:
-    ensure_state_dir()
-    with with_lock("dist_state"):
-        return load_json(DIST_STATE_PATH, default_dist_state())
-
-
-def save_dist_state(state: Dict[str, Any]) -> None:
-    ensure_state_dir()
-    state["last_updated_ts"] = _now_ts()
-    with with_lock("dist_state"):
-        save_json_atomic(DIST_STATE_PATH, state)
+    normalized["state"] = state
+    normalized["current_signal_id"] = _safe_str(raw.get("current_signal_id"), f"per_symbol[{symbol}].current_signal_id")
+    normalized["last_pre_candle_ts"] = _safe_int(raw.get("last_pre_candle_ts"), f"per_symbol[{symbol}].last_pre_candle_ts")
+    normalized["last_confirm_candle_ts"] = _safe_int(raw.get("last_confirm_candle_ts"), f"per_symbol[{symbol}].last_confirm_candle_ts")
+    normalized["last_open_candle_ts"] = _safe_int(raw.get("last_open_candle_ts"), f"per_symbol[{symbol}].last_open_candle_ts")
+    normalized["cooldown_until_ts"] = _safe_int(raw.get("cooldown_until_ts"), f"per_symbol[{symbol}].cooldown_until_ts")
+    normalized["focus_enter_ts"] = _safe_int(raw.get("focus_enter_ts"), f"per_symbol[{symbol}].focus_enter_ts")
+    normalized["focus_ttl_seconds"] = _safe_int(raw.get("focus_ttl_seconds"), f"per_symbol[{symbol}].focus_ttl_seconds")
+    normalized["last_exit_reason"] = _safe_str(raw.get("last_exit_reason"), f"per_symbol[{symbol}].last_exit_reason")
+    normalized["last_transition_ts"] = _safe_int(raw.get("last_transition_ts"), f"per_symbol[{symbol}].last_transition_ts")
+    normalized["replacement_score"] = _safe_float(raw.get("replacement_score"), f"per_symbol[{symbol}].replacement_score")
+    normalized["replacement_score_ts"] = _safe_int(raw.get("replacement_score_ts"), f"per_symbol[{symbol}].replacement_score_ts")
+    return normalized
 
 
-def load_settings() -> Dict[str, Any]:
-    with with_lock("settings"):
-        return load_json(SETTINGS_PATH, default_settings())
+def validate_fsm_state(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise StateValidationError("FSM state must be an object")
+
+    normalized = dict(raw)
+    watchlist_raw = raw.get("watchlist", [])
+    if not isinstance(watchlist_raw, list):
+        raise StateValidationError("FSM watchlist must be a list")
+
+    watchlist: list[str] = []
+    for item in watchlist_raw:
+        if not isinstance(item, str) or not item.strip():
+            raise StateValidationError("FSM watchlist entries must be non-empty strings")
+        value = item.strip()
+        if value not in watchlist:
+            watchlist.append(value)
+
+    if len(watchlist) > 2:
+        raise StateValidationError("FSM watchlist exceeds canonical capacity of 2")
+
+    per_symbol_raw = raw.get("per_symbol", {})
+    if not isinstance(per_symbol_raw, dict):
+        raise StateValidationError("FSM per_symbol must be an object")
+
+    per_symbol = {
+        str(symbol): _normalize_symbol_state(str(symbol), payload)
+        for symbol, payload in per_symbol_raw.items()
+    }
+
+    for symbol in watchlist:
+        state = per_symbol.setdefault(symbol, _normalize_symbol_state(symbol, {}))
+        if state["state"] == "IDLE":
+            state["state"] = "WATCHLIST"
+
+    normalized["version"] = str(raw.get("version") or FSM_STATE_VERSION)
+    normalized["watchlist"] = watchlist
+    normalized["per_symbol"] = per_symbol
+    normalized["mode"] = "FOCUS_MODE" if watchlist else "WIDE_SCAN"
+    normalized["last_updated_ts"] = _safe_int(raw.get("last_updated_ts"), "FSM.last_updated_ts") or _now_ts()
+    return normalized
 
 
-def save_settings(settings: Dict[str, Any]) -> None:
-    settings["last_updated_ts"] = _now_ts()
-    with with_lock("settings"):
-        save_json_atomic(SETTINGS_PATH, settings)
+def validate_dist_state(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise StateValidationError("Distribution state must be an object")
+
+    normalized = dict(default_dist_state())
+    normalized.update(raw)
+
+    tier_state = normalized.get("tier_state")
+    if not isinstance(tier_state, dict):
+        raise StateValidationError("Distribution tier_state must be an object")
+    open_signals_today = normalized.get("open_signals_today")
+    if not isinstance(open_signals_today, dict):
+        raise StateValidationError("Distribution open_signals_today must be an object")
+    dedup = normalized.get("dedup")
+    if not isinstance(dedup, dict):
+        raise StateValidationError("Distribution dedup must be an object")
+
+    for tier in ("FREE", "BASIC", "PRO", "ELITE"):
+        state = str(tier_state.get(tier) or "ACTIVE").upper()
+        if state not in {"ACTIVE", "SILENT"}:
+            raise StateValidationError(f"Distribution tier_state[{tier}] is unsupported: {state}")
+        tier_state[tier] = state
+        open_signals_today[tier] = _safe_int(open_signals_today.get(tier), f"Distribution open_signals_today[{tier}]") or 0
+
+    normalized["version"] = str(normalized.get("version") or "1.0.0")
+    normalized["last_reset_london_date"] = _safe_str(normalized.get("last_reset_london_date"), "Distribution.last_reset_london_date")
+    normalized["tier_state"] = tier_state
+    normalized["open_signals_today"] = open_signals_today
+    normalized["dedup"] = dedup
+    normalized["last_updated_ts"] = _safe_int(normalized.get("last_updated_ts"), "Distribution.last_updated_ts") or _now_ts()
+    return normalized
 
 
-def load_active_symbols() -> Dict[str, Any]:
-    with with_lock("active_symbols"):
-        return load_json(ACTIVE_SYMBOLS_PATH, default_active_symbols())
+def validate_restart_guard_state(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise StateValidationError("Restart guard state must be an object")
+
+    normalized = dict(default_restart_guard_state())
+    normalized.update(raw)
+
+    starts_raw = normalized.get("starts", [])
+    if not isinstance(starts_raw, list):
+        raise StateValidationError("Restart guard starts must be a list")
+    starts = [_safe_int(item, "Restart guard starts[]") for item in starts_raw]
+    normalized["starts"] = [item for item in starts if item is not None]
+
+    last_shutdown = normalized.get("last_shutdown", {})
+    if last_shutdown is None:
+        last_shutdown = {}
+    if not isinstance(last_shutdown, dict):
+        raise StateValidationError("Restart guard last_shutdown must be an object")
+
+    kind = str(last_shutdown.get("kind") or "unknown").strip().lower()
+    if kind not in {"unknown", "running", "graceful"}:
+        raise StateValidationError(f"Restart guard last_shutdown.kind is unsupported: {kind}")
+
+    normalized["version"] = str(normalized.get("version") or RESTART_GUARD_VERSION)
+    normalized["window_seconds"] = _safe_int(normalized.get("window_seconds"), "Restart guard window_seconds") or 60
+    normalized["max_restarts"] = _safe_int(normalized.get("max_restarts"), "Restart guard max_restarts") or 3
+    normalized["last_shutdown"] = {
+        "kind": kind,
+        "ts": _safe_int(last_shutdown.get("ts"), "Restart guard last_shutdown.ts"),
+    }
+    normalized["last_start_ts"] = _safe_int(normalized.get("last_start_ts"), "Restart guard last_start_ts")
+    normalized["last_updated_ts"] = _safe_int(normalized.get("last_updated_ts"), "Restart guard last_updated_ts") or _now_ts()
+    return normalized
 
 
-def save_active_symbols(obj: Dict[str, Any]) -> None:
-    obj["last_updated_ts"] = _now_ts()
-    with with_lock("active_symbols"):
-        save_json_atomic(ACTIVE_SYMBOLS_PATH, obj)
+def validate_settings(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise StateValidationError("Settings state must be an object")
+
+    normalized = dict(default_settings())
+    normalized.update(raw)
+
+    buffer_mode = str(normalized.get("buffer_mode") or "MEDIUM").strip().upper()
+    if buffer_mode not in {"SMALL", "MEDIUM", "LARGE"}:
+        raise StateValidationError(f"Unsupported buffer_mode: {buffer_mode}")
+
+    feature_flags = normalized.get("feature_flags", {})
+    if not isinstance(feature_flags, dict):
+        raise StateValidationError("feature_flags must be an object")
+
+    normalized["buffer_mode"] = buffer_mode
+    normalized["engine_tick_interval"] = _safe_int(normalized.get("engine_tick_interval"), "engine_tick_interval") or 2
+    normalized["feature_flags"] = feature_flags
+    normalized["last_updated_ts"] = _safe_int(normalized.get("last_updated_ts"), "last_updated_ts") or _now_ts()
+    return normalized
 
 
-# -------------------------
-# Convenience helpers
-# -------------------------
+def validate_active_symbols(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, list):
+        raw = {"symbols": raw}
+    if not isinstance(raw, dict):
+        raise StateValidationError("Active symbols must be a list or object")
+
+    normalized = dict(raw)
+    if "symbols" in normalized and isinstance(normalized["symbols"], list):
+        normalized["symbols"] = [str(item).strip().upper() for item in normalized["symbols"] if str(item).strip()]
+    for key, value in list(normalized.items()):
+        if isinstance(value, list):
+            normalized[key] = [str(item).strip().upper() for item in value if str(item).strip()]
+    normalized["last_updated_ts"] = _safe_int(normalized.get("last_updated_ts"), "last_updated_ts") or _now_ts()
+    return normalized
+
+
+def _artifact(
+    *,
+    name: str,
+    canonical_path: str,
+    legacy_paths: tuple[str, ...],
+    lock_name: str,
+    default_factory: Callable[[], Dict[str, Any]],
+    validator: Callable[[Any], Dict[str, Any]],
+    required: bool = False,
+) -> JsonArtifact:
+    return JsonArtifact(
+        name=name,
+        canonical_path=canonical_path,
+        legacy_paths=legacy_paths,
+        lock_name=lock_name,
+        default_factory=default_factory,
+        validator=validator,
+        required=required,
+    )
+
+
+def _load_artifact(artifact: JsonArtifact) -> Dict[str, Any]:
+    os.makedirs(os.path.dirname(artifact.canonical_path), exist_ok=True)
+
+    with with_lock(artifact.lock_name):
+        canonical_raw = _read_json_file(artifact.canonical_path)
+        legacy_payloads: list[tuple[str, Dict[str, Any]]] = []
+
+        for legacy_path in artifact.legacy_paths:
+            if legacy_path == artifact.canonical_path:
+                continue
+            legacy_raw = _read_json_file(legacy_path)
+            if legacy_raw is _MISSING:
+                continue
+            legacy_payloads.append((legacy_path, artifact.validator(legacy_raw)))
+
+        if canonical_raw is not _MISSING:
+            canonical_state = artifact.validator(canonical_raw)
+            for legacy_path, legacy_state in legacy_payloads:
+                if not _json_equal(canonical_state, legacy_state):
+                    raise StateConflictError(
+                        f"{artifact.name} conflict between canonical path {artifact.canonical_path} and legacy path {legacy_path}"
+                    )
+                _emit_warning(
+                    "LEGACY_STATE_DUPLICATE",
+                    f"{artifact.name} legacy path duplicates canonical state",
+                    {
+                        "artifact": artifact.name,
+                        "canonical_path": artifact.canonical_path,
+                        "legacy_path": legacy_path,
+                    },
+                )
+            return canonical_state
+
+        if not legacy_payloads:
+            if artifact.required:
+                raise StateValidationError(f"Missing required state artifact: {artifact.canonical_path}")
+            return artifact.default_factory()
+
+        source_path, source_state = legacy_payloads[0]
+        for legacy_path, legacy_state in legacy_payloads[1:]:
+            if not _json_equal(source_state, legacy_state):
+                raise StateConflictError(
+                    f"{artifact.name} conflict between legacy paths {source_path} and {legacy_path}"
+                )
+
+        save_json_atomic(artifact.canonical_path, source_state)
+        _emit_warning(
+            "LEGACY_STATE_MIGRATED",
+            f"{artifact.name} migrated from legacy path to canonical segmented path",
+            {
+                "artifact": artifact.name,
+                "source_path": source_path,
+                "target_path": artifact.canonical_path,
+            },
+        )
+        return source_state
+
+
+def _save_artifact(artifact: JsonArtifact, payload: Dict[str, Any]) -> None:
+    normalized = artifact.validator(payload)
+    normalized["last_updated_ts"] = _now_ts()
+    os.makedirs(os.path.dirname(artifact.canonical_path), exist_ok=True)
+    with with_lock(artifact.lock_name):
+        save_json_atomic(artifact.canonical_path, normalized)
+
+
+def ensure_state_dir() -> None:
+    os.makedirs(state_dir(), exist_ok=True)
+
+
+def load_fsm_state(path: Optional[str] = None) -> Dict[str, Any]:
+    canonical_path = path or FOCUS_STATE_PATH
+    legacy_paths = () if path else (_legacy_root_path("focus_state.json"),)
+    return _load_artifact(
+        _artifact(
+            name="fsm_state",
+            canonical_path=canonical_path,
+            legacy_paths=legacy_paths,
+            lock_name="focus_state",
+            default_factory=default_fsm_state,
+            validator=validate_fsm_state,
+        )
+    )
+
+
+def save_fsm_state(state: Dict[str, Any], path: Optional[str] = None) -> None:
+    canonical_path = path or FOCUS_STATE_PATH
+    _save_artifact(
+        _artifact(
+            name="fsm_state",
+            canonical_path=canonical_path,
+            legacy_paths=(),
+            lock_name="focus_state",
+            default_factory=default_fsm_state,
+            validator=validate_fsm_state,
+        ),
+        state,
+    )
+
+
+def load_dist_state(path: Optional[str] = None) -> Dict[str, Any]:
+    canonical_path = path or DIST_STATE_PATH
+    legacy_paths = () if path else (_legacy_root_path("dist_state.json"),)
+    return _load_artifact(
+        _artifact(
+            name="distribution_state",
+            canonical_path=canonical_path,
+            legacy_paths=legacy_paths,
+            lock_name="dist_state",
+            default_factory=default_dist_state,
+            validator=validate_dist_state,
+        )
+    )
+
+
+def save_dist_state(state: Dict[str, Any], path: Optional[str] = None) -> None:
+    canonical_path = path or DIST_STATE_PATH
+    _save_artifact(
+        _artifact(
+            name="distribution_state",
+            canonical_path=canonical_path,
+            legacy_paths=(),
+            lock_name="dist_state",
+            default_factory=default_dist_state,
+            validator=validate_dist_state,
+        ),
+        state,
+    )
+
+
+def load_restart_guard_state(path: Optional[str] = None) -> Dict[str, Any]:
+    canonical_path = path or RESTART_GUARD_PATH
+    legacy_paths = () if path else (_legacy_root_path("restart_guard.json"),)
+    return _load_artifact(
+        _artifact(
+            name="restart_guard_state",
+            canonical_path=canonical_path,
+            legacy_paths=legacy_paths,
+            lock_name="restart_guard",
+            default_factory=default_restart_guard_state,
+            validator=validate_restart_guard_state,
+        )
+    )
+
+
+def save_restart_guard_state(state: Dict[str, Any], path: Optional[str] = None) -> None:
+    canonical_path = path or RESTART_GUARD_PATH
+    _save_artifact(
+        _artifact(
+            name="restart_guard_state",
+            canonical_path=canonical_path,
+            legacy_paths=(),
+            lock_name="restart_guard",
+            default_factory=default_restart_guard_state,
+            validator=validate_restart_guard_state,
+        ),
+        state,
+    )
+
+
+def load_settings(path: Optional[str] = None) -> Dict[str, Any]:
+    canonical_path = path or SETTINGS_PATH
+    legacy_paths = () if path else (_legacy_root_path("settings.json"),)
+    return _load_artifact(
+        _artifact(
+            name="runtime_settings",
+            canonical_path=canonical_path,
+            legacy_paths=legacy_paths,
+            lock_name="settings",
+            default_factory=default_settings,
+            validator=validate_settings,
+        )
+    )
+
+
+def save_settings(settings: Dict[str, Any], path: Optional[str] = None) -> None:
+    canonical_path = path or SETTINGS_PATH
+    _save_artifact(
+        _artifact(
+            name="runtime_settings",
+            canonical_path=canonical_path,
+            legacy_paths=(),
+            lock_name="settings",
+            default_factory=default_settings,
+            validator=validate_settings,
+        ),
+        settings,
+    )
+
+
+def load_active_symbols(path: Optional[str] = None) -> Dict[str, Any]:
+    canonical_path = path or ACTIVE_SYMBOLS_PATH
+    legacy_paths = () if path else (_legacy_root_path("active_symbols.json"),)
+    return _load_artifact(
+        _artifact(
+            name="active_symbols",
+            canonical_path=canonical_path,
+            legacy_paths=legacy_paths,
+            lock_name="active_symbols",
+            default_factory=default_active_symbols,
+            validator=validate_active_symbols,
+        )
+    )
+
+
+def save_active_symbols(obj: Dict[str, Any], path: Optional[str] = None) -> None:
+    canonical_path = path or ACTIVE_SYMBOLS_PATH
+    _save_artifact(
+        _artifact(
+            name="active_symbols",
+            canonical_path=canonical_path,
+            legacy_paths=(),
+            lock_name="active_symbols",
+            default_factory=default_active_symbols,
+            validator=validate_active_symbols,
+        ),
+        obj,
+    )
+
 
 def get_buffer_mode() -> str:
-    s = load_settings()
-    mode = (s.get("buffer_mode") or "MEDIUM").upper()
-    if mode not in {"SMALL", "MEDIUM", "LARGE"}:
-        mode = "MEDIUM"
-    return mode
+    return load_settings().get("buffer_mode", "MEDIUM")
 
 
 def set_buffer_mode(mode: str) -> None:
-    mode_u = (mode or "").upper()
-    if mode_u not in {"SMALL", "MEDIUM", "LARGE"}:
-        raise ValueError("buffer_mode must be SMALL|MEDIUM|LARGE")
-    s = load_settings()
-    s["buffer_mode"] = mode_u
-    save_settings(s)
+    state = load_settings()
+    state["buffer_mode"] = str(mode or "").upper()
+    save_settings(state)
 
 
 def list_symbols() -> list[str]:
     obj = load_active_symbols()
-    syms = obj.get("symbols") or []
-    # normalize
-    out: list[str] = []
-    for x in syms:
-        if isinstance(x, str) and x.strip():
-            out.append(x.strip().upper())
-    return out
+    if isinstance(obj.get("symbols"), list):
+        return [str(item).strip().upper() for item in obj["symbols"] if str(item).strip()]
+
+    result: list[str] = []
+    seen = set()
+    for value in obj.values():
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            symbol = str(item).strip().upper()
+            if symbol and symbol not in seen:
+                seen.add(symbol)
+                result.append(symbol)
+    return result
 
 
 def set_symbols(symbols: list[str]) -> None:
-    normalized = []
-    seen = set()
-    for s in symbols or []:
-        if not isinstance(s, str):
-            continue
-        v = s.strip().upper()
-        if not v or v in seen:
-            continue
-        seen.add(v)
-        normalized.append(v)
-    obj = load_active_symbols()
-    obj["symbols"] = normalized
-    save_active_symbols(obj)
+    save_active_symbols({"symbols": list(symbols or [])})

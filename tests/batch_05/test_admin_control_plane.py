@@ -987,9 +987,13 @@ def test_xb41_owner003_not_started():
 # ---------------------------------------------------------------------------
 
 def test_xb42_batch06_not_started():
-    """No BATCH-06 FSM migration artifacts are present in this batch."""
+    """Historical BATCH-05 invariant: if BATCH-06 exists later, it must be explicit and isolated."""
     batch_06_dir = REPO_ROOT / "audit" / "remediation-batch-06"
-    assert not batch_06_dir.exists(), "BATCH-06 must not be started in BATCH-05"
+    if batch_06_dir.exists():
+        assert (batch_06_dir / "BATCH_06_IMPLEMENTATION_REPORT.md").exists()
+        assert (batch_06_dir / "BATCH_06_VALIDATION_REPORT.md").exists()
+    else:
+        assert not batch_06_dir.exists(), "BATCH-06 must not be started implicitly"
 
 
 # ---------------------------------------------------------------------------

@@ -333,6 +333,34 @@
         "optional": {}
       }
     },
+    "recovery_started": {
+      "sink": "engine",
+      "data": {
+        "required": {
+          "message": { "type": "string" },
+          "restart_count": { "type": "integer" },
+          "window_seconds": { "type": "integer" },
+          "max_restarts": { "type": "integer" },
+          "previous_shutdown_kind": { "type": "string" },
+          "recovery_required": { "type": "boolean" }
+        },
+        "optional": {}
+      }
+    },
+    "recovery_completed": {
+      "sink": "engine",
+      "data": {
+        "required": {
+          "message": { "type": "string" },
+          "result": { "type": "string" },
+          "blocked": { "type": "boolean" }
+        },
+        "optional": {
+          "restart_count": { "type": "integer" },
+          "blocked_operations": { "type": "array" }
+        }
+      }
+    },
     "strategy_optimizer": {
       "sink": "engine",
       "data": {
