@@ -290,42 +290,53 @@ def _load_raw_algo_params() -> Dict[str, Any]:
 
 
 def _set_threshold(field: str, value: int) -> str:
-    """Mutate score_thresholds.<FIELD> and persist atomically after full validation."""
-    params = _load_raw_algo_params()
-    params.setdefault("score_thresholds", {})
-    params["score_thresholds"][field.upper()] = value
-    _save_algo_params_validated(params)
+    """Mutate score_thresholds.<FIELD> and persist atomically after full validation.
+    Holds the algo_params lock for the full read-modify-write cycle (GAP-011).
+    """
+    with _storage.with_lock("algo_params"):
+        params = _load_raw_algo_params()
+        params.setdefault("score_thresholds", {})
+        params["score_thresholds"][field.upper()] = value
+        _save_algo_params_validated(params)
     return f"Threshold {field.upper()} set to {value}."
 
 
 def _set_sr(value: float) -> str:
-    """Mutate sr_required_multiplier and persist atomically after full validation."""
-    params = _load_raw_algo_params()
-    params["sr_required_multiplier"] = value
-    _save_algo_params_validated(params)
+    """Mutate sr_required_multiplier and persist atomically after full validation.
+    Holds the algo_params lock for the full read-modify-write cycle (GAP-011).
+    """
+    with _storage.with_lock("algo_params"):
+        params = _load_raw_algo_params()
+        params["sr_required_multiplier"] = value
+        _save_algo_params_validated(params)
     return f"SR required multiplier set to {value}."
 
 
 def _set_spike(field: str, value: float) -> str:
-    """Mutate spike_filters.<field> and persist atomically after full validation."""
-    params = _load_raw_algo_params()
-    params.setdefault("spike_filters", {})
-    params["spike_filters"][field] = value
-    _save_algo_params_validated(params)
+    """Mutate spike_filters.<field> and persist atomically after full validation.
+    Holds the algo_params lock for the full read-modify-write cycle (GAP-011).
+    """
+    with _storage.with_lock("algo_params"):
+        params = _load_raw_algo_params()
+        params.setdefault("spike_filters", {})
+        params["spike_filters"][field] = value
+        _save_algo_params_validated(params)
     return f"Spike filter {field} set to {value}."
 
 
 def _symbols_add(symbol: str) -> str:
-    symbols = _load_active_symbols()
-    if symbol not in symbols:
-        symbols.append(symbol)
-        _save_active_symbols(symbols)
+    with _storage.with_lock("active_symbols"):
+        symbols = _load_active_symbols()
+        if symbol not in symbols:
+            symbols.append(symbol)
+            _save_active_symbols(symbols)
     return f"Added symbol {symbol}."
 
 
 def _symbols_remove(symbol: str) -> str:
-    symbols = [s for s in _load_active_symbols() if s != symbol]
-    _save_active_symbols(symbols)
+    with _storage.with_lock("active_symbols"):
+        symbols = [s for s in _load_active_symbols() if s != symbol]
+        _save_active_symbols(symbols)
     return f"Removed symbol {symbol}."
 
 

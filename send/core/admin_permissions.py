@@ -9,6 +9,13 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 ROLES_CONFIG_PATH = os.getenv("ADMIN_ROLES_CONFIG", "/opt/binarybot/config/admin_roles.json")
 
+# Path to the permissions config file that maps permission names to allowed roles.
+# When present, this file is merged with (and can extend) the hardcoded PERMISSION_MATRIX.
+# Resolves GAP-012: previously this file existed on disk but was completely ignored.
+PERMISSIONS_CONFIG_PATH = os.getenv(
+    "ADMIN_PERMISSIONS_CONFIG", "/opt/binarybot/config/admin_permissions.json"
+)
+
 ROLE_OWNER = "OWNER"
 ROLE_PRIMARY_ADMIN = "PRIMARY_ADMIN"
 ROLE_STRATEGY_ADMIN = "STRATEGY_ADMIN"
@@ -114,6 +121,19 @@ PERMISSION_MATRIX: Dict[str, Set[str]] = {
     ROLE_USER: set(),
 }
 
+# Mapping from lowercase role names in admin_permissions.json to canonical role constants.
+# Used when loading the file-based permission config (GAP-012).
+_ROLE_NAME_MAP: Dict[str, str] = {
+    "owner": ROLE_OWNER,
+    "primary_admin": ROLE_PRIMARY_ADMIN,
+    "strategy_admin": ROLE_STRATEGY_ADMIN,
+    "research_admin": ROLE_RESEARCH_ADMIN,
+    "analyst": ROLE_ANALYST,
+    "moderator": ROLE_MODERATOR,
+    "affiliate_admin": ROLE_AFFILIATE_ADMIN,
+    "user": ROLE_USER,
+}
+
 
 @dataclass(frozen=True)
 class AffiliateScope:
@@ -144,6 +164,48 @@ def _load_json_file(path: str) -> Dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+@lru_cache(maxsize=1)
+def load_permissions_config() -> Dict[str, Set[str]]:
+    """
+    Load role → permissions mapping from admin_permissions.json (GAP-012).
+
+    File format (permissions block maps permission names to allowed role names):
+      {
+        "permissions": {
+          "admin.view": ["owner", "primary_admin", ...],
+          ...
+        }
+      }
+
+    Returns a dict: {ROLE_CONSTANT: {permission_name, ...}}
+    Returns an empty dict if the file is absent, empty, or malformed
+    (callers then fall back to the hardcoded PERMISSION_MATRIX).
+    """
+    data = _load_json_file(PERMISSIONS_CONFIG_PATH)
+    permissions_block = data.get("permissions", {})
+    if not isinstance(permissions_block, dict) or not permissions_block:
+        return {}
+
+    result: Dict[str, Set[str]] = {}
+    for perm_name, role_names in permissions_block.items():
+        if not isinstance(perm_name, str) or not perm_name.strip():
+            continue
+        if not isinstance(role_names, list):
+            continue
+        for role_name in role_names:
+            role_const = _ROLE_NAME_MAP.get(str(role_name).strip().lower())
+            if role_const is None:
+                continue
+            result.setdefault(role_const, set()).add(perm_name.strip())
+
+    return result
+
+
+def reload_permissions_config() -> Dict[str, Set[str]]:
+    load_permissions_config.cache_clear()
+    return load_permissions_config()
 
 
 @lru_cache(maxsize=1)
@@ -268,9 +330,14 @@ def is_primary_admin(user_id: int) -> bool:
 
 def list_permissions_for_user(user_id: int) -> Set[str]:
     roles = get_user_roles(user_id)
+    # Merge hardcoded PERMISSION_MATRIX with any additional entries from the config file.
+    # The config file is authoritative for any permissions it defines; the hardcoded matrix
+    # provides the baseline. GAP-012: admin_permissions.json is now actually loaded.
+    file_matrix = load_permissions_config()  # empty dict if file absent or invalid
     permissions: Set[str] = set()
     for role in roles:
         permissions.update(PERMISSION_MATRIX.get(role, set()))
+        permissions.update(file_matrix.get(role, set()))
     return permissions
 
 
