@@ -115,19 +115,52 @@ def test_existing_supported_config_files_resolve_from_clean_environment():
         assert Path(storage.config_path(name)).is_file(), name
 
 
-def test_params_loader_behavior_is_unchanged():
+def test_params_loader_loads_canonical_contract():
+    """
+    BATCH-02: params_loader now validates and loads the canonical parameter contract.
+    The live algo_params.json uses score_thresholds, expiry_limits_minutes,
+    buffer_multipliers and strategy_v2 — not the pre-BATCH-02 legacy shape.
+    """
     params_loader = _fresh_import("core.params_loader")
     params = params_loader.load_algo_params(path=str(SEND_ROOT / "config" / "algo_params.json"))
 
-    assert set(params) == {"algo_version", "thresholds", "weights", "expiry", "buffer", "gates"}
+    # Required canonical top-level keys must be present.
+    assert "algo_version" in params
+    assert "score_thresholds" in params
+    assert "expiry_limits_minutes" in params
+    assert "buffer_multipliers" in params
 
-    with pytest.raises(params_loader.ParamsValidationError, match="algo params missing top-level keys"):
+    # Legacy keys must NOT be present.
+    assert "thresholds" not in params
+    assert "weights" not in params
+    assert "expiry" not in params
+    assert "buffer" not in params
+    assert "gates" not in params
+
+    # score_thresholds must use uppercase canonical keys.
+    st = params["score_thresholds"]
+    assert "PRE" in st and "CONFIRM" in st and "OPEN" in st
+
+    # Hierarchy invariant: PRE <= CONFIRM <= OPEN
+    assert st["PRE"] <= st["CONFIRM"] <= st["OPEN"]
+
+    with pytest.raises(params_loader.ParamsValidationError, match="missing required top-level keys"):
         params_loader.validate_algo_params(
             {
-                "algo_version": "1.0.0",
-                "thresholds": {"pre": 1, "confirm": 2, "open": 3},
-                "weights": {},
-                "expiry": {"min_minutes": 1, "max_minutes": 2},
-                "buffer": {"modes": {"SMALL": {"atr_mult": 1}, "MEDIUM": {"atr_mult": 1}, "LARGE": {"atr_mult": 1}}},
+                "algo_version": "2.0.0",
+                "score_thresholds": {"PRE": 70, "CONFIRM": 75, "OPEN": 80},
+                "expiry_limits_minutes": {"min": 2, "max": 15},
+                # Missing "buffer_multipliers"
+            }
+        )
+
+    with pytest.raises(params_loader.ParamsValidationError, match="unknown top-level parameter keys"):
+        params_loader.validate_algo_params(
+            {
+                "algo_version": "2.0.0",
+                "score_thresholds": {"PRE": 70, "CONFIRM": 75, "OPEN": 80},
+                "expiry_limits_minutes": {"min": 2, "max": 15},
+                "buffer_multipliers": {"SMALL": 0.3, "MEDIUM": 0.55, "LARGE": 1.0},
+                "thresholds": {"pre": 70},  # Unknown legacy key
             }
         )

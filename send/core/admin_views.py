@@ -36,8 +36,8 @@ def render_admin_home(identity: Dict[str, Any]) -> str:
         "/admin",
         "/strategy",
         "/thresholds PRE|CONFIRM|OPEN <value>",
-        "/sr <value>",
-        "/spike wick_ratio|atr_jump <value>",
+        "/sr <multiplier>",
+        "/spike wick_body_ratio_max|range_z_max|jump_vs_atr_max <value>",
         "/symbols list",
         "/symbols add SYMBOL",
         "/symbols remove SYMBOL",
@@ -51,19 +51,20 @@ def render_admin_home(identity: Dict[str, Any]) -> str:
 
 
 def render_strategy_status(params: Dict[str, Any]) -> str:
-    thresholds = params.get("thresholds", {})
-    spike = params.get("spike", {})
+    thresholds = params.get("score_thresholds", {})
+    spike = params.get("spike_filters", {})
 
     lines: List[str] = [
         "Strategy Status",
         "",
-        f"PRE threshold: {_clean(thresholds.get('pre'))}",
-        f"CONFIRM threshold: {_clean(thresholds.get('confirm'))}",
-        f"OPEN threshold: {_clean(thresholds.get('open'))}",
+        f"PRE threshold: {_clean(thresholds.get('PRE'))}",
+        f"CONFIRM threshold: {_clean(thresholds.get('CONFIRM'))}",
+        f"OPEN threshold: {_clean(thresholds.get('OPEN'))}",
         "",
-        f"SR buffer: {_clean(params.get('sr_buffer'))}",
-        f"Spike wick ratio: {_clean(spike.get('wick_ratio'))}",
-        f"Spike ATR jump: {_clean(spike.get('atr_jump'))}",
+        f"SR required multiplier: {_clean(params.get('sr_required_multiplier'))}",
+        f"Spike wick_body_ratio_max: {_clean(spike.get('wick_body_ratio_max'))}",
+        f"Spike range_z_max: {_clean(spike.get('range_z_max'))}",
+        f"Spike jump_vs_atr_max: {_clean(spike.get('jump_vs_atr_max'))}",
     ]
     return _lines(lines)
 

@@ -1,34 +1,59 @@
 {
+  "_comment": "Canonical parameter contract for BinaryBot/DROPi Signals. BATCH-02 aligned. Required keys must be present; optional keys use strategy-internal defaults if absent.",
+  "_required": ["algo_version", "score_thresholds", "expiry_limits_minutes", "buffer_multipliers"],
+  "_optional": ["strategy_v2", "spike_filters", "sr_required_multiplier", "crypto_points_rounding", "trend_time_adjust", "structure_factor"],
   "algo_version": "string",
   "strategy_v2": {
-    "ema_fast": "integer",
-    "ema_slow": "integer",
-    "rsi_period": "integer",
-    "rsi_call": "number",
-    "rsi_put": "number",
+    "_optional": true,
+    "ema_fast": "integer (range: 2-500, default: 50)",
+    "ema_slow": "integer (range: 2-1000, default: 200, must be > ema_fast)",
+    "rsi_period": "integer (range: 2-100, default: 14)",
+    "rsi_call": "number (range: 50.0-100.0 exclusive, default: 58.0)",
+    "rsi_put": "number (range: 0.0-50.0 exclusive, default: 42.0)",
     "min_avg_range": {
-      "FOREX_DEFAULT": "number",
-      "FOREX_JPY": "number",
-      "CRYPTO_USD": "number"
-    },
-    "scores": {
-      "CALL": "integer",
-      "PUT": "integer",
-      "NO_SIGNAL": "integer"
+      "FOREX_DEFAULT": "number (>0, default: 0.00025)",
+      "FOREX_JPY": "number (>0, default: 0.025)",
+      "CRYPTO_USD": "number (>0, default: 8.0)"
     }
   },
-  "buffer_multipliers": {
-    "SMALL": "number",
-    "MEDIUM": "number",
-    "LARGE": "number"
+  "score_thresholds": {
+    "_required": true,
+    "_constraint": "PRE <= CONFIRM <= OPEN, all in [0, 100]",
+    "PRE": "integer (range: 0-100)",
+    "CONFIRM": "integer (range: 0-100)",
+    "OPEN": "integer (range: 0-100)"
   },
   "expiry_limits_minutes": {
-    "min": "integer",
-    "max": "integer"
+    "_required": true,
+    "_constraint": "min >= 1, max >= min",
+    "min": "integer (range: >=1)",
+    "max": "integer (range: >=1, >= min)"
   },
-  "score_thresholds": {
-    "PRE": "integer",
-    "CONFIRM": "integer",
-    "OPEN": "integer"
+  "buffer_multipliers": {
+    "_required": true,
+    "_constraint": "all values > 0",
+    "SMALL": "number (>0)",
+    "MEDIUM": "number (>0)",
+    "LARGE": "number (>0)"
+  },
+  "spike_filters": {
+    "_optional": true,
+    "_constraint": "all values > 0",
+    "wick_body_ratio_max": "number (>0, default: 6.0)",
+    "range_z_max": "number (>0, default: 3.0)",
+    "jump_vs_atr_max": "number (>0, default: 2.5)"
+  },
+  "sr_required_multiplier": "number (>0, default: 1.5, optional)",
+  "crypto_points_rounding": "number (>=0, default: 0.0, optional; 0.0 disables rounding)",
+  "trend_time_adjust": {
+    "_optional": true,
+    "_constraint": "all values > 0",
+    "WITH_TREND": "number (>0, default: 0.9)",
+    "FLAT": "number (>0, default: 1.0)",
+    "COUNTER_TREND": "number (>0, default: 1.15)"
+  },
+  "structure_factor": {
+    "_optional": true,
+    "mult": "number (>0, default: 1.0)"
   }
 }
