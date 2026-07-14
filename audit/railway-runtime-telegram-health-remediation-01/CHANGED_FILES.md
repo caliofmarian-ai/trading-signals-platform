@@ -1,0 +1,31 @@
+# CHANGED_FILES
+
+## Modified
+- `send/core/admin_commands.py`
+- `send/core/admin_views.py`
+- `send/core/bot_service.py`
+- `send/core/observability_logger.py`
+- `send/core/signal_engine.py`
+- `send/runtime/market_client.py`
+- `send/runtime/runtime_status.py`
+- `send/runtime/system_boot.py`
+- `scripts/railway_start.py`
+
+## Created
+- `send/core/telegram_runtime.py`
+- `send/core/telegram_targets.py`
+- `tests/canonical/unit/test_telegram_runtime_remediation.py`
+- `audit/railway-runtime-telegram-health-remediation-01/OWNER_DECISIONS_APPLIED.md`
+- `audit/railway-runtime-telegram-health-remediation-01/IMPLEMENTATION_SCOPE.md`
+- `audit/railway-runtime-telegram-health-remediation-01/TELEGRAM_COMMAND_CONTRACT.md`
+- `audit/railway-runtime-telegram-health-remediation-01/REPLY_CONTEXT_ROUTING_CONTRACT.md`
+- `audit/railway-runtime-telegram-health-remediation-01/STARTUP_RECOVERY_NOTIFICATION_CONTRACT.md`
+- `audit/railway-runtime-telegram-health-remediation-01/ERROR_ESCALATION_CONTRACT.md`
+- `audit/railway-runtime-telegram-health-remediation-01/TWELVE_DATA_429_FAILURE_CONTRACT.md`
+- `audit/railway-runtime-telegram-health-remediation-01/OBSERVABILITY_ERROR_SHAPE_FIX.md`
+- `audit/railway-runtime-telegram-health-remediation-01/ADMIN_PROOF_RECONNECTION_REPORT.md`
+- `audit/railway-runtime-telegram-health-remediation-01/LEGACY_PARITY_DECISION_RECORD.md`
+- `audit/railway-runtime-telegram-health-remediation-01/TEST_AND_VALIDATION_REPORT.md`
+- `audit/railway-runtime-telegram-health-remediation-01/CHANGED_FILES.md`
+- `audit/railway-runtime-telegram-health-remediation-01/OPEN_FINDINGS.md`
+- `audit/railway-runtime-telegram-health-remediation-01/IMPLEMENTATION_SUMMARY.md`
