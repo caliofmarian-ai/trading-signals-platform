@@ -75,7 +75,7 @@ def test_help_command_uses_active_inventory(
     assert "Mutation commands" in text
     for command in ("/start", "/help", "/status", "/admin", "/thresholds PRE|CONFIRM|OPEN <value>", "/roles_reload"):
         assert command in text
-    assert "Admin commands require the configured admin chat context" in text
+    assert "Admin commands require the configured admin control topic" in text
 
 
 def test_status_command_ready_state(
@@ -200,6 +200,203 @@ def test_admin_context_remains_fail_closed_for_commands(
     bot.process_update(_message_update(chat_id=-1002, user_id=1001, text="/admin", chat_type="supergroup"))
 
     assert "Access denied" in sends[0]["text"]
+
+
+def test_owner_private_admin_commands_allowed_without_admin_topic(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "-1001")
+    monkeypatch.setenv("ADMIN_CONTROL_THREAD_ID", "999")
+    bot = fresh_imports("core.bot_service")
+    monkeypatch.setattr(bot, "handle_admin_command_v2", lambda text, user_id: f"ok:{text}:{user_id}")
+    sends = _capture_send(monkeypatch, bot)
+
+    for cmd in (
+        "/admin",
+        "/strategy",
+        "/thresholds",
+        "/sr",
+        "/spike",
+        "/symbols",
+        "/engine",
+        "/debug",
+        "/report",
+        "/roles",
+        "/affiliate",
+    ):
+        bot.process_update(_message_update(chat_id=1001, user_id=1001, text=cmd, chat_type="private"))
+
+    assert len(sends) == 11
+    assert all("Access denied" not in item["text"] for item in sends)
+    assert all(item["thread_id"] is None for item in sends)
+
+
+def test_owner_private_roles_reload_denied_outside_admin_topic(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "-1001")
+    monkeypatch.setenv("ADMIN_CONTROL_THREAD_ID", "999")
+    bot = fresh_imports("core.bot_service")
+    sends = _capture_send(monkeypatch, bot)
+
+    bot.process_update(_message_update(chat_id=1001, user_id=1001, text="/roles_reload", chat_type="private"))
+
+    assert "Access denied" in sends[0]["text"]
+
+
+def test_non_owner_admin_commands_require_configured_admin_topic_thread(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "-1001")
+    monkeypatch.setenv("ADMIN_CONTROL_THREAD_ID", "999")
+    bot = fresh_imports("core.bot_service")
+    monkeypatch.setattr(bot, "handle_admin_command_v2", lambda text, user_id: "ok")
+    sends = _capture_send(monkeypatch, bot)
+
+    bot.process_update(
+        _message_update(
+            chat_id=-1001,
+            user_id=2002,
+            text="/admin",
+            chat_type="supergroup",
+            message_thread_id=42,
+        )
+    )
+    bot.process_update(
+        _message_update(
+            chat_id=-1001,
+            user_id=2002,
+            text="/admin",
+            chat_type="supergroup",
+            message_thread_id=999,
+        )
+    )
+
+    assert "Access denied" in sends[0]["text"]
+    assert "Access denied" not in sends[1]["text"]
+
+
+def test_owner_private_callback_navigation_restores_admin_panels(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "-1001")
+    monkeypatch.setenv("ADMIN_CONTROL_THREAD_ID", "999")
+    bot = fresh_imports("core.bot_service")
+    edits: list[dict] = []
+
+    monkeypatch.setattr(
+        bot,
+        "handle_admin_command_v2",
+        lambda text, user_id: "engine ok" if text.startswith("/engine") else "ok",
+    )
+    monkeypatch.setattr(
+        bot.telegram_publisher,
+        "edit_message",
+        lambda chat_id, message_id, text, reply_markup: edits.append(
+            {"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": reply_markup}
+        ),
+    )
+
+    bot.process_update(
+        {
+            "callback_query": {
+                "id": "cb-1",
+                "from": {"id": 1001},
+                "data": "ADMIN_NAV:ENGINE",
+                "message": {
+                    "chat": {"id": 1001, "type": "private"},
+                    "message_id": 7,
+                    "text": "old",
+                },
+            }
+        }
+    )
+
+    assert edits
+    assert "Engine Panel" in edits[0]["text"]
+    assert edits[0]["reply_markup"]["inline_keyboard"]
+
+
+def test_non_owner_callback_navigation_requires_admin_topic_thread(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "-1001")
+    monkeypatch.setenv("ADMIN_CONTROL_THREAD_ID", "999")
+    bot = fresh_imports("core.bot_service")
+    sends = _capture_send(monkeypatch, bot)
+
+    bot.process_update(
+        {
+            "callback_query": {
+                "id": "cb-1",
+                "from": {"id": 2002},
+                "data": "ADMIN_NAV:HOME",
+                "message": {
+                    "chat": {"id": -1001, "type": "supergroup"},
+                    "message_id": 7,
+                    "message_thread_id": 42,
+                    "text": "old",
+                },
+            }
+        }
+    )
+
+    assert sends
+    assert "Access denied" in sends[0]["text"]
+
+
+def test_admin_topic_reload_confirmation_dialog_uses_callback_navigation(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "-1001")
+    monkeypatch.setenv("ADMIN_CONTROL_THREAD_ID", "999")
+    bot = fresh_imports("core.bot_service")
+    edits: list[dict] = []
+    monkeypatch.setattr(
+        bot.telegram_publisher,
+        "edit_message",
+        lambda chat_id, message_id, text, reply_markup: edits.append(
+            {"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": reply_markup}
+        ),
+    )
+
+    bot.process_update(
+        {
+            "callback_query": {
+                "id": "cb-1",
+                "from": {"id": 2002},
+                "data": "ADMIN_NAV:RELOAD_ROLES_CONFIRM",
+                "message": {
+                    "chat": {"id": -1001, "type": "supergroup"},
+                    "message_id": 7,
+                    "message_thread_id": 999,
+                    "text": "old",
+                },
+            }
+        }
+    )
+
+    assert edits
+    assert "Confirmation" in edits[0]["text"]
+    assert "ADMIN_NAV:RELOAD_ROLES_EXEC" in str(edits[0]["reply_markup"])
 
 
 def test_mutation_permission_check_still_blocks_unauthorized_users(

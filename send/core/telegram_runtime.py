@@ -70,7 +70,8 @@ def render_help_text() -> str:
         [
             "Restrictions",
             "Public commands are available in any chat context.",
-            "Admin commands require the configured admin chat context and canonical role permissions.",
+            "Admin commands require the configured admin control topic and canonical role permissions.",
+            "Owner private-chat access is allowed only for: /admin /strategy /thresholds /sr /spike /symbols /engine /debug /report /roles /affiliate.",
             "Mutation commands stay fail-closed outside the admin context or without the required permission.",
         ]
     )
