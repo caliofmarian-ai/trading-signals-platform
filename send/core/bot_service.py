@@ -18,11 +18,13 @@ from typing import Optional, Dict, Any
 
 from core import telegram_publisher
 from core.admin_commands import handle_admin_command as handle_admin_command_v2
+from core.admin_permissions import is_owner
 from core import observability_logger
 from core import outcome_service
 from core import fsm_runtime
 from core.telegram_runtime import admin_command_names, render_help_text, render_start_text, render_status_text
 from core.telegram_targets import env_chat_id, env_thread_id, reply_target_from_message, valid_thread_id
+from core import telegram_admin_ui
 from monitoring import restart_guard
 from runtime import runtime_status
 
@@ -35,6 +37,19 @@ OUTCOMES_PATH = "/opt/binarybot/state/outcomes.json"
 ADMIN_CONTROL_CHAT_ID = env_chat_id("ADMIN_CONTROL_CHAT_ID") or 0
 ADMIN_CONTROL_THREAD_ID = env_thread_id("ADMIN_CONTROL_THREAD_ID") or 0
 UNKNOWN_COMMAND_TEXT = "Unknown command. Use /help to view available commands."
+_OWNER_PRIVATE_COMMANDS: frozenset[str] = frozenset({
+    "/admin",
+    "/strategy",
+    "/thresholds",
+    "/sr",
+    "/spike",
+    "/symbols",
+    "/engine",
+    "/debug",
+    "/report",
+    "/roles",
+    "/affiliate",
+})
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -53,6 +68,53 @@ def in_admin_context(chat_id: int) -> bool:
     return chat_id == ADMIN_CONTROL_CHAT_ID
 
 
+def _safe_int(value: Any) -> Optional[int]:
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return None
+
+
+def _is_owner_private_context(message: Dict[str, Any], user_id: int) -> bool:
+    chat = message.get("chat")
+    if not isinstance(chat, dict):
+        return False
+    if str(chat.get("type") or "").lower() != "private":
+        return False
+    chat_id = _safe_int(chat.get("id"))
+    if chat_id is None or chat_id != user_id:
+        return False
+    return is_owner(user_id)
+
+
+def _is_admin_topic_context(message: Dict[str, Any]) -> bool:
+    target = reply_target_from_message(message)
+    if target is None:
+        return False
+    if not in_admin_context(target.chat_id):
+        return False
+    required_thread_id = valid_thread_id(ADMIN_CONTROL_CHAT_ID, ADMIN_CONTROL_THREAD_ID)
+    if required_thread_id is None:
+        return True
+    return target.thread_id == required_thread_id
+
+
+def _can_run_admin_command(message: Dict[str, Any], user_id: int, cmd: str) -> bool:
+    if _is_owner_private_context(message, user_id):
+        return cmd in _OWNER_PRIVATE_COMMANDS
+    return _is_admin_topic_context(message)
+
+
+def _can_use_admin_callback(message: Dict[str, Any], user_id: int) -> bool:
+    if _is_owner_private_context(message, user_id):
+        return True
+    return _is_admin_topic_context(message)
+
+
+def _is_owner_private_for_message(message: Dict[str, Any], user_id: int) -> bool:
+    return _is_owner_private_context(message, user_id)
+
+
 def _send_reply(message: Dict[str, Any], text: str, reply_markup: Optional[Dict[str, Any]] = None) -> None:
     target = reply_target_from_message(message)
     if target is None:
@@ -63,6 +125,90 @@ def _send_reply(message: Dict[str, Any], text: str, reply_markup: Optional[Dict[
         reply_markup=reply_markup,
         thread_id=target.thread_id,
     )
+
+
+def _format_card(title: str, body: str) -> str:
+    clean_body = str(body or "").strip()
+    if not clean_body:
+        return title
+    return f"{title}\n\n{clean_body}"
+
+
+def _admin_reply_markup(cmd: str, *, owner_private: bool) -> Optional[Dict[str, Any]]:
+    if cmd == "/admin":
+        return telegram_admin_ui.admin_home_markup(include_roles_reload=not owner_private)
+    if cmd == "/strategy":
+        return telegram_admin_ui.strategy_markup()
+    if cmd in {"/thresholds", "/sr", "/spike"}:
+        return telegram_admin_ui.strategy_markup()
+    if cmd == "/symbols":
+        return telegram_admin_ui.symbols_markup()
+    if cmd == "/engine":
+        return telegram_admin_ui.engine_markup(include_roles_reload=not owner_private)
+    if cmd in {"/debug", "/report", "/roles", "/affiliate"}:
+        return telegram_admin_ui.standard_back_markup()
+    return None
+
+
+def _render_panel_for_command(cmd: str, user_id: int, *, owner_private: bool) -> tuple[str, Optional[Dict[str, Any]]]:
+    if cmd == "/status":
+        return _format_card("📡 Status Panel", render_status_text(_build_status_snapshot())), telegram_admin_ui.status_markup()
+
+    response_text = handle_admin_command_v2(cmd, user_id)
+    title_map = {
+        "/admin": "🛠️ Admin Panel",
+        "/strategy": "📈 Strategy Panel",
+        "/thresholds": "🎯 Thresholds Panel",
+        "/sr": "📐 SR Panel",
+        "/spike": "⚡ Spike Panel",
+        "/symbols": "🧩 Symbols Panel",
+        "/engine": "⚙️ Engine Panel",
+        "/debug": "🧪 Debug Panel",
+        "/report": "📊 Report Panel",
+        "/roles": "👥 Roles Panel",
+        "/affiliate": "💼 Affiliate Panel",
+        "/roles_reload": "♻️ Roles Panel",
+    }
+    return _format_card(title_map.get(cmd, "🛠️ Admin Panel"), response_text), _admin_reply_markup(cmd, owner_private=owner_private)
+
+
+def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str, Any]) -> Dict[str, Any]:
+    owner_private = _is_owner_private_for_message(message, user_id)
+    command_for_action = {
+        "HOME": "/admin",
+        "STATUS": "/status",
+        "STRATEGY": "/strategy",
+        "THRESHOLDS": "/thresholds",
+        "SR": "/sr",
+        "SPIKE": "/spike",
+        "SYMBOLS": "/symbols list",
+        "ENGINE": "/engine",
+        "DEBUG": "/debug",
+        "REPORT": "/report",
+        "ROLES": "/roles",
+        "AFFILIATE": "/affiliate",
+        "RELOAD_ROLES_EXEC": "/roles_reload",
+    }.get(action)
+
+    if action == "RELOAD_ROLES_CONFIRM":
+        if owner_private:
+            return {"text": "Access denied (wrong chat).", "reply_markup": None}
+        return {
+            "text": _format_card("♻️ Confirmation", "Confirm reloading role + permission configuration?"),
+            "reply_markup": telegram_admin_ui.reload_confirm_markup(),
+        }
+
+    if command_for_action is None:
+        return {"text": "Unknown action.", "reply_markup": None}
+
+    cmd = command_for_action.split()[0].lower()
+    if cmd in admin_command_names():
+        if owner_private and cmd not in _OWNER_PRIVATE_COMMANDS:
+            return {"text": "Access denied (wrong chat).", "reply_markup": None}
+        if not owner_private and not _is_admin_topic_context(message):
+            return {"text": "Access denied (wrong chat).", "reply_markup": None}
+    text, reply_markup = _render_panel_for_command(command_for_action, user_id, owner_private=owner_private)
+    return {"text": text, "reply_markup": reply_markup}
 
 
 def _build_status_snapshot() -> Dict[str, Any]:
@@ -134,6 +280,7 @@ def handle_callback(
     user_id: int,
     data: str,
     message_id: Optional[int] = None,
+    message_thread_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Callback dispatcher.
@@ -199,8 +346,20 @@ def handle_callback(
             return {"text": f"Already set: {outcome}", "reply_markup": None}
         return {"text": f"OUTCOME: {outcome}", "reply_markup": None}
 
+    admin_action = telegram_admin_ui.parse_action(data)
+    if admin_action is not None:
+        message = {
+            "chat": {"id": chat_id, "type": "private" if chat_id > 0 else "supergroup"},
+        }
+        if message_thread_id is not None:
+            message["message_thread_id"] = message_thread_id
+        return _handle_admin_navigation_action(admin_action, user_id, message)
+
     # ---- Admin panel callbacks: require authorised admin chat context (BATCH-05: fail-closed) ----
-    if not in_admin_context(chat_id):
+    context_message: Dict[str, Any] = {"chat": {"id": chat_id, "type": "private" if chat_id > 0 else "supergroup"}}
+    if message_thread_id is not None:
+        context_message["message_thread_id"] = message_thread_id
+    if not _is_admin_topic_context(context_message):
         return {"text": "Access denied (wrong chat).", "reply_markup": None}
 
     if data in _RETIRED_ADMIN_CALLBACKS or any(data.startswith(p) for p in _RETIRED_ADMIN_PREFIXES):
@@ -237,23 +396,38 @@ def process_update(update: Dict[str, Any]) -> None:
                 _send_reply(msg, render_status_text(_build_status_snapshot()))
                 return
             if cmd in admin_command_names():
-                if not in_admin_context(chat_id):
+                if not _can_run_admin_command(msg, user_id, cmd):
                     _send_reply(msg, "Access denied (wrong chat).")
                     return
-                response_text = handle_admin_command_v2(text, user_id)
-                _send_reply(msg, response_text)
+                owner_private = _is_owner_private_for_message(msg, user_id)
+                response_text, reply_markup = _render_panel_for_command(text, user_id, owner_private=owner_private)
+                _send_reply(msg, response_text, reply_markup)
                 return
             _send_reply(msg, UNKNOWN_COMMAND_TEXT)
             return
 
         if cb:
             data = cb.get("data") or ""
-            chat_id = int(cb["message"]["chat"]["id"])
-            user_id = int(cb["from"]["id"])
             msg_obj = cb.get("message") or {}
+            chat_id = int(msg_obj["chat"]["id"])
+            user_id = int(cb["from"]["id"])
             message_id = msg_obj.get("message_id")
 
-            res = handle_callback(chat_id, user_id, data, message_id=message_id)
+            admin_action = telegram_admin_ui.parse_action(data)
+            if admin_action is not None and not _can_use_admin_callback(msg_obj, user_id):
+                _send_reply(msg_obj, "Access denied (wrong chat).")
+                return
+
+            if admin_action is not None:
+                res = _handle_admin_navigation_action(admin_action, user_id, msg_obj)
+            else:
+                res = handle_callback(
+                    chat_id,
+                    user_id,
+                    data,
+                    message_id=message_id,
+                    message_thread_id=msg_obj.get("message_thread_id"),
+                )
 
             original_text = msg_obj.get("text", "") or ""
 
