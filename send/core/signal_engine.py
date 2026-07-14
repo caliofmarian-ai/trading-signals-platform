@@ -290,7 +290,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
 
     for symbol in scan_symbols:
         try:
-            from runtime.market_client import get_candles
+            from runtime.market_client import MarketDataRateLimitError, get_candles
 
             raw_m1 = get_candles(symbol, "1min")
             raw_m5 = get_candles(symbol, "5min")
@@ -399,11 +399,20 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                     )
 
         except Exception as e:
+            if isinstance(e, MarketDataRateLimitError):
+                observability_logger.log_warning(
+                    warn_type="MARKET_DATA_LIMITED",
+                    message="Twelve Data rate limit is active; skipping remaining symbols for this cycle",
+                    context={"symbol": symbol},
+                    source={"module": "signal_engine", "function": "run_once"},
+                )
+                break
             observability_logger.log_error({
                 "event_type": "error",
                 "module": "signal_engine",
                 "symbol": symbol,
                 "error": str(e),
+                "trace": "",
             })
             continue
 

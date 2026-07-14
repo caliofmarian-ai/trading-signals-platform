@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any, Dict, List, Optional
 
 from core.admin_permissions import (
@@ -28,6 +29,7 @@ from core.admin_views import (
     render_unauthorized,
 )
 from core import params_loader as _params_loader
+from core import observability_logger
 from core import storage as _storage
 
 CONFIG_DIR = _storage.root_path("config")
@@ -76,6 +78,7 @@ def _audit(user_id: int, command: str, result: str, details: Optional[Dict[str, 
     }
     _append_jsonl(ADMIN_EVENTS_PATH, payload)
     _append_jsonl(ADMIN_PROOFS_PATH, payload)
+    observability_logger.send_admin_proof_telegram("admin_change", payload, int(time.time()))
 
 
 def _parse_command(text: str) -> List[str]:

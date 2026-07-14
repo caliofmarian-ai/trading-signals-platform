@@ -16,6 +16,11 @@ except Exception:
     storage = None
 
 try:
+    from . import telegram_targets  # type: ignore
+except Exception:
+    telegram_targets = None
+
+try:
     from . import telegram_publisher  # type: ignore
 except Exception:
     telegram_publisher = None
@@ -25,7 +30,7 @@ SCHEMA_VERSION = os.getenv("EVENT_SCHEMA_VERSION", "2.0.0")
 SERVICE_NAME = os.getenv("SERVICE_NAME", "binarybot")
 ENV_NAME = os.getenv("BOT_ENV", "prod")
 BOT_VERSION = os.getenv("BOT_VERSION", "0.0.0")
-GIT_SHA = os.getenv("GIT_SHA", "")
+GIT_SHA = ""
 
 PACKAGE_ROOT = os.path.dirname(os.path.dirname(__file__))
 EVENT_SCHEMA_PATH = os.path.join(PACKAGE_ROOT, "schema", "event_schema.json")
@@ -42,6 +47,9 @@ ADMIN_PROOF_CHAT_ID = os.getenv("ADMIN_PROOF_CHAT_ID", "")
 ADMIN_PROOF_THREAD_ID = os.getenv("ADMIN_PROOF_THREAD_ID", "")
 
 _SCHEMA_CACHE: Optional[Dict[str, Any]] = None
+_INCIDENT_REMINDER_SECONDS = 300
+_OPERATIONAL_INCIDENTS: Dict[str, Dict[str, Any]] = {}
+_LOG_FAILURE_INCIDENTS: Dict[str, Dict[str, Any]] = {}
 
 
 @dataclass
@@ -51,11 +59,26 @@ class RunContext:
     pid: int
 
 
-_RUN = RunContext(
-    run_id=os.getenv("RUN_ID", f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"),
-    hostname=socket.gethostname(),
-    pid=os.getpid(),
-)
+def _is_placeholder(value: str) -> bool:
+    normalized = value.strip().lower()
+    return normalized in {"", "replace-me", "unknown", "n/a", "na", "placeholder"}
+
+
+def _resolve_git_sha() -> str:
+    raw = os.getenv("GIT_SHA", "")
+    return "" if _is_placeholder(raw) else raw.strip()
+
+
+def _resolve_run_id() -> str:
+    raw = os.getenv("RUN_ID", "")
+    if not _is_placeholder(raw):
+        return raw.strip()
+    return f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+
+GIT_SHA = _resolve_git_sha()
+
+_RUN = RunContext(run_id=_resolve_run_id(), hostname=socket.gethostname(), pid=os.getpid())
 
 
 def _iso_utc_now() -> str:
@@ -64,6 +87,14 @@ def _iso_utc_now() -> str:
 
 def _epoch_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _now_ts() -> int:
+    return int(time.time())
+
+
+def _iso_from_ts(ts: int) -> str:
+    return datetime.fromtimestamp(int(ts), timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _ensure_dir(path: str) -> None:
@@ -144,6 +175,51 @@ def _normalize_source(source: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     normalized: Dict[str, Any] = {"module": module, "function": function}
     if source.get("line") is not None:
         normalized["line"] = int(source["line"])
+    return normalized
+
+
+def _canonicalize_error_data(event: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(data)
+    context = normalized.get("context")
+    context_obj = dict(context) if isinstance(context, dict) else {}
+
+    if normalized.get("trace") is not None and normalized.get("stack") is None:
+        normalized["stack"] = normalized.pop("trace")
+    else:
+        normalized.pop("trace", None)
+
+    if not normalized.get("severity"):
+        normalized["severity"] = str(event.get("severity") or "ERROR")
+    if not normalized.get("error_type"):
+        normalized["error_type"] = str(
+            normalized.pop("code", None)
+            or event.get("error_type")
+            or event.get("code")
+            or event.get("module")
+            or "error"
+        )
+    else:
+        normalized.pop("code", None)
+    if not normalized.get("message"):
+        normalized["message"] = str(
+            normalized.pop("error", None)
+            or event.get("message")
+            or event.get("error")
+            or "error"
+        )
+    else:
+        normalized.pop("error", None)
+
+    for key in list(normalized.keys()):
+        if key in {"severity", "error_type", "message", "stack", "context"}:
+            continue
+        context_obj[key] = normalized.pop(key)
+
+    if context_obj:
+        normalized["context"] = context_obj
+    else:
+        normalized.pop("context", None)
+
     return normalized
 
 
@@ -320,7 +396,10 @@ def _normalize_event(event: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("event missing event_type")
 
     if "data" in event and "event_id" in event:
-        return dict(event)
+        canonical = dict(event)
+        if canonical.get("event_type") == "error" and isinstance(canonical.get("data"), dict):
+            canonical["data"] = _canonicalize_error_data(canonical, dict(canonical["data"]))
+        return canonical
 
     source = event.get("source")
     if not isinstance(source, dict):
@@ -363,8 +442,8 @@ def _normalize_event(event: Dict[str, Any]) -> Dict[str, Any]:
     else:
         data = raw_data
 
-    if preserved_envelope["event_type"] == "error" and "error_type" not in data and data.get("code") is not None:
-        data["error_type"] = data.pop("code")
+    if preserved_envelope["event_type"] == "error":
+        data = _canonicalize_error_data(event, data)
 
     preserved_envelope["event_type"] = str(event_type)
     preserved_envelope["data"] = data
@@ -402,6 +481,179 @@ def build_error(
     return build_event("error", data, source=source)
 
 
+def _resolve_target(kind: str):
+    if not telegram_targets:
+        return None
+    if kind == "control":
+        return telegram_targets.control_target()
+    if kind == "proof":
+        return telegram_targets.proof_target()
+    return None
+
+
+def _send_telegram_text(kind: str, text: str) -> bool:
+    target = _resolve_target(kind)
+    if not telegram_publisher or target is None:
+        return False
+    try:
+        telegram_publisher.send_message(
+            chat_id=target.chat_id,
+            text=text,
+            reply_markup=None,
+            thread_id=target.thread_id,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def send_control_notification(title: str, message: str) -> bool:
+    body = title.strip() if not message.strip() else f"{title.strip()}\n{message.strip()}"
+    return _send_telegram_text("control", body.strip())
+
+
+def send_admin_proof_telegram(kind: str, payload: Dict[str, Any], now_ts: int) -> bool:
+    summary = str(payload.get("summary") or payload.get("command") or payload.get("result") or "").strip()
+    details = f"user_id={payload.get('user_id')}" if payload.get("user_id") is not None else ""
+    lines = [f"🧾 PROOF: {kind}"]
+    if summary:
+        lines.append(summary)
+    if details:
+        lines.append(details)
+    lines.append(f"ts={_iso_from_ts(now_ts)}")
+    return _send_telegram_text("proof", "\n".join(lines))
+
+
+def record_operational_incident(
+    *,
+    incident_type: str,
+    component: str,
+    runtime_state: str,
+    operator_action: str,
+    severity: str = "CRITICAL",
+    reminder_window_seconds: int = _INCIDENT_REMINDER_SECONDS,
+    now_ts: Optional[int] = None,
+) -> Dict[str, Any]:
+    now_ts = int(now_ts if now_ts is not None else _now_ts())
+    key = f"{incident_type}:{component}"
+    incident = _OPERATIONAL_INCIDENTS.get(key) or {
+        "incident_type": incident_type,
+        "component": component,
+        "first_seen_ts": now_ts,
+        "last_notified_ts": 0,
+        "count": 0,
+    }
+    incident["latest_seen_ts"] = now_ts
+    incident["count"] = int(incident.get("count", 0)) + 1
+    incident["runtime_state"] = runtime_state
+    incident["operator_action"] = operator_action
+    should_notify = incident["count"] == 1 or (now_ts - int(incident.get("last_notified_ts", 0))) >= reminder_window_seconds
+    if should_notify:
+        text = "\n".join(
+            [
+                f"🚨 {severity}: {incident_type}",
+                f"component={component}",
+                f"runtime_state={runtime_state}",
+                f"first_seen={_iso_from_ts(int(incident['first_seen_ts']))}",
+                f"latest_seen={_iso_from_ts(int(incident['latest_seen_ts']))}",
+                f"count={incident['count']}",
+                f"operator_action={operator_action}",
+            ]
+        )
+        _send_telegram_text("proof", text)
+        incident["last_notified_ts"] = now_ts
+    _OPERATIONAL_INCIDENTS[key] = incident
+    return dict(incident)
+
+
+def clear_operational_incident(
+    *,
+    incident_type: str,
+    component: str,
+    runtime_state: str,
+    operator_action: str,
+    now_ts: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    key = f"{incident_type}:{component}"
+    incident = _OPERATIONAL_INCIDENTS.pop(key, None)
+    if not incident:
+        return None
+    now_ts = int(now_ts if now_ts is not None else _now_ts())
+    _send_telegram_text(
+        "proof",
+        "\n".join(
+            [
+                f"✅ RECOVERED: {incident_type}",
+                f"component={component}",
+                f"runtime_state={runtime_state}",
+                f"first_seen={_iso_from_ts(int(incident['first_seen_ts']))}",
+                f"latest_seen={_iso_from_ts(int(incident.get('latest_seen_ts', now_ts)))}",
+                f"count={incident.get('count', 0)}",
+                f"operator_action={operator_action}",
+            ]
+        ),
+    )
+    return dict(incident)
+
+
+def _record_log_failure(event: Dict[str, Any], stack: str) -> None:
+    event_type = event.get("event_type") if isinstance(event, dict) else None
+    key = f"{event_type or 'unknown'}:{stack.splitlines()[-1] if stack else 'unknown'}"
+    now_ts = _now_ts()
+    incident = _LOG_FAILURE_INCIDENTS.get(key) or {"first_seen_ts": now_ts, "last_written_ts": 0, "count": 0}
+    incident["latest_seen_ts"] = now_ts
+    incident["count"] = int(incident.get("count", 0)) + 1
+    should_write = incident["count"] == 1 or (now_ts - int(incident.get("last_written_ts", 0))) >= _INCIDENT_REMINDER_SECONDS
+    if should_write:
+        err = build_error(
+            severity="ERROR",
+            error_type="observability_log_failed",
+            message="Failed to write event log",
+            context={
+                "original_event_type": event_type,
+                "first_seen_ts": incident["first_seen_ts"],
+                "latest_seen_ts": incident["latest_seen_ts"],
+                "count": incident["count"],
+            },
+            stack=stack,
+            source={"module": "observability_logger", "function": "log_event"},
+        )
+        _append_jsonl(ERROR_LOG, err, sink="error")
+        incident["last_written_ts"] = now_ts
+    _LOG_FAILURE_INCIDENTS[key] = incident
+
+
+def _runtime_phase_for_incidents() -> str:
+    try:
+        from runtime import runtime_status  # type: ignore
+
+        status = runtime_status.read_status()
+        return str(status.get("phase") or "unknown").upper()
+    except Exception:
+        return "UNKNOWN"
+
+
+def _route_critical_error_incident(event: Dict[str, Any]) -> None:
+    if event.get("event_type") != "error":
+        return
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return
+    if str(data.get("severity") or "").upper() != "CRITICAL":
+        return
+    source = event.get("source")
+    component = "unknown"
+    if isinstance(source, dict):
+        component = str(source.get("module") or component)
+    record_operational_incident(
+        incident_type=str(data.get("error_type") or "CRITICAL_ERROR"),
+        component=component,
+        runtime_state=_runtime_phase_for_incidents(),
+        operator_action="Inspect recent runtime status and observability logs before retrying.",
+        severity="CRITICAL",
+    )
+
+
 def log_event(event: Dict[str, Any]) -> None:
     """
     Writes any canonical event to the correct JSONL file.
@@ -413,28 +665,28 @@ def log_event(event: Dict[str, Any]) -> None:
         validate_event(normalized)
         sink, path = _route_file(str(normalized["event_type"]))
         _append_jsonl(path, normalized, sink=sink)
+        _route_critical_error_incident(normalized)
     except Exception:
         try:
-            err = build_error(
-                severity="ERROR",
-                error_type="observability_log_failed",
-                message="Failed to write event log",
-                context={"original_event_type": event.get("event_type") if isinstance(event, dict) else None},
-                stack=traceback.format_exc(),
-                source={"module": "observability_logger", "function": "log_event"},
-            )
-            _append_jsonl(ERROR_LOG, err, sink="error")
+            _record_log_failure(event if isinstance(event, dict) else {}, traceback.format_exc())
         except Exception:
             pass
 
 
 def log_error(error: Dict[str, Any]) -> None:
-    if error.get("event_type") != "error":
+    data = error.get("data") if isinstance(error.get("data"), dict) else None
+    has_required_error_fields = isinstance(data, dict) and all(data.get(field) for field in ("severity", "error_type", "message"))
+    if error.get("event_type") != "error" or not has_required_error_fields:
+        context = dict(error.get("context")) if isinstance(error.get("context"), dict) else {}
+        for key, value in error.items():
+            if key in {"event_type", "severity", "error_type", "code", "message", "error", "context", "stack", "trace", "source", "module", "function", "data"}:
+                continue
+            context[key] = value
         error = build_error(
-            severity="ERROR",
-            error_type=str(error.get("error_type", error.get("code", "error"))),
-            message=str(error.get("message", error.get("error", "error"))),
-            context=error.get("context"),
+            severity=str(error.get("severity", (data or {}).get("severity", "ERROR"))),
+            error_type=str(error.get("error_type", (data or {}).get("error_type", error.get("code", error.get("module", "error"))))),
+            message=str(error.get("message", (data or {}).get("message", error.get("error", "error")))),
+            context=context or None,
             stack=error.get("stack") or error.get("trace"),
             source=error.get("source") or {
                 "module": str(error.get("module", "unknown")),
@@ -476,23 +728,4 @@ def proof(kind: str, payload: Dict[str, Any], now_ts: int) -> None:
         correlation={"tier": payload.get("tier"), "signal_id": payload.get("signal_id")},
     )
     log_event(ev)
-
-    if not telegram_publisher:
-        return
-    if not ADMIN_PROOF_CHAT_ID:
-        return
-
-    try:
-        chat_id = int(ADMIN_PROOF_CHAT_ID)
-        thread_id = int(ADMIN_PROOF_THREAD_ID) if ADMIN_PROOF_THREAD_ID else None
-        title = f"🧾 PROOF: {kind}"
-        summary = payload.get("summary") or ""
-        txt = title + ("\n" + summary if summary else "")
-        telegram_publisher.send_message(
-            chat_id=chat_id,
-            text=txt,
-            reply_markup=None,
-            thread_id=thread_id,
-        )
-    except Exception:
-        pass
+    send_admin_proof_telegram(kind, payload, now_ts)

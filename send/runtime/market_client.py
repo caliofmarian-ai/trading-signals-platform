@@ -2,7 +2,22 @@ import os
 import requests
 from datetime import datetime, timezone
 
+from core import observability_logger
+from runtime import runtime_status
+
 BASE_URL = "https://api.twelvedata.com/time_series"
+RATE_LIMIT_BACKOFF_SECONDS = 60
+_RATE_LIMIT_STATE = {
+    "active": False,
+    "retry_after_ts": 0,
+    "first_seen_ts": 0,
+    "latest_seen_ts": 0,
+    "count": 0,
+}
+
+
+class MarketDataRateLimitError(RuntimeError):
+    pass
 
 
 def _api_key() -> str:
@@ -23,10 +38,53 @@ def fetch_klines(symbol: str, interval: str, limit: int = 50):
         "apikey": _api_key(),
     }
 
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    if _RATE_LIMIT_STATE["active"] and now_ts < int(_RATE_LIMIT_STATE["retry_after_ts"]):
+        _RATE_LIMIT_STATE["latest_seen_ts"] = now_ts
+        _RATE_LIMIT_STATE["count"] = int(_RATE_LIMIT_STATE["count"]) + 1
+        observability_logger.record_operational_incident(
+            incident_type="TWELVE_DATA_HTTP_429",
+            component="market_data",
+            runtime_state="MARKET_DATA_LIMITED",
+            operator_action="Wait for provider recovery; the runtime will resume automatically.",
+            severity="WARNING",
+            now_ts=now_ts,
+        )
+        runtime_status.update_status(
+            market_data_state="MARKET_DATA_LIMITED",
+            market_data_note="Twelve Data HTTP 429 active",
+            market_data_retry_after_ts=int(_RATE_LIMIT_STATE["retry_after_ts"]),
+            market_data_provider="TWELVE_DATA",
+        )
+        raise MarketDataRateLimitError("Twelve Data HTTP 429 backoff active")
+
     last_exc = None
     for attempt in range(3):
         try:
             r = requests.get(BASE_URL, params=params, timeout=20)
+            now_ts = int(datetime.now(timezone.utc).timestamp())
+            if r.status_code == 429:
+                if not _RATE_LIMIT_STATE["active"]:
+                    _RATE_LIMIT_STATE["first_seen_ts"] = now_ts
+                _RATE_LIMIT_STATE["active"] = True
+                _RATE_LIMIT_STATE["latest_seen_ts"] = now_ts
+                _RATE_LIMIT_STATE["count"] = int(_RATE_LIMIT_STATE["count"]) + 1
+                _RATE_LIMIT_STATE["retry_after_ts"] = now_ts + RATE_LIMIT_BACKOFF_SECONDS
+                runtime_status.update_status(
+                    market_data_state="MARKET_DATA_LIMITED",
+                    market_data_note="Twelve Data HTTP 429 active",
+                    market_data_retry_after_ts=int(_RATE_LIMIT_STATE["retry_after_ts"]),
+                    market_data_provider="TWELVE_DATA",
+                )
+                observability_logger.record_operational_incident(
+                    incident_type="TWELVE_DATA_HTTP_429",
+                    component="market_data",
+                    runtime_state="MARKET_DATA_LIMITED",
+                    operator_action="Wait for provider recovery; the runtime will resume automatically.",
+                    severity="WARNING",
+                    now_ts=now_ts,
+                )
+                raise MarketDataRateLimitError("Twelve Data HTTP 429")
             if r.status_code != 200:
                 raise Exception(f"Market API error {r.status_code}: {r.text}")
 
@@ -34,6 +92,29 @@ def fetch_klines(symbol: str, interval: str, limit: int = 50):
 
             if "values" not in data:
                 raise Exception(f"TwelveData error: {data}")
+
+            if _RATE_LIMIT_STATE["active"]:
+                observability_logger.clear_operational_incident(
+                    incident_type="TWELVE_DATA_HTTP_429",
+                    component="market_data",
+                    runtime_state="READY",
+                    operator_action="No operator action required.",
+                    now_ts=now_ts,
+                )
+            _RATE_LIMIT_STATE.update({
+                "active": False,
+                "retry_after_ts": 0,
+                "first_seen_ts": 0,
+                "latest_seen_ts": 0,
+                "count": 0,
+            })
+            runtime_status.update_status(
+                market_data_state="READY",
+                market_data_note="Market data available",
+                market_data_retry_after_ts=None,
+                market_data_provider="TWELVE_DATA",
+                last_market_data_success_ts=now_ts,
+            )
 
             return data["values"]
 
