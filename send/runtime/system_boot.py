@@ -63,7 +63,7 @@ from runtime.distribution_scheduler import scheduler_loop
 from runtime import runtime_status
 from core import fsm_runtime
 from core import distribution_router
-from core.observability_logger import build_event, log_event, log_warning
+from core.observability_logger import build_event, log_event, log_warning, send_control_notification
 from monitoring.restart_guard import mark_graceful_shutdown, record_start
 from snapshots import snapshot_manager
 
@@ -139,6 +139,7 @@ def _mark_graceful_shutdown() -> None:
         runtime_status.write_status("stopped", "BinaryBot runtime stopped gracefully")
     except Exception:
         pass
+    send_control_notification("GRACEFUL SHUTDOWN", "BinaryBot runtime stopped gracefully")
 
 
 def _handle_shutdown_signal(signum, _frame) -> None:
@@ -167,7 +168,13 @@ def start_system() -> None:
         "starting",
         "BinaryBot runtime bootstrap starting",
         shadow_mode=_env_flag("SHADOW_MODE", default=False),
+        readiness_evaluated=_env_flag("RAILWAY_READINESS_EVALUATED", default=False),
+        recovery_required=bool(start_info["recovery_required"]),
+        recovery_state="STARTING",
+        market_data_state="UNKNOWN",
     )
+    if start_info["recovery_required"]:
+        send_control_notification("RECOVERY STARTED", "BinaryBot recovery bootstrap started.")
     log_event(
         build_event(
             "recovery_started",
@@ -191,6 +198,8 @@ def start_system() -> None:
             "blocked",
             "Runtime state validation failed during boot",
             error=str(exc),
+            recovery_required=bool(start_info["recovery_required"]),
+            recovery_state="UNSAFE_BLOCKED",
         )
         log_event(
             build_event(
@@ -215,6 +224,7 @@ def start_system() -> None:
                 "source": {"module": "system_boot", "function": "start_system"},
             }
         )
+        send_control_notification("STARTUP BLOCKED", "Runtime state validation failed during boot.")
         return
 
     if start_info["crash_loop"]:
@@ -222,6 +232,8 @@ def start_system() -> None:
             "blocked",
             "Runtime boot blocked by restart guard",
             crash_loop=True,
+            recovery_required=bool(start_info["recovery_required"]),
+            recovery_state="UNSAFE_BLOCKED",
         )
         log_event(
             build_event(
@@ -248,6 +260,7 @@ def start_system() -> None:
             },
             "source": {"module": "system_boot", "function": "start_system"},
         })
+        send_control_notification("STARTUP BLOCKED", "Runtime boot blocked by restart guard.")
         return
 
     log_event(
@@ -285,8 +298,17 @@ def start_system() -> None:
         "running",
         "BinaryBot runtime running",
         telegram_enabled=telegram_enabled,
+        telegram_polling_started=telegram_enabled,
         shadow_mode=_env_flag("SHADOW_MODE", default=False),
+        readiness_evaluated=_env_flag("RAILWAY_READINESS_EVALUATED", default=False),
+        recovery_required=bool(start_info["recovery_required"]),
+        recovery_state="DEGRADED_SAFE" if start_info["recovery_required"] else "HEALTHY",
     )
+    if start_info["recovery_required"]:
+        send_control_notification("RECOVERY COMPLETED", "BinaryBot recovery bootstrap completed.")
+        send_control_notification("DEGRADED SAFE MODE", "BinaryBot resumed in degraded safe mode.")
+    if _env_flag("RAILWAY_READINESS_EVALUATED", default=False):
+        send_control_notification("BOT LIVE", "BinaryBot runtime is live.")
 
     # keep main thread alive
     while True:

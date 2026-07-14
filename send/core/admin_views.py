@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
 
+from core.telegram_runtime import command_registry
+
 
 def _clean(value: Any, fallback: str = "N/A") -> str:
     if value is None:
@@ -25,6 +27,7 @@ def render_error(message: str) -> str:
 def render_admin_home(identity: Dict[str, Any]) -> str:
     roles = identity.get("roles", [])
     primary_role = identity.get("primary_role", "USER")
+    command_lines = [spec.usage for spec in command_registry() if spec.access == "admin"]
 
     lines: List[str] = [
         "BinaryBot Admin Panel",
@@ -33,20 +36,8 @@ def render_admin_home(identity: Dict[str, Any]) -> str:
         f"All roles: {', '.join(roles) if roles else 'USER'}",
         "",
         "Available commands:",
-        "/admin",
-        "/strategy",
-        "/thresholds PRE|CONFIRM|OPEN <value>",
-        "/sr <multiplier>",
-        "/spike wick_body_ratio_max|range_z_max|jump_vs_atr_max <value>",
-        "/symbols list",
-        "/symbols add SYMBOL",
-        "/symbols remove SYMBOL",
-        "/engine",
-        "/debug",
-        "/report",
-        "/roles",
-        "/affiliate",
     ]
+    lines.extend(command_lines)
     return _lines(lines)
 
 
