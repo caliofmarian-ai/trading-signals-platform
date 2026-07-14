@@ -29,7 +29,38 @@ def load_settings(path: Optional[str] = None) -> Dict[str, Any]:
             "Set STRATEGY_AUDITOR_SETTINGS env var to override the path."
         )
     with open(resolved, "r", encoding="utf-8") as f:
-        return json.load(f)
+        settings = json.load(f)
+    return _apply_runtime_path_overrides(settings)
+
+
+def _apply_runtime_path_overrides(settings: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(settings, dict):
+        raise RuntimeError("Strategy auditor settings must be a JSON object")
+
+    normalized = dict(settings)
+    analytics_dir = os.getenv("ANALYTICS_DIR", "").strip()
+    obs_dir = os.getenv("OBS_DIR", "").strip()
+    outcomes_log = os.getenv("OUTCOMES_LOG", "").strip()
+
+    reports = dict(normalized.get("reports", {}) or {})
+    if analytics_dir:
+        reports["output_dir"] = os.path.join(analytics_dir, "reports")
+        reports["cache_dir"] = os.path.join(analytics_dir, "cache")
+    if reports:
+        normalized["reports"] = reports
+
+    sources = dict(normalized.get("sources", {}) or {})
+    if obs_dir:
+        sources["engine_events"] = os.getenv("ENGINE_EVENTS_LOG", os.path.join(obs_dir, "engine_events.jsonl"))
+        sources["fsm_events"] = os.getenv("FSM_EVENTS_LOG", os.path.join(obs_dir, "fsm_events.jsonl"))
+        sources["distribution_events"] = os.getenv("DIST_EVENTS_LOG", os.path.join(obs_dir, "distribution_events.jsonl"))
+        sources["error_events"] = os.getenv("ERROR_EVENTS_LOG", os.path.join(obs_dir, "error_events.jsonl"))
+    if outcomes_log:
+        sources["outcomes"] = outcomes_log
+    if sources:
+        normalized["sources"] = sources
+
+    return normalized
 
 
 def _read_jsonl(path: str) -> Tuple[List[Dict[str, Any]], int]:
