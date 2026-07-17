@@ -583,7 +583,7 @@ def _is_path_safe(path: str, dir_key: str) -> Tuple[bool, str]:
     fn_lower = filename.lower()
     for pattern in _SECRET_PATTERNS:
         if pattern in fn_lower:
-            return False, f"filename matches restricted pattern: {pattern!r}"
+            return False, "filename matches a restricted pattern"
 
     # Resolve allowed root
     allowed_root = _resolve_dir_path(dir_key)
