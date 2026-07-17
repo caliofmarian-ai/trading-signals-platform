@@ -48,6 +48,55 @@ def proof_target() -> Optional[TelegramTarget]:
     return TelegramTarget(chat_id=chat_id, thread_id=valid_thread_id(chat_id, env_thread_id("ADMIN_PROOF_THREAD_ID")))
 
 
+def alerts_target() -> Optional[TelegramTarget]:
+    """
+    Optional routing target for admin alert messages.
+
+    Uses ADMIN_ALERTS_THREAD_ID if set, otherwise falls back to the
+    configured Admin Control target.  Returns None only if ADMIN_CONTROL_CHAT_ID
+    is not configured.
+    """
+    base = control_target()
+    if base is None:
+        return None
+    thread_id = env_thread_id("ADMIN_ALERTS_THREAD_ID")
+    if thread_id is not None:
+        return TelegramTarget(chat_id=base.chat_id, thread_id=valid_thread_id(base.chat_id, thread_id))
+    return base
+
+
+def errors_target() -> Optional[TelegramTarget]:
+    """
+    Optional routing target for admin error messages.
+
+    Uses ADMIN_ERRORS_THREAD_ID if set, otherwise falls back to the
+    configured Admin Control target.
+    """
+    base = control_target()
+    if base is None:
+        return None
+    thread_id = env_thread_id("ADMIN_ERRORS_THREAD_ID")
+    if thread_id is not None:
+        return TelegramTarget(chat_id=base.chat_id, thread_id=valid_thread_id(base.chat_id, thread_id))
+    return base
+
+
+def reports_target() -> Optional[TelegramTarget]:
+    """
+    Optional routing target for admin report messages.
+
+    Uses ADMIN_REPORTS_THREAD_ID if set, otherwise falls back to the
+    configured Admin Proof target (then Admin Control target).
+    """
+    thread_id = env_thread_id("ADMIN_REPORTS_THREAD_ID")
+    base = proof_target() or control_target()
+    if base is None:
+        return None
+    if thread_id is not None:
+        return TelegramTarget(chat_id=base.chat_id, thread_id=valid_thread_id(base.chat_id, thread_id))
+    return base
+
+
 def reply_target_from_message(message: dict[str, Any]) -> Optional[TelegramTarget]:
     if not isinstance(message, dict):
         return None
