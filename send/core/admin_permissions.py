@@ -67,6 +67,8 @@ PERMISSION_MATRIX: Dict[str, Set[str]] = {
         "roles.write",
         "affiliate.view.any",
         "affiliate.view.own",
+        "files.view",
+        "diagnostics.view",
     },
     ROLE_PRIMARY_ADMIN: {
         "admin.view",
@@ -83,6 +85,8 @@ PERMISSION_MATRIX: Dict[str, Set[str]] = {
         "channels.test",
         "roles.view",
         "affiliate.view.any",
+        "files.view",
+        "diagnostics.view",
     },
     ROLE_STRATEGY_ADMIN: {
         "admin.view",
@@ -94,6 +98,7 @@ PERMISSION_MATRIX: Dict[str, Set[str]] = {
         "strategy.symbols.write",
         "reports.view",
         "debug.view",
+        "files.view",
     },
     ROLE_RESEARCH_ADMIN: {
         "admin.view",
@@ -101,6 +106,7 @@ PERMISSION_MATRIX: Dict[str, Set[str]] = {
         "strategy.view",
         "reports.view",
         "debug.view",
+        "files.view",
     },
     ROLE_ANALYST: {
         "admin.view",

@@ -32,6 +32,12 @@ _COMMANDS: tuple[CommandSpec, ...] = (
     CommandSpec("/engine", "/engine", "View engine status.", "admin", permission_note="engine.view"),
     CommandSpec("/debug", "/debug", "View the latest decision debug snapshot.", "admin", permission_note="debug.view"),
     CommandSpec("/report", "/report", "View the latest strategy report.", "admin", permission_note="reports.view"),
+    CommandSpec("/files", "/files [dir]", "Browse and download runtime files.", "admin", permission_note="files.view"),
+    CommandSpec("/docs", "/docs", "Browse and download documentation files.", "admin", permission_note="files.view"),
+    CommandSpec("/download", "/download <dir> <filename>", "Download a specific runtime file.", "admin", permission_note="files.view"),
+    CommandSpec("/log", "/log", "Export a bounded, sanitized diagnostic log.", "admin", permission_note="diagnostics.view"),
+    CommandSpec("/diagnose", "/diagnose", "Concise operational diagnosis.", "admin", permission_note="diagnostics.view"),
+    CommandSpec("/audit_runtime", "/audit_runtime", "Generate a sanitized runtime audit artifact.", "admin", permission_note="diagnostics.view"),
     CommandSpec("/roles", "/roles", "View configured roles.", "admin", permission_note="roles.view"),
     CommandSpec("/affiliate", "/affiliate", "View affiliate scope.", "admin", permission_note="affiliate.view"),
     CommandSpec("/roles_reload", "/roles_reload", "Reload role and permission config.", "admin", mutation=True, permission_note="roles.write"),
@@ -71,7 +77,7 @@ def render_help_text() -> str:
             "Restrictions",
             "Public commands are available in any chat context.",
             "Admin commands require the configured admin control topic and canonical role permissions.",
-            "Owner private-chat access is allowed only for: /admin /strategy /thresholds /sr /spike /symbols /engine /debug /report /roles /affiliate.",
+            "Owner private-chat access is allowed for: /admin /strategy /thresholds /sr /spike /symbols /engine /debug /report /files /docs /download /log /diagnose /audit_runtime /roles /affiliate.",
             "Mutation commands stay fail-closed outside the admin context or without the required permission.",
         ]
     )

@@ -2,13 +2,8 @@
 # BinaryBot — Telegram update dispatcher.
 #
 # BATCH-05: Legacy Admin/control-plane panel path retired.
-#
-# Residual responsibility after BATCH-05:
-#   1. Dispatch slash admin commands to handle_admin_command (canonical admin_commands.py).
-#   2. Forward VOTE_ callbacks to outcome_service (BATCH-04 canonical path).
-#   3. Forward OUTCOME: legacy callbacks to outcome_service without independent mutation.
-#   4. Reject retired legacy Admin panel callbacks with a clear message.
-#   5. Deny all Admin-context callbacks when ADMIN_CONTROL_CHAT_ID is not configured (fail-closed).
+# RESTORATION-01: New admin UI capabilities restored (symbols toggle, strategy profile,
+#   file/log/diagnose/audit delivery, rate limiting, graceful edit fallback).
 #
 from __future__ import annotations
 
@@ -17,7 +12,24 @@ import time
 from typing import Optional, Dict, Any
 
 from core import telegram_publisher
-from core.admin_commands import handle_admin_command as handle_admin_command_v2
+from core.admin_commands import (
+    handle_admin_command as handle_admin_command_v2,
+    handle_symbols_toggle,
+    handle_symbols_all,
+    handle_symbols_none,
+    handle_strategy_profile,
+    get_current_strategy_profile,
+    handle_files_list,
+    handle_file_download_path,
+    handle_log_export,
+    handle_diagnose,
+    handle_audit_runtime,
+    handle_docs_list,
+    get_all_known_symbols,
+    _load_active_symbols,
+    _find_latest_report_json,
+    REPORTS_DIR,
+)
 from core.admin_permissions import is_owner
 from core import observability_logger
 from core import outcome_service
@@ -29,14 +41,14 @@ from monitoring import restart_guard
 from runtime import runtime_status
 
 # ---- Paths ----
-# OUTCOMES_PATH is retained as a module attribute for BATCH-04 compatibility.
-# bot_service does NOT write to this path after BATCH-04/BATCH-05.
 OUTCOMES_PATH = "/opt/binarybot/state/outcomes.json"
 
 # ---- Env ----
 ADMIN_CONTROL_CHAT_ID = env_chat_id("ADMIN_CONTROL_CHAT_ID") or 0
 ADMIN_CONTROL_THREAD_ID = env_thread_id("ADMIN_CONTROL_THREAD_ID") or 0
 UNKNOWN_COMMAND_TEXT = "Unknown command. Use /help to view available commands."
+
+# All admin commands accessible from owner private DM
 _OWNER_PRIVATE_COMMANDS: frozenset[str] = frozenset({
     "/admin",
     "/strategy",
@@ -47,9 +59,41 @@ _OWNER_PRIVATE_COMMANDS: frozenset[str] = frozenset({
     "/engine",
     "/debug",
     "/report",
+    "/files",
+    "/docs",
+    "/download",
+    "/log",
+    "/diagnose",
+    "/audit_runtime",
     "/roles",
     "/affiliate",
 })
+
+# ---- Rate limiting ----
+# Per-user in-memory rate-limit store.  Entries: {key: {count, window_start}}
+_RATE_STORE: Dict[str, Dict[str, Any]] = {}
+
+# Rate-limit ceilings per operation (calls per window_seconds)
+_RATE_LIMITS_CONFIG: Dict[str, tuple[int, int]] = {
+    "files_list":    (20, 60),
+    "file_download": (10, 60),
+    "diagnose":      (5, 60),
+    "audit_runtime": (3, 60),
+    "mutation":      (30, 60),
+}
+
+
+def _check_rate_limit(user_id: int, operation: str) -> bool:
+    """Return True if the user is within the rate limit for this operation."""
+    max_calls, window_seconds = _RATE_LIMITS_CONFIG.get(operation, (60, 60))
+    key = f"{user_id}:{operation}"
+    now = time.time()
+    entry = _RATE_STORE.get(key)
+    if entry is None or now - entry["window_start"] > window_seconds:
+        _RATE_STORE[key] = {"count": 1, "window_start": now}
+        return True
+    entry["count"] += 1
+    return entry["count"] <= max_calls
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -141,39 +185,276 @@ def _admin_reply_markup(cmd: str, *, owner_private: bool) -> Optional[Dict[str, 
         return telegram_admin_ui.strategy_markup()
     if cmd in {"/thresholds", "/sr", "/spike"}:
         return telegram_admin_ui.strategy_markup()
-    if cmd == "/symbols":
-        return telegram_admin_ui.symbols_markup()
+    if cmd == "/symbols" or cmd == "/symbols list":
+        # Use toggle markup if possible; fall back to simple markup
+        try:
+            all_syms = get_all_known_symbols()
+            active = _load_active_symbols()
+            return telegram_admin_ui.symbols_toggle_markup(all_syms, active)
+        except Exception:
+            return telegram_admin_ui.symbols_markup()
     if cmd == "/engine":
         return telegram_admin_ui.engine_markup(include_roles_reload=not owner_private)
-    if cmd in {"/debug", "/report", "/roles", "/affiliate"}:
+    if cmd == "/report":
+        # Check if a report file is available for the download button
+        try:
+            import os as _os
+            report_path = _find_latest_report_json()
+            if report_path and _os.path.isfile(report_path):
+                fname = _os.path.basename(report_path)
+                return telegram_admin_ui.report_markup(has_file=True, filename=fname)
+        except Exception:
+            pass
+        return telegram_admin_ui.standard_back_markup()
+    if cmd == "/files":
+        return telegram_admin_ui.files_home_markup()
+    if cmd == "/docs":
+        try:
+            info = handle_docs_list(0)  # permissions checked in render_panel_for_command
+            return telegram_admin_ui.docs_list_markup(info.get("filenames", []))
+        except Exception:
+            return telegram_admin_ui.standard_back_markup()
+    if cmd == "/diagnose":
+        return telegram_admin_ui.diagnose_markup()
+    if cmd in {"/debug", "/roles", "/affiliate", "/log", "/audit_runtime"}:
         return telegram_admin_ui.standard_back_markup()
     return None
 
 
 def _render_panel_for_command(cmd: str, user_id: int, *, owner_private: bool) -> tuple[str, Optional[Dict[str, Any]]]:
     if cmd == "/status":
-        return _format_card("📡 Status Panel", render_status_text(_build_status_snapshot())), telegram_admin_ui.status_markup()
+        return _format_card("📊 Status Panel", render_status_text(_build_status_snapshot())), telegram_admin_ui.status_markup()
 
     response_text = handle_admin_command_v2(cmd, user_id)
     title_map = {
         "/admin": "🛠️ Admin Panel",
-        "/strategy": "📈 Strategy Panel",
+        "/strategy": "⚙️ Strategy Panel",
         "/thresholds": "🎯 Thresholds Panel",
-        "/sr": "📐 SR Panel",
-        "/spike": "⚡ Spike Panel",
-        "/symbols": "🧩 Symbols Panel",
-        "/engine": "⚙️ Engine Panel",
-        "/debug": "🧪 Debug Panel",
-        "/report": "📊 Report Panel",
+        "/sr": "📐 S/R Panel",
+        "/spike": "⚡ Spike Filter Panel",
+        "/symbols": "💱 Symbols Panel",
+        "/symbols list": "💱 Symbols Panel",
+        "/engine": "🤖 Engine Panel",
+        "/debug": "🐞 Debug Panel",
+        "/report": "📈 Reports Panel",
         "/roles": "👥 Roles Panel",
-        "/affiliate": "💼 Affiliate Panel",
-        "/roles_reload": "♻️ Roles Panel",
+        "/affiliate": "🤝 Affiliate Panel",
+        "/roles_reload": "🔄 Roles Reload",
+        "/files": "📁 File Browser",
+        "/docs": "📄 Documents",
+        "/download": "📥 Download",
+        "/log": "📋 Log Export",
+        "/diagnose": "🩺 Diagnose",
+        "/audit_runtime": "🔍 Runtime Audit",
     }
-    return _format_card(title_map.get(cmd, "🛠️ Admin Panel"), response_text), _admin_reply_markup(cmd, owner_private=owner_private)
+    # Extract base command (without arguments)
+    base_cmd = cmd.split()[0].lower()
+    title = title_map.get(cmd) or title_map.get(base_cmd, "🛠️ Admin Panel")
+    markup = _admin_reply_markup(base_cmd, owner_private=owner_private)
+    return _format_card(title, response_text), markup
+
+
+def _send_document_reply(message: Dict[str, Any], file_path: str, caption: Optional[str] = None) -> None:
+    """Send a file via Telegram sendDocument. Removes tmp files after sending."""
+    import os as _os
+    target = reply_target_from_message(message)
+    if target is None:
+        return
+    try:
+        telegram_publisher.send_document(
+            chat_id=target.chat_id,
+            file_path=file_path,
+            caption=caption,
+            thread_id=target.thread_id,
+        )
+    finally:
+        # Clean up temp files (paths starting with /tmp/)
+        try:
+            if file_path.startswith(_os.sep + "tmp") and _os.path.exists(file_path):
+                _os.unlink(file_path)
+        except Exception:
+            pass
 
 
 def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str, Any]) -> Dict[str, Any]:
     owner_private = _is_owner_private_for_message(message, user_id)
+
+    # ---- RELOAD_ROLES flow (admin-topic only) ----
+    if action == "RELOAD_ROLES_CONFIRM":
+        if owner_private:
+            return {"text": "Access denied (wrong chat).", "reply_markup": None}
+        return {
+            "text": _format_card("🔄 Confirmation", "Confirm reloading role + permission configuration?"),
+            "reply_markup": telegram_admin_ui.reload_confirm_markup(),
+        }
+
+    # ---- Symbol toggle callbacks ----
+    if action.startswith("SYM_TOGGLE:"):
+        if not _check_rate_limit(user_id, "mutation"):
+            return {"text": "Rate limit exceeded. Please wait before making more changes.", "reply_markup": None}
+        sym = action[len("SYM_TOGGLE:"):]
+        result = handle_symbols_toggle(sym, user_id)
+        # Refresh toggle markup
+        try:
+            all_syms = get_all_known_symbols()
+            active = _load_active_symbols()
+            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active)
+        except Exception:
+            markup = telegram_admin_ui.symbols_markup()
+        return {"text": _format_card("💱 Symbols Panel", result), "reply_markup": markup}
+
+    if action == "SYMBOLS_ALL":
+        if not _check_rate_limit(user_id, "mutation"):
+            return {"text": "Rate limit exceeded.", "reply_markup": None}
+        result = handle_symbols_all(user_id)
+        try:
+            all_syms = get_all_known_symbols()
+            active = _load_active_symbols()
+            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active)
+        except Exception:
+            markup = telegram_admin_ui.symbols_markup()
+        return {"text": _format_card("💱 Symbols Panel", result), "reply_markup": markup}
+
+    if action == "SYMBOLS_NONE":
+        if not _check_rate_limit(user_id, "mutation"):
+            return {"text": "Rate limit exceeded.", "reply_markup": None}
+        result = handle_symbols_none(user_id)
+        try:
+            all_syms = get_all_known_symbols()
+            active = _load_active_symbols()
+            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active)
+        except Exception:
+            markup = telegram_admin_ui.symbols_markup()
+        return {"text": _format_card("💱 Symbols Panel", result), "reply_markup": markup}
+
+    # ---- Strategy profile callbacks ----
+    if action == "PROFILE_HOME":
+        current = get_current_strategy_profile()
+        return {
+            "text": _format_card("⚙️ Strategy Profile", f"Current profile: {current or 'custom'}"),
+            "reply_markup": telegram_admin_ui.strategy_quick_markup(current),
+        }
+
+    if action.startswith("PROFILE_CONFIRM:"):
+        profile = action[len("PROFILE_CONFIRM:"):]
+        profile_upper = profile.upper()
+        from core.admin_commands import STRATEGY_PROFILES
+        defn = STRATEGY_PROFILES.get(profile_upper)
+        if defn is None:
+            return {"text": "Unknown profile.", "reply_markup": None}
+        desc = (
+            f"PRE={defn['score_thresholds']['PRE']} "
+            f"CONFIRM={defn['score_thresholds']['CONFIRM']} "
+            f"OPEN={defn['score_thresholds']['OPEN']} "
+            f"SR={defn['sr_required_multiplier']}"
+        )
+        return {
+            "text": _format_card(
+                f"⚙️ Apply {profile_upper}?",
+                f"This will set:\n{desc}\n\nConfirm?"
+            ),
+            "reply_markup": telegram_admin_ui.strategy_profile_confirm_markup(profile_upper),
+        }
+
+    if action.startswith("PROFILE_EXEC:"):
+        if not _check_rate_limit(user_id, "mutation"):
+            return {"text": "Rate limit exceeded.", "reply_markup": None}
+        profile = action[len("PROFILE_EXEC:"):]
+        result = handle_strategy_profile(profile, user_id)
+        current = get_current_strategy_profile()
+        return {
+            "text": _format_card("⚙️ Strategy Profile", result),
+            "reply_markup": telegram_admin_ui.strategy_quick_markup(current),
+        }
+
+    # ---- Files/Docs callbacks ----
+    if action == "FILES_HOME":
+        if not _check_rate_limit(user_id, "files_list"):
+            return {"text": "Rate limit exceeded.", "reply_markup": None}
+        return {
+            "text": "📁 File Browser\n\nSelect a directory:",
+            "reply_markup": telegram_admin_ui.files_home_markup(),
+        }
+
+    if action.startswith("FILES:"):
+        if not _check_rate_limit(user_id, "files_list"):
+            return {"text": "Rate limit exceeded.", "reply_markup": None}
+        parts = action.split(":")
+        if len(parts) < 3:
+            return {"text": "Invalid files action.", "reply_markup": None}
+        dir_key = parts[1]
+        try:
+            page = int(parts[2])
+        except Exception:
+            page = 0
+        info = handle_files_list(user_id, dir_key, page=page)
+        if info.get("error"):
+            return {"text": _format_card("📁 Files", f"Error: {info['error']}"), "reply_markup": telegram_admin_ui.files_home_markup()}
+        fnames = info.get("filenames", [])
+        title = info.get("title", "📁 Files")
+        if not fnames:
+            return {
+                "text": _format_card(title, "No files found."),
+                "reply_markup": telegram_admin_ui.files_home_markup(),
+            }
+        return {
+            "text": _format_card(title, f"Page {info['page'] + 1}/{info['total_pages']}"),
+            "reply_markup": telegram_admin_ui.files_list_markup(
+                fnames, info["page"], info["total_pages"], dir_key
+            ),
+        }
+
+    if action == "DOCS":
+        if not _check_rate_limit(user_id, "files_list"):
+            return {"text": "Rate limit exceeded.", "reply_markup": None}
+        info = handle_docs_list(user_id)
+        if info.get("error"):
+            return {"text": _format_card("📄 Documents", f"Error: {info['error']}"), "reply_markup": telegram_admin_ui.standard_back_markup()}
+        fnames = info.get("filenames", [])
+        if not fnames:
+            return {"text": "📄 Documents\n\nNo documents found.", "reply_markup": telegram_admin_ui.standard_back_markup()}
+        return {
+            "text": _format_card("📄 Documents", f"{len(fnames)} file(s) available"),
+            "reply_markup": telegram_admin_ui.docs_list_markup(fnames),
+        }
+
+    if action.startswith("FILE_DL:"):
+        if not _check_rate_limit(user_id, "file_download"):
+            return {"text": "Rate limit exceeded.", "reply_markup": None}
+        parts = action.split(":", 2)
+        if len(parts) < 3:
+            return {"text": "Invalid download action.", "reply_markup": None}
+        dir_key = parts[1]
+        filename = parts[2]
+        path, err = handle_file_download_path(dir_key, filename, user_id)
+        if err:
+            return {"text": f"Download failed: {err}", "reply_markup": telegram_admin_ui.standard_back_markup()}
+        # Signal the caller to send a document (not a text reply)
+        return {"text": "", "reply_markup": None, "__file_path__": path, "__caption__": filename}
+
+    if action == "LOG":
+        if not _check_rate_limit(user_id, "diagnose"):
+            return {"text": "Rate limit exceeded.", "reply_markup": None}
+        path, err = handle_log_export(user_id)
+        if err:
+            return {"text": f"Log export failed: {err}", "reply_markup": telegram_admin_ui.standard_back_markup()}
+        return {"text": "", "reply_markup": None, "__file_path__": path, "__caption__": "binarybot_log.log"}
+
+    if action == "DIAGNOSE":
+        if not _check_rate_limit(user_id, "diagnose"):
+            return {"text": "Rate limit exceeded.", "reply_markup": None}
+        text = handle_diagnose(user_id)
+        return {"text": text, "reply_markup": telegram_admin_ui.diagnose_markup()}
+
+    if action == "AUDIT":
+        if not _check_rate_limit(user_id, "audit_runtime"):
+            return {"text": "Rate limit exceeded.", "reply_markup": None}
+        path, err = handle_audit_runtime(user_id)
+        if err:
+            return {"text": f"Audit failed: {err}", "reply_markup": telegram_admin_ui.standard_back_markup()}
+        return {"text": "", "reply_markup": None, "__file_path__": path, "__caption__": "binarybot_audit.json"}
+
+    # ---- Standard navigation ----
     command_for_action = {
         "HOME": "/admin",
         "STATUS": "/status",
@@ -189,14 +470,6 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         "AFFILIATE": "/affiliate",
         "RELOAD_ROLES_EXEC": "/roles_reload",
     }.get(action)
-
-    if action == "RELOAD_ROLES_CONFIRM":
-        if owner_private:
-            return {"text": "Access denied (wrong chat).", "reply_markup": None}
-        return {
-            "text": _format_card("♻️ Confirmation", "Confirm reloading role + permission configuration?"),
-            "reply_markup": telegram_admin_ui.reload_confirm_markup(),
-        }
 
     if command_for_action is None:
         return {"text": "Unknown action.", "reply_markup": None}
@@ -373,6 +646,7 @@ def process_update(update: Dict[str, Any]) -> None:
     Telegram update dispatcher.
     - Slash admin commands → canonical handle_admin_command (admin_commands.py).
     - Callbacks → handle_callback (VOTE forwarding + retired panel rejection).
+    - File delivery responses (__file_path__) → send_document.
     """
     try:
         msg = update.get("message") or {}
@@ -401,6 +675,11 @@ def process_update(update: Dict[str, Any]) -> None:
                     return
                 owner_private = _is_owner_private_for_message(msg, user_id)
                 response_text, reply_markup = _render_panel_for_command(text, user_id, owner_private=owner_private)
+                # Handle file-path return signals
+                if response_text.startswith("__FILE_PATH__:"):
+                    file_path = response_text[len("__FILE_PATH__:"):]
+                    _send_document_reply(msg, file_path, caption=cmd)
+                    return
                 _send_reply(msg, response_text, reply_markup)
                 return
             _send_reply(msg, UNKNOWN_COMMAND_TEXT)
@@ -429,6 +708,13 @@ def process_update(update: Dict[str, Any]) -> None:
                     message_thread_id=msg_obj.get("message_thread_id"),
                 )
 
+            # File delivery: send as document, skip text edit
+            if res.get("__file_path__"):
+                file_path = res["__file_path__"]
+                caption = res.get("__caption__", "")
+                _send_document_reply(msg_obj, file_path, caption=caption)
+                return
+
             original_text = msg_obj.get("text", "") or ""
 
             if data.startswith("VOTE_|") and message_id:
@@ -438,9 +724,13 @@ def process_update(update: Dict[str, Any]) -> None:
                     new_text = f"{original_text}\n\n{outcome_line}".strip()
                 telegram_publisher.edit_message(chat_id, message_id, new_text, {"inline_keyboard": []})
             elif message_id and res.get("reply_markup") is not None:
-                telegram_publisher.edit_message(
-                    chat_id, message_id, res.get("text"), res.get("reply_markup")
-                )
+                try:
+                    telegram_publisher.edit_message(
+                        chat_id, message_id, res.get("text"), res.get("reply_markup")
+                    )
+                except Exception:
+                    # Graceful fallback: send as new message if edit fails
+                    _send_reply(msg_obj, res.get("text", ""), res.get("reply_markup"))
             else:
                 _send_reply(msg_obj, res.get("text", ""), res.get("reply_markup"))
 
