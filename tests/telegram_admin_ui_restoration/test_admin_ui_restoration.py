@@ -238,21 +238,36 @@ class TestOwnerPrivateDM:
 # ---------------------------------------------------------------------------
 
 class TestAdminHomeMarkup:
-    def test_admin_home_has_all_required_buttons(self):
+    def test_admin_home_has_canonical_tree_buttons(self):
+        """Canonical admin home must render the canonical tree nodes."""
         _purge()
-        from core.telegram_admin_ui import admin_home_markup
+        from core.telegram_admin_ui import admin_home_markup, CALLBACK_PREFIX
         markup = admin_home_markup(include_roles_reload=True)
         flat_texts = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
         flat_data = [btn["callback_data"] for row in markup["inline_keyboard"] for btn in row]
 
-        required_labels = ["Status", "Strategy", "Symbols", "Engine", "Debug"]
-        for label in required_labels:
-            assert any(label in t for t in flat_texts), f"Button '{label}' missing"
+        # Default (no role specified) shows all 11 canonical panels.
+        canonical_labels = [
+            "Operations", "Symbols & Coverage", "Decision Visibility",
+            "Distribution", "Research & Analytics", "Intelligence",
+            "Affiliate", "Roles & Identity", "System Health",
+            "Governance & Docs", "Security & Audit",
+        ]
+        for label in canonical_labels:
+            assert any(label in t for t in flat_texts), f"Canonical panel '{label}' missing from admin home"
 
-        assert any("FILES_HOME" in d for d in flat_data), "FILES_HOME callback missing"
-        assert any("DOCS" in d for d in flat_data), "DOCS callback missing"
-        assert any("DIAGNOSE" in d for d in flat_data), "DIAGNOSE callback missing"
-        assert any("AUDIT" in d for d in flat_data), "AUDIT callback missing"
+        # Canonical callback actions must be present.
+        canonical_actions = [
+            "OPERATIONS", "SYMBOLS_COV", "DECISION_VIS", "DISTRIBUTION",
+            "RESEARCH", "INTELLIGENCE", "AFFILIATE", "ROLES",
+            "SYSHEALTH", "GOVDOCS", "SECAUDIT",
+        ]
+        for action in canonical_actions:
+            assert any(f"{CALLBACK_PREFIX}{action}" in d for d in flat_data), \
+                f"Canonical action '{action}' missing from admin home"
+
+        # Reload Roles button present when include_roles_reload=True.
+        assert any("RELOAD_ROLES_CONFIRM" in d for d in flat_data)
 
     def test_admin_home_without_reload(self):
         _purge()
@@ -260,6 +275,43 @@ class TestAdminHomeMarkup:
         markup = admin_home_markup(include_roles_reload=False)
         flat_data = [btn["callback_data"] for row in markup["inline_keyboard"] for btn in row]
         assert not any("RELOAD_ROLES_CONFIRM" in d for d in flat_data)
+
+    def test_admin_home_role_scoped_owner_sees_all(self):
+        """Owner role must see all 11 canonical panels."""
+        _purge()
+        from core.telegram_admin_ui import admin_home_markup, CALLBACK_PREFIX
+        markup = admin_home_markup(role="OWNER", include_roles_reload=False)
+        flat_data = [btn["callback_data"] for row in markup["inline_keyboard"] for btn in row]
+        for action in ["OPERATIONS", "SYMBOLS_COV", "DECISION_VIS", "DISTRIBUTION",
+                       "RESEARCH", "INTELLIGENCE", "AFFILIATE", "ROLES",
+                       "SYSHEALTH", "GOVDOCS", "SECAUDIT"]:
+            assert any(action in d for d in flat_data), f"Owner missing panel '{action}'"
+
+    def test_admin_home_role_scoped_strategy_admin(self):
+        """Strategy Admin (Functional Admin / Operations) sees only Operations, Symbols & Coverage, Decision Visibility."""
+        _purge()
+        from core.telegram_admin_ui import admin_home_markup, CALLBACK_PREFIX
+        markup = admin_home_markup(role="STRATEGY_ADMIN", include_roles_reload=False)
+        flat_data = [btn["callback_data"] for row in markup["inline_keyboard"] for btn in row]
+        allowed = {"OPERATIONS", "SYMBOLS_COV", "DECISION_VIS"}
+        not_allowed = {"DISTRIBUTION", "RESEARCH", "INTELLIGENCE", "AFFILIATE",
+                       "ROLES", "SYSHEALTH", "GOVDOCS", "SECAUDIT"}
+        for a in allowed:
+            assert any(a in d for d in flat_data), f"STRATEGY_ADMIN missing allowed panel '{a}'"
+        for a in not_allowed:
+            assert not any(a in d for d in flat_data), f"STRATEGY_ADMIN should not see panel '{a}'"
+
+    def test_admin_home_role_scoped_affiliate_admin(self):
+        """Affiliate Admin sees only the Affiliate / Partner panel."""
+        _purge()
+        from core.telegram_admin_ui import admin_home_markup
+        markup = admin_home_markup(role="AFFILIATE_ADMIN", include_roles_reload=False)
+        flat_data = [btn["callback_data"] for row in markup["inline_keyboard"] for btn in row]
+        assert any("AFFILIATE" in d for d in flat_data), "AFFILIATE_ADMIN missing Affiliate panel"
+        not_allowed = ["OPERATIONS", "SYMBOLS_COV", "DECISION_VIS", "DISTRIBUTION",
+                       "RESEARCH", "INTELLIGENCE", "ROLES", "SYSHEALTH", "GOVDOCS", "SECAUDIT"]
+        for a in not_allowed:
+            assert not any(a in d for d in flat_data), f"AFFILIATE_ADMIN should not see panel '{a}'"
 
     def test_callback_prefix_all_admin_nav(self):
         _purge()

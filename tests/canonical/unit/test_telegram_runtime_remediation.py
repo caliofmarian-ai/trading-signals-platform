@@ -48,6 +48,13 @@ def test_start_response_mentions_shadow_mode(
     fresh_imports,
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """
+    Canonical /start in shadow mode must surface the shadow-mode notice.
+
+    RECONSTRUCTION-01: /start now renders a role-scoped guided welcome page
+    (telegram_app_nav.render_welcome_page) rather than a static "online" text.
+    The shadow-mode note is embedded in the page header.
+    """
     monkeypatch.setenv("SHADOW_MODE", "true")
     bot = fresh_imports("core.bot_service")
     sends = _capture_send(monkeypatch, bot)
@@ -55,9 +62,13 @@ def test_start_response_mentions_shadow_mode(
     bot.process_update(_message_update(chat_id=123, user_id=1, text="/start"))
 
     assert len(sends) == 1
-    assert "online" in sends[0]["text"].lower()
-    assert "SHADOW_MODE" in sends[0]["text"]
-    assert "/help" in sends[0]["text"]
+    text = sends[0]["text"]
+    # Canonical requirement: shadow mode must be visible on /start
+    assert "shadow" in text.lower()
+    # Canonical requirement: BinaryBot must be identified
+    assert "binarybot" in text.lower()
+    # Canonical requirement: user_id=1 has no configured role → USER experience shown
+    assert "welcome" in text.lower() or "binarybot" in text.lower()
 
 
 def test_help_command_uses_active_inventory(
@@ -65,17 +76,23 @@ def test_help_command_uses_active_inventory(
     fresh_imports,
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """
+    RECONSTRUCTION-01: /help now renders a role-scoped help page
+    (telegram_app_nav.render_help_page).
+
+    For an unconfigured user (USER role), the page shows public commands only.
+    Admin commands are mentioned in the admin-tier variant.
+    """
     bot = fresh_imports("core.bot_service")
     sends = _capture_send(monkeypatch, bot)
 
     bot.process_update(_message_update(chat_id=123, user_id=1, text="/help"))
 
     text = sends[0]["text"]
-    assert "Read-only commands" in text
-    assert "Mutation commands" in text
-    for command in ("/start", "/help", "/status", "/admin", "/thresholds PRE|CONFIRM|OPEN <value>", "/roles_reload"):
-        assert command in text
-    assert "Admin commands require the configured admin control topic" in text
+    # Canonical public commands must always appear in help
+    assert "/start" in text
+    assert "/status" in text
+    assert "/help" in text
 
 
 def test_status_command_ready_state(

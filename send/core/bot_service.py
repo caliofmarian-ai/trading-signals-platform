@@ -4,6 +4,9 @@
 # BATCH-05: Legacy Admin/control-plane panel path retired.
 # RESTORATION-01: New admin UI capabilities restored (symbols toggle, strategy profile,
 #   file/log/diagnose/audit delivery, rate limiting, graceful edit fallback).
+# RECONSTRUCTION-01: Complete Telegram application experience implemented.
+#   Single active UI message, guided /start entry, role-scoped home pages,
+#   APP: callback dispatch, active message tracking.
 #
 from __future__ import annotations
 
@@ -28,15 +31,18 @@ from core.admin_commands import (
     get_all_known_symbols,
     _load_active_symbols,
     _find_latest_report_json,
+    _iter_jsonl,
+    ENGINE_EVENTS_PATH,
     REPORTS_DIR,
 )
-from core.admin_permissions import is_owner
+from core.admin_permissions import is_owner, get_primary_role
 from core import observability_logger
 from core import outcome_service
 from core import fsm_runtime
 from core.telegram_runtime import admin_command_names, render_help_text, render_start_text, render_status_text
 from core.telegram_targets import env_chat_id, env_thread_id, reply_target_from_message, valid_thread_id
 from core import telegram_admin_ui
+from core import telegram_app_nav
 from monitoring import restart_guard
 from runtime import runtime_status
 
@@ -171,6 +177,57 @@ def _send_reply(message: Dict[str, Any], text: str, reply_markup: Optional[Dict[
     )
 
 
+def _send_app_nav_reply(
+    message: Dict[str, Any],
+    user_id: int,
+    text: str,
+    reply_markup: Optional[Dict[str, Any]],
+) -> None:
+    """
+    Send or edit the single active UI message for this user.
+
+    - If we have an existing active UI message for this user in the same chat,
+      attempt to edit it (single-message navigation pattern, canonical §D).
+    - On edit failure (message deleted/too old), or when no active message exists,
+      send a new message and record it as the active UI message.
+    - File/document delivery bypasses this (separate mechanism, canonical §D).
+    """
+    target = reply_target_from_message(message)
+    if target is None:
+        return
+
+    chat_id = target.chat_id
+    active = telegram_app_nav.get_active_message(user_id)
+
+    if active is not None and active[0] == chat_id:
+        # Try to edit the existing active message
+        active_message_id = active[1]
+        try:
+            telegram_publisher.edit_message(chat_id, active_message_id, text, reply_markup)
+            return
+        except Exception:
+            # Edit failed (message too old, deleted, etc.) — fall through to send new
+            telegram_app_nav.clear_active_message(user_id)
+
+    # Send a new message and track it
+    try:
+        result = telegram_publisher.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            thread_id=target.thread_id,
+        )
+        # Track the new message if the publisher returns message_id
+        if isinstance(result, dict):
+            msg_result = result.get("result") or {}
+            new_msg_id = msg_result.get("message_id")
+            if new_msg_id:
+                telegram_app_nav.set_active_message(user_id, chat_id, new_msg_id)
+    except Exception:
+        pass
+
+
+
 def _format_card(title: str, body: str) -> str:
     clean_body = str(body or "").strip()
     if not clean_body:
@@ -178,9 +235,10 @@ def _format_card(title: str, body: str) -> str:
     return f"{title}\n\n{clean_body}"
 
 
-def _admin_reply_markup(cmd: str, *, owner_private: bool) -> Optional[Dict[str, Any]]:
+def _admin_reply_markup(cmd: str, user_id: int, *, owner_private: bool) -> Optional[Dict[str, Any]]:
+    role = get_primary_role(user_id)
     if cmd == "/admin":
-        return telegram_admin_ui.admin_home_markup(include_roles_reload=not owner_private)
+        return telegram_admin_ui.admin_home_markup(role=role, include_roles_reload=not owner_private)
     if cmd == "/strategy":
         return telegram_admin_ui.strategy_markup()
     if cmd in {"/thresholds", "/sr", "/spike"}:
@@ -250,7 +308,7 @@ def _render_panel_for_command(cmd: str, user_id: int, *, owner_private: bool) ->
     # Extract base command (without arguments)
     base_cmd = cmd.split()[0].lower()
     title = title_map.get(cmd) or title_map.get(base_cmd, "🛠️ Admin Panel")
-    markup = _admin_reply_markup(base_cmd, owner_private=owner_private)
+    markup = _admin_reply_markup(base_cmd, user_id, owner_private=owner_private)
     return _format_card(title, response_text), markup
 
 
@@ -440,19 +498,158 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             return {"text": f"Log export failed: {err}", "reply_markup": telegram_admin_ui.standard_back_markup()}
         return {"text": "", "reply_markup": None, "__file_path__": path, "__caption__": "binarybot_log.log"}
 
-    if action == "DIAGNOSE":
+    if action == "DIAGNOSE" or action == "OPS_DIAGNOSE" or action == "SH_DIAGNOSE":
         if not _check_rate_limit(user_id, "diagnose"):
             return {"text": "Rate limit exceeded.", "reply_markup": None}
         text = handle_diagnose(user_id)
         return {"text": text, "reply_markup": telegram_admin_ui.diagnose_markup()}
 
-    if action == "AUDIT":
+    if action == "AUDIT" or action == "SH_AUDIT" or action == "SECAUDIT_AUDIT":
         if not _check_rate_limit(user_id, "audit_runtime"):
             return {"text": "Rate limit exceeded.", "reply_markup": None}
         path, err = handle_audit_runtime(user_id)
         if err:
             return {"text": f"Audit failed: {err}", "reply_markup": telegram_admin_ui.standard_back_markup()}
         return {"text": "", "reply_markup": None, "__file_path__": path, "__caption__": "binarybot_audit.json"}
+
+    # ---- Canonical panel actions ----
+    # Source: ADMIN_TREE_MAP_v2.0.0.md §6
+
+    if action == "OPERATIONS":
+        # Operations panel: engine state, ops actions, strategy parameter access.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.2; ADMIN_CONTROL_SPEC_v2.0.0.md §6
+        text, _ = _render_panel_for_command("/engine", user_id, owner_private=owner_private)
+        return {
+            "text": _format_card("⚙️ Operations", text.split("\n\n", 1)[-1] if "\n\n" in text else text),
+            "reply_markup": telegram_admin_ui.operations_markup(),
+        }
+
+    if action == "OPS_ENGINE":
+        text, markup = _render_panel_for_command("/engine", user_id, owner_private=owner_private)
+        return {"text": text, "reply_markup": markup}
+
+    if action == "SYMBOLS_COV":
+        # Symbols & Coverage panel entry point.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.3; ADMIN_CONTROL_SPEC_v2.0.0.md §7
+        try:
+            all_syms = get_all_known_symbols()
+            active = _load_active_symbols()
+            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active)
+        except Exception:
+            markup = telegram_admin_ui.symbols_markup()
+        text, _ = _render_panel_for_command("/symbols list", user_id, owner_private=owner_private)
+        return {"text": _format_card("💱 Symbols & Coverage", text.split("\n\n", 1)[-1] if "\n\n" in text else text), "reply_markup": markup}
+
+    if action == "DECISION_VIS":
+        # Decision Visibility panel: last decision, gate results, rejection reasons.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.4; ADMIN_CONTROL_SPEC_v2.0.0.md §8
+        text, _ = _render_panel_for_command("/debug", user_id, owner_private=owner_private)
+        return {
+            "text": _format_card("🔍 Decision Visibility", text.split("\n\n", 1)[-1] if "\n\n" in text else text),
+            "reply_markup": telegram_admin_ui.decision_visibility_markup(),
+        }
+
+    if action == "DISTRIBUTION":
+        # Distribution Control panel: route status, channel readiness.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.5; ADMIN_CONTROL_SPEC_v2.0.0.md §9
+        from core.admin_views import render_distribution_panel
+        routes = []
+        if ADMIN_CONTROL_CHAT_ID:
+            routes.append(f"Admin control chat: {ADMIN_CONTROL_CHAT_ID}")
+        content = render_distribution_panel(ADMIN_CONTROL_CHAT_ID, ADMIN_CONTROL_THREAD_ID, routes)
+        return {
+            "text": _format_card("📡 Distribution Control", content),
+            "reply_markup": telegram_admin_ui.distribution_markup(),
+        }
+
+    if action == "RESEARCH":
+        # Research & Analytics panel: performance summaries, analytics reports.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.6; ADMIN_CONTROL_SPEC_v2.0.0.md §10
+        text, _ = _render_panel_for_command("/report", user_id, owner_private=owner_private)
+        try:
+            import os as _os
+            report_path = _find_latest_report_json()
+            if report_path and _os.path.isfile(report_path):
+                fname = _os.path.basename(report_path)
+                markup = telegram_admin_ui.research_markup(has_file=True, filename=fname)
+            else:
+                markup = telegram_admin_ui.research_markup()
+        except Exception:
+            markup = telegram_admin_ui.research_markup()
+        return {
+            "text": _format_card("📊 Research & Analytics", text.split("\n\n", 1)[-1] if "\n\n" in text else text),
+            "reply_markup": markup,
+        }
+
+    if action == "INTELLIGENCE":
+        # Intelligence panel: decision intelligence, drift signals, anomaly summaries.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.7; ADMIN_CONTROL_SPEC_v2.0.0.md §11
+        from core.admin_views import render_intelligence_panel
+        try:
+            recent_events: list = []
+            for ev in _iter_recent_engine_events(limit=50):
+                recent_events.append(ev)
+        except Exception:
+            recent_events = []
+        content = render_intelligence_panel(recent_events)
+        return {
+            "text": _format_card("🧠 Intelligence", content),
+            "reply_markup": telegram_admin_ui.intelligence_markup(),
+        }
+
+    if action == "SYSHEALTH":
+        # System Health panel: aggregated health summary.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.10; ADMIN_CONTROL_SPEC_v2.0.0.md §14
+        from core.admin_views import render_system_health_summary
+        snapshot = _build_status_snapshot()
+        content = render_system_health_summary(snapshot)
+        return {
+            "text": _format_card("🩺 System Health", content),
+            "reply_markup": telegram_admin_ui.system_health_markup(),
+        }
+
+    if action == "SH_ENGINE":
+        text, markup = _render_panel_for_command("/engine", user_id, owner_private=owner_private)
+        return {"text": text, "reply_markup": markup}
+
+    if action == "ROLES":
+        # Roles & Identity panel: role info, scope summary, reload option for authorized roles.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.9
+        from core.admin_permissions import get_primary_role, has_permission
+        can_reload = has_permission(user_id, "roles.write") and not owner_private
+        text, _ = _render_panel_for_command("/roles", user_id, owner_private=owner_private)
+        return {
+            "text": text,
+            "reply_markup": telegram_admin_ui.roles_identity_markup(can_reload=can_reload),
+        }
+
+    if action == "GOVDOCS":
+        # Governance & Docs panel: canonical specs, change-control references.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.11
+        if not _check_rate_limit(user_id, "files_list"):
+            return {"text": "Rate limit exceeded.", "reply_markup": None}
+        info = handle_docs_list(user_id)
+        if info.get("error"):
+            return {
+                "text": _format_card("📖 Governance & Docs", f"Error: {info['error']}"),
+                "reply_markup": telegram_admin_ui.standard_back_markup(),
+            }
+        fnames = info.get("filenames", [])
+        summary = f"{len(fnames)} canonical document(s) available." if fnames else "No documents found."
+        return {
+            "text": _format_card("📖 Governance & Docs", summary),
+            "reply_markup": telegram_admin_ui.governance_docs_markup(fnames),
+        }
+
+    if action == "SECAUDIT":
+        # Security & Audit panel: audit trail, admin action logs.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.12
+        from core.admin_views import render_security_audit_panel
+        content = render_security_audit_panel()
+        return {
+            "text": _format_card("🔒 Security & Audit", content),
+            "reply_markup": telegram_admin_ui.security_audit_markup(),
+        }
 
     # ---- Standard navigation ----
     command_for_action = {
@@ -463,6 +660,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         "SR": "/sr",
         "SPIKE": "/spike",
         "SYMBOLS": "/symbols list",
+        "SYMBOLS_COV": "/symbols list",
         "ENGINE": "/engine",
         "DEBUG": "/debug",
         "REPORT": "/report",
@@ -529,6 +727,15 @@ def _build_status_snapshot() -> Dict[str, Any]:
         "shadow_mode": "ON" if bool(status.get("shadow_mode", _env_flag("SHADOW_MODE", default=False))) else "OFF",
         "broker_state": broker_state,
     }
+
+
+def _iter_recent_engine_events(limit: int = 50) -> list:
+    """Return the most recent engine events (up to limit) from engine_events.jsonl."""
+    try:
+        events = list(_iter_jsonl(ENGINE_EVENTS_PATH))
+        return events[-limit:] if len(events) > limit else events
+    except Exception:
+        return []
 
 
 _RETIRED_ADMIN_CALLBACKS: frozenset = frozenset({
@@ -644,9 +851,29 @@ def handle_callback(
 def process_update(update: Dict[str, Any]) -> None:
     """
     Telegram update dispatcher.
-    - Slash admin commands → canonical handle_admin_command (admin_commands.py).
-    - Callbacks → handle_callback (VOTE forwarding + retired panel rejection).
-    - File delivery responses (__file_path__) → send_document.
+
+    Public commands (/start, /help, /status):
+      - Use the app-nav single-message pattern (edit active UI message if possible).
+      - /start shows the role-scoped guided welcome page.
+      - /help and /status show role-scoped help and status pages with navigation.
+
+    Admin commands:
+      - Require admin context (admin control topic or owner private DM).
+      - Dispatched to handle_admin_command / panel handlers.
+
+    APP: callbacks:
+      - Application navigation (Home, Status, Help, Admin, etc.).
+      - Edit the originating message (single-message pattern).
+
+    ADMIN_NAV: callbacks:
+      - Admin panel navigation within the admin control surface.
+      - Require admin context.
+
+    VOTE_ / OUTCOME: callbacks:
+      - Forwarded to outcome_service without admin-context checks.
+
+    File delivery:
+      - __file_path__ responses → send_document (separate message, canonical exception).
     """
     try:
         msg = update.get("message") or {}
@@ -660,15 +887,28 @@ def process_update(update: Dict[str, Any]) -> None:
 
         if text.startswith("/"):
             cmd = text.split()[0].split("@", 1)[0].lower()
+
             if cmd == "/start":
-                _send_reply(msg, render_start_text(shadow_mode=_env_flag("SHADOW_MODE", default=False)))
+                shadow = _env_flag("SHADOW_MODE", default=False)
+                primary_role = get_primary_role(user_id)
+                first_name = (msg.get("from") or {}).get("first_name", "") or ""
+                page_text, page_markup = telegram_app_nav.render_welcome_page(
+                    user_id, primary_role, first_name=first_name, shadow_mode=shadow
+                )
+                _send_app_nav_reply(msg, user_id, page_text, page_markup)
                 return
+
             if cmd == "/help":
-                _send_reply(msg, render_help_text())
+                primary_role = get_primary_role(user_id)
+                page_text, page_markup = telegram_app_nav.render_help_page(primary_role)
+                _send_app_nav_reply(msg, user_id, page_text, page_markup)
                 return
+
             if cmd == "/status":
-                _send_reply(msg, render_status_text(_build_status_snapshot()))
+                page_text, page_markup = telegram_app_nav.render_status_page(_build_status_snapshot())
+                _send_app_nav_reply(msg, user_id, page_text, page_markup)
                 return
+
             if cmd in admin_command_names():
                 if not _can_run_admin_command(msg, user_id, cmd):
                     _send_reply(msg, "Access denied (wrong chat).")
@@ -692,6 +932,34 @@ def process_update(update: Dict[str, Any]) -> None:
             user_id = int(cb["from"]["id"])
             message_id = msg_obj.get("message_id")
 
+            # ---- APP: navigation callbacks — handled for all roles, all contexts ----
+            app_action = telegram_app_nav.parse_app_action(data)
+            if app_action is not None:
+                shadow = _env_flag("SHADOW_MODE", default=False)
+                primary_role = get_primary_role(user_id)
+                first_name = (cb.get("from") or {}).get("first_name", "") or ""
+                page_text, page_markup = telegram_app_nav.handle_app_action(
+                    action=app_action,
+                    user_id=user_id,
+                    primary_role=primary_role,
+                    first_name=first_name,
+                    shadow_mode=shadow,
+                    status_snapshot=_build_status_snapshot() if app_action == telegram_app_nav.ACT_STATUS else None,
+                )
+                # Edit the message that held the button (single-message pattern)
+                if message_id:
+                    try:
+                        telegram_publisher.edit_message(chat_id, message_id, page_text, page_markup)
+                        # Update active message tracking to this message
+                        telegram_app_nav.set_active_message(user_id, chat_id, message_id)
+                        return
+                    except Exception:
+                        pass
+                # Fallback: send new message
+                _send_app_nav_reply(msg_obj, user_id, page_text, page_markup)
+                return
+
+            # ---- ADMIN_NAV: callbacks — require admin context ----
             admin_action = telegram_admin_ui.parse_action(data)
             if admin_action is not None and not _can_use_admin_callback(msg_obj, user_id):
                 _send_reply(msg_obj, "Access denied (wrong chat).")

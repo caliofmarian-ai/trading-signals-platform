@@ -2,6 +2,16 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from core.role_constants import (
+    ROLE_OWNER as _ROLE_OWNER,
+    ROLE_PRIMARY_ADMIN as _ROLE_PRIMARY_ADMIN,
+    ROLE_STRATEGY_ADMIN as _ROLE_STRATEGY_ADMIN,
+    ROLE_RESEARCH_ADMIN as _ROLE_RESEARCH_ADMIN,
+    ROLE_ANALYST as _ROLE_ANALYST,
+    ROLE_MODERATOR as _ROLE_MODERATOR,
+    ROLE_AFFILIATE_ADMIN as _ROLE_AFFILIATE_ADMIN,
+)
+
 CALLBACK_PREFIX = "ADMIN_NAV:"
 
 # Canonical short dir keys used in file-browse callbacks (max 3 chars for callback budget).
@@ -15,6 +25,49 @@ DIR_KEY_SNP = "snp"
 
 # Maximum files per page in the file-list UI.
 FILES_PER_PAGE = 8
+
+# Canonical panel action keys — correspond to ADMIN_TREE_MAP_v2.0.0.md §4.
+_PANEL_OPERATIONS = "OPERATIONS"
+_PANEL_SYMBOLS_COV = "SYMBOLS_COV"
+_PANEL_DECISION_VIS = "DECISION_VIS"
+_PANEL_DISTRIBUTION = "DISTRIBUTION"
+_PANEL_RESEARCH = "RESEARCH"
+_PANEL_INTELLIGENCE = "INTELLIGENCE"
+_PANEL_AFFILIATE = "AFFILIATE"
+_PANEL_ROLES = "ROLES"
+_PANEL_SYSHEALTH = "SYSHEALTH"
+_PANEL_GOVDOCS = "GOVDOCS"
+_PANEL_SECAUDIT = "SECAUDIT"
+
+# Ordered canonical panel definitions: (action_key, button_label).
+# Order follows ADMIN_TREE_MAP_v2.0.0.md §4.
+_CANONICAL_PANELS: list[tuple[str, str]] = [
+    (_PANEL_OPERATIONS,   "⚙️ Operations"),
+    (_PANEL_SYMBOLS_COV,  "💱 Symbols & Coverage"),
+    (_PANEL_DECISION_VIS, "🔍 Decision Visibility"),
+    (_PANEL_DISTRIBUTION, "📡 Distribution"),
+    (_PANEL_RESEARCH,     "📊 Research & Analytics"),
+    (_PANEL_INTELLIGENCE, "🧠 Intelligence"),
+    (_PANEL_AFFILIATE,    "🤝 Affiliate / Partner"),
+    (_PANEL_ROLES,        "👥 Roles & Identity"),
+    (_PANEL_SYSHEALTH,    "🩺 System Health"),
+    (_PANEL_GOVDOCS,      "📖 Governance & Docs"),
+    (_PANEL_SECAUDIT,     "🔒 Security & Audit"),
+]
+
+# Role → allowed panel action keys.
+# Source: ADMIN_TREE_MAP_v2.0.0.md §7; ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md §10.
+_ALL_PANEL_KEYS: frozenset[str] = frozenset(k for k, _ in _CANONICAL_PANELS)
+
+_PANEL_VISIBILITY: dict[str, frozenset[str]] = {
+    _ROLE_OWNER: _ALL_PANEL_KEYS,
+    _ROLE_PRIMARY_ADMIN: _ALL_PANEL_KEYS,
+    _ROLE_STRATEGY_ADMIN: frozenset({_PANEL_OPERATIONS, _PANEL_SYMBOLS_COV, _PANEL_DECISION_VIS}),
+    _ROLE_RESEARCH_ADMIN: frozenset({_PANEL_DECISION_VIS, _PANEL_RESEARCH, _PANEL_INTELLIGENCE}),
+    _ROLE_ANALYST: frozenset({_PANEL_DECISION_VIS, _PANEL_RESEARCH, _PANEL_INTELLIGENCE}),
+    _ROLE_MODERATOR: frozenset({_PANEL_SYSHEALTH}),
+    _ROLE_AFFILIATE_ADMIN: frozenset({_PANEL_AFFILIATE}),
+}
 
 
 def _btn(text: str, action: str) -> dict[str, str]:
@@ -32,19 +85,34 @@ def parse_action(callback_data: str) -> Optional[str]:
     return action or None
 
 
-def admin_home_markup(*, include_roles_reload: bool) -> dict[str, list[list[dict[str, str]]]]:
-    rows = [
-        [_btn("📊 Status", "STATUS"), _btn("⚙️ Strategy", "STRATEGY")],
-        [_btn("🎯 Thresholds", "THRESHOLDS"), _btn("📐 S/R", "SR")],
-        [_btn("⚡ Spike Filter", "SPIKE"), _btn("💱 Symbols", "SYMBOLS")],
-        [_btn("🤖 Engine", "ENGINE"), _btn("🐞 Debug", "DEBUG")],
-        [_btn("📈 Reports", "REPORT"), _btn("📁 Files", "FILES_HOME")],
-        [_btn("📄 Documents", "DOCS"), _btn("🩺 Diagnose", "DIAGNOSE")],
-        [_btn("🔍 Runtime Audit", "AUDIT"), _btn("👥 Roles", "ROLES")],
-        [_btn("🤝 Affiliate", "AFFILIATE")],
-    ]
+def admin_home_markup(
+    *,
+    role: str = "",
+    include_roles_reload: bool = False,
+) -> dict[str, list[list[dict[str, str]]]]:
+    """
+    Canonical role-scoped admin home keyboard.
+
+    Renders the canonical admin tree (ADMIN_TREE_MAP_v2.0.0.md §4) filtered to
+    the panels permitted by the caller's primary role.  When role is empty or
+    unrecognised, all panels are shown (fail-safe for backward compatibility).
+
+    Layout: 2 columns, following canonical panel order.
+    """
+    allowed = _PANEL_VISIBILITY.get(role, _ALL_PANEL_KEYS)
+    visible = [(key, label) for key, label in _CANONICAL_PANELS if key in allowed]
+
+    rows: list[list[dict[str, str]]] = []
+    # Pair panels into 2-column rows.
+    for i in range(0, len(visible), 2):
+        row = [_btn(visible[i][1], visible[i][0])]
+        if i + 1 < len(visible):
+            row.append(_btn(visible[i + 1][1], visible[i + 1][0]))
+        rows.append(row)
+
     if include_roles_reload:
         rows.append([_btn("🔄 Reload Roles", "RELOAD_ROLES_CONFIRM")])
+
     return _kb(rows)
 
 
@@ -250,3 +318,133 @@ def report_markup(*, has_file: bool = False, dir_key: str = DIR_KEY_RPT, filenam
         rows.append([_btn("📥 Download Report", f"FILE_DL:{dir_key}:{filename}")])
     rows.append([_btn("⬅️ Admin", "HOME")])
     return _kb(rows)
+
+
+# ---------------------------------------------------------------------------
+# Canonical panel markups — one per canonical admin tree node.
+# Source: ADMIN_TREE_MAP_v2.0.0.md §6.
+# ---------------------------------------------------------------------------
+
+def operations_markup() -> dict[str, list[list[dict[str, str]]]]:
+    """
+    Operations panel navigation.
+
+    Source: ADMIN_TREE_MAP_v2.0.0.md §6.2
+    Purpose: engine state, freeze/pause, operational actions.
+    """
+    return _kb([
+        [_btn("🤖 Engine State", "OPS_ENGINE"), _btn("🩺 Diagnose", "OPS_DIAGNOSE")],
+        [_btn("📋 Strategy Parameters", "STRATEGY"), _btn("💱 Symbols", "SYMBOLS_COV")],
+        [_btn("⬅️ Admin", "HOME")],
+    ])
+
+
+def decision_visibility_markup() -> dict[str, list[list[dict[str, str]]]]:
+    """
+    Decision Visibility panel navigation.
+
+    Source: ADMIN_TREE_MAP_v2.0.0.md §6.4
+    Purpose: last decision, gate results, rejection reasons, score composition.
+    """
+    return _kb([
+        [_btn("🔄 Refresh", "DECISION_VIS")],
+        [_btn("⬅️ Admin", "HOME")],
+    ])
+
+
+def distribution_markup() -> dict[str, list[list[dict[str, str]]]]:
+    """
+    Distribution Control panel navigation.
+
+    Source: ADMIN_TREE_MAP_v2.0.0.md §6.5
+    Purpose: route status, channel readiness, publication controls.
+    Read-only: no mutation controls available at this time.
+    """
+    return _kb([
+        [_btn("🔄 Refresh", "DISTRIBUTION")],
+        [_btn("⬅️ Admin", "HOME")],
+    ])
+
+
+def research_markup(*, has_file: bool = False, filename: str = "") -> dict[str, list[list[dict[str, str]]]]:
+    """
+    Research & Analytics panel navigation.
+
+    Source: ADMIN_TREE_MAP_v2.0.0.md §6.6
+    Purpose: performance summaries, rejection analytics, outcome analytics.
+    """
+    rows: list[list[dict[str, str]]] = []
+    if has_file and filename:
+        rows.append([_btn("📥 Download Report", f"FILE_DL:{DIR_KEY_RPT}:{filename}")])
+    rows.append([_btn("🔄 Refresh", "RESEARCH")])
+    rows.append([_btn("⬅️ Admin", "HOME")])
+    return _kb(rows)
+
+
+def intelligence_markup() -> dict[str, list[list[dict[str, str]]]]:
+    """
+    Intelligence panel navigation.
+
+    Source: ADMIN_TREE_MAP_v2.0.0.md §6.7
+    Purpose: decision intelligence, drift signals, anomaly summaries, recommendation queue.
+    """
+    return _kb([
+        [_btn("🔄 Refresh", "INTELLIGENCE")],
+        [_btn("⬅️ Admin", "HOME")],
+    ])
+
+
+def roles_identity_markup(*, can_reload: bool = False) -> dict[str, list[list[dict[str, str]]]]:
+    """
+    Roles & Identity panel navigation.
+
+    Source: ADMIN_TREE_MAP_v2.0.0.md §6.9
+    Purpose: my identity, my role, scope summary, role references.
+    """
+    rows: list[list[dict[str, str]]] = []
+    if can_reload:
+        rows.append([_btn("🔄 Reload Roles", "RELOAD_ROLES_CONFIRM")])
+    rows.append([_btn("⬅️ Admin", "HOME")])
+    return _kb(rows)
+
+
+def system_health_markup() -> dict[str, list[list[dict[str, str]]]]:
+    """
+    System Health panel navigation.
+
+    Source: ADMIN_TREE_MAP_v2.0.0.md §6.10
+    Purpose: health summary, observability summary, last errors, alerts, diagnostics.
+    """
+    return _kb([
+        [_btn("🤖 Engine State", "SH_ENGINE"), _btn("🩺 Diagnose", "SH_DIAGNOSE")],
+        [_btn("🔍 Runtime Audit", "SH_AUDIT")],
+        [_btn("⬅️ Admin", "HOME")],
+    ])
+
+
+def governance_docs_markup(filenames: List[str]) -> dict[str, list[list[dict[str, str]]]]:
+    """
+    Governance & Docs panel navigation.
+
+    Source: ADMIN_TREE_MAP_v2.0.0.md §6.11
+    Purpose: active canonical specs, implementation references, change-control references.
+    """
+    rows: list[list[dict[str, str]]] = []
+    for fname in filenames:
+        display = fname if len(fname) <= 36 else fname[:33] + "…"
+        rows.append([_btn(f"📄 {display}", f"FILE_DL:{DIR_KEY_DOC}:{fname}")])
+    rows.append([_btn("⬅️ Admin", "HOME")])
+    return _kb(rows)
+
+
+def security_audit_markup() -> dict[str, list[list[dict[str, str]]]]:
+    """
+    Security & Audit panel navigation.
+
+    Source: ADMIN_TREE_MAP_v2.0.0.md §6.12
+    Purpose: admin action log, access denials, role change audit, audit exports.
+    """
+    return _kb([
+        [_btn("🔍 Runtime Audit", "SECAUDIT_AUDIT"), _btn("📁 File Browser", "FILES_HOME")],
+        [_btn("⬅️ Admin", "HOME")],
+    ])
