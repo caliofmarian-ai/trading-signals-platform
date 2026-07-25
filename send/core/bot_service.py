@@ -4,6 +4,9 @@
 # BATCH-05: Legacy Admin/control-plane panel path retired.
 # RESTORATION-01: New admin UI capabilities restored (symbols toggle, strategy profile,
 #   file/log/diagnose/audit delivery, rate limiting, graceful edit fallback).
+# RECONSTRUCTION-01: Complete Telegram application experience implemented.
+#   Single active UI message, guided /start entry, role-scoped home pages,
+#   APP: callback dispatch, active message tracking.
 #
 from __future__ import annotations
 
@@ -32,13 +35,14 @@ from core.admin_commands import (
     ENGINE_EVENTS_PATH,
     REPORTS_DIR,
 )
-from core.admin_permissions import is_owner
+from core.admin_permissions import is_owner, get_primary_role
 from core import observability_logger
 from core import outcome_service
 from core import fsm_runtime
 from core.telegram_runtime import admin_command_names, render_help_text, render_start_text, render_status_text
 from core.telegram_targets import env_chat_id, env_thread_id, reply_target_from_message, valid_thread_id
 from core import telegram_admin_ui
+from core import telegram_app_nav
 from monitoring import restart_guard
 from runtime import runtime_status
 
@@ -173,6 +177,57 @@ def _send_reply(message: Dict[str, Any], text: str, reply_markup: Optional[Dict[
     )
 
 
+def _send_app_nav_reply(
+    message: Dict[str, Any],
+    user_id: int,
+    text: str,
+    reply_markup: Optional[Dict[str, Any]],
+) -> None:
+    """
+    Send or edit the single active UI message for this user.
+
+    - If we have an existing active UI message for this user in the same chat,
+      attempt to edit it (single-message navigation pattern, canonical §D).
+    - On edit failure (message deleted/too old), or when no active message exists,
+      send a new message and record it as the active UI message.
+    - File/document delivery bypasses this (separate mechanism, canonical §D).
+    """
+    target = reply_target_from_message(message)
+    if target is None:
+        return
+
+    chat_id = target.chat_id
+    active = telegram_app_nav.get_active_message(user_id)
+
+    if active is not None and active[0] == chat_id:
+        # Try to edit the existing active message
+        active_message_id = active[1]
+        try:
+            telegram_publisher.edit_message(chat_id, active_message_id, text, reply_markup)
+            return
+        except Exception:
+            # Edit failed (message too old, deleted, etc.) — fall through to send new
+            telegram_app_nav.clear_active_message(user_id)
+
+    # Send a new message and track it
+    try:
+        result = telegram_publisher.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            thread_id=target.thread_id,
+        )
+        # Track the new message if the publisher returns message_id
+        if isinstance(result, dict):
+            msg_result = result.get("result") or {}
+            new_msg_id = msg_result.get("message_id")
+            if new_msg_id:
+                telegram_app_nav.set_active_message(user_id, chat_id, new_msg_id)
+    except Exception:
+        pass
+
+
+
 def _format_card(title: str, body: str) -> str:
     clean_body = str(body or "").strip()
     if not clean_body:
@@ -181,7 +236,6 @@ def _format_card(title: str, body: str) -> str:
 
 
 def _admin_reply_markup(cmd: str, user_id: int, *, owner_private: bool) -> Optional[Dict[str, Any]]:
-    from core.admin_permissions import get_primary_role
     role = get_primary_role(user_id)
     if cmd == "/admin":
         return telegram_admin_ui.admin_home_markup(role=role, include_roles_reload=not owner_private)
@@ -797,9 +851,29 @@ def handle_callback(
 def process_update(update: Dict[str, Any]) -> None:
     """
     Telegram update dispatcher.
-    - Slash admin commands → canonical handle_admin_command (admin_commands.py).
-    - Callbacks → handle_callback (VOTE forwarding + retired panel rejection).
-    - File delivery responses (__file_path__) → send_document.
+
+    Public commands (/start, /help, /status):
+      - Use the app-nav single-message pattern (edit active UI message if possible).
+      - /start shows the role-scoped guided welcome page.
+      - /help and /status show role-scoped help and status pages with navigation.
+
+    Admin commands:
+      - Require admin context (admin control topic or owner private DM).
+      - Dispatched to handle_admin_command / panel handlers.
+
+    APP: callbacks:
+      - Application navigation (Home, Status, Help, Admin, etc.).
+      - Edit the originating message (single-message pattern).
+
+    ADMIN_NAV: callbacks:
+      - Admin panel navigation within the admin control surface.
+      - Require admin context.
+
+    VOTE_ / OUTCOME: callbacks:
+      - Forwarded to outcome_service without admin-context checks.
+
+    File delivery:
+      - __file_path__ responses → send_document (separate message, canonical exception).
     """
     try:
         msg = update.get("message") or {}
@@ -813,15 +887,28 @@ def process_update(update: Dict[str, Any]) -> None:
 
         if text.startswith("/"):
             cmd = text.split()[0].split("@", 1)[0].lower()
+
             if cmd == "/start":
-                _send_reply(msg, render_start_text(shadow_mode=_env_flag("SHADOW_MODE", default=False)))
+                shadow = _env_flag("SHADOW_MODE", default=False)
+                primary_role = get_primary_role(user_id)
+                first_name = (msg.get("from") or {}).get("first_name", "") or ""
+                page_text, page_markup = telegram_app_nav.render_welcome_page(
+                    user_id, primary_role, first_name=first_name, shadow_mode=shadow
+                )
+                _send_app_nav_reply(msg, user_id, page_text, page_markup)
                 return
+
             if cmd == "/help":
-                _send_reply(msg, render_help_text())
+                primary_role = get_primary_role(user_id)
+                page_text, page_markup = telegram_app_nav.render_help_page(primary_role)
+                _send_app_nav_reply(msg, user_id, page_text, page_markup)
                 return
+
             if cmd == "/status":
-                _send_reply(msg, render_status_text(_build_status_snapshot()))
+                page_text, page_markup = telegram_app_nav.render_status_page(_build_status_snapshot())
+                _send_app_nav_reply(msg, user_id, page_text, page_markup)
                 return
+
             if cmd in admin_command_names():
                 if not _can_run_admin_command(msg, user_id, cmd):
                     _send_reply(msg, "Access denied (wrong chat).")
@@ -845,6 +932,34 @@ def process_update(update: Dict[str, Any]) -> None:
             user_id = int(cb["from"]["id"])
             message_id = msg_obj.get("message_id")
 
+            # ---- APP: navigation callbacks — handled for all roles, all contexts ----
+            app_action = telegram_app_nav.parse_app_action(data)
+            if app_action is not None:
+                shadow = _env_flag("SHADOW_MODE", default=False)
+                primary_role = get_primary_role(user_id)
+                first_name = (cb.get("from") or {}).get("first_name", "") or ""
+                page_text, page_markup = telegram_app_nav.handle_app_action(
+                    action=app_action,
+                    user_id=user_id,
+                    primary_role=primary_role,
+                    first_name=first_name,
+                    shadow_mode=shadow,
+                    status_snapshot=_build_status_snapshot() if app_action == telegram_app_nav.ACT_STATUS else None,
+                )
+                # Edit the message that held the button (single-message pattern)
+                if message_id:
+                    try:
+                        telegram_publisher.edit_message(chat_id, message_id, page_text, page_markup)
+                        # Update active message tracking to this message
+                        telegram_app_nav.set_active_message(user_id, chat_id, message_id)
+                        return
+                    except Exception:
+                        pass
+                # Fallback: send new message
+                _send_app_nav_reply(msg_obj, user_id, page_text, page_markup)
+                return
+
+            # ---- ADMIN_NAV: callbacks — require admin context ----
             admin_action = telegram_admin_ui.parse_action(data)
             if admin_action is not None and not _can_use_admin_callback(msg_obj, user_id):
                 _send_reply(msg_obj, "Access denied (wrong chat).")

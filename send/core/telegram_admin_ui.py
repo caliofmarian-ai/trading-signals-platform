@@ -2,6 +2,16 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from core.role_constants import (
+    ROLE_OWNER as _ROLE_OWNER,
+    ROLE_PRIMARY_ADMIN as _ROLE_PRIMARY_ADMIN,
+    ROLE_STRATEGY_ADMIN as _ROLE_STRATEGY_ADMIN,
+    ROLE_RESEARCH_ADMIN as _ROLE_RESEARCH_ADMIN,
+    ROLE_ANALYST as _ROLE_ANALYST,
+    ROLE_MODERATOR as _ROLE_MODERATOR,
+    ROLE_AFFILIATE_ADMIN as _ROLE_AFFILIATE_ADMIN,
+)
+
 CALLBACK_PREFIX = "ADMIN_NAV:"
 
 # Canonical short dir keys used in file-browse callbacks (max 3 chars for callback budget).
@@ -15,18 +25,6 @@ DIR_KEY_SNP = "snp"
 
 # Maximum files per page in the file-list UI.
 FILES_PER_PAGE = 8
-
-# ---------------------------------------------------------------------------
-# Canonical role constants — must stay in sync with admin_permissions.py.
-# Duplicated here to avoid circular imports (telegram_admin_ui has no deps).
-# ---------------------------------------------------------------------------
-_ROLE_OWNER = "OWNER"
-_ROLE_PRIMARY_ADMIN = "PRIMARY_ADMIN"
-_ROLE_STRATEGY_ADMIN = "STRATEGY_ADMIN"
-_ROLE_RESEARCH_ADMIN = "RESEARCH_ADMIN"
-_ROLE_ANALYST = "ANALYST"
-_ROLE_MODERATOR = "MODERATOR"
-_ROLE_AFFILIATE_ADMIN = "AFFILIATE_ADMIN"
 
 # Canonical panel action keys — correspond to ADMIN_TREE_MAP_v2.0.0.md §4.
 _PANEL_OPERATIONS = "OPERATIONS"

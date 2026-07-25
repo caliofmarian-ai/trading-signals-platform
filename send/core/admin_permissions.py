@@ -6,6 +6,32 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from core.role_constants import (
+    ROLE_OWNER,
+    ROLE_PRIMARY_ADMIN,
+    ROLE_STRATEGY_ADMIN,
+    ROLE_RESEARCH_ADMIN,
+    ROLE_AFFILIATE_ADMIN,
+    ROLE_MODERATOR,
+    ROLE_ANALYST,
+    ROLE_USER,
+    ALL_ROLES,
+    ROLE_PRIORITY,
+)
+
+# Re-export so callers that imported these from admin_permissions continue to work.
+__all__ = [
+    "ROLE_OWNER",
+    "ROLE_PRIMARY_ADMIN",
+    "ROLE_STRATEGY_ADMIN",
+    "ROLE_RESEARCH_ADMIN",
+    "ROLE_AFFILIATE_ADMIN",
+    "ROLE_MODERATOR",
+    "ROLE_ANALYST",
+    "ROLE_USER",
+    "ALL_ROLES",
+    "ROLE_PRIORITY",
+]
 
 ROLES_CONFIG_PATH = os.getenv("ADMIN_ROLES_CONFIG", "/opt/binarybot/config/admin_roles.json")
 
@@ -15,38 +41,6 @@ ROLES_CONFIG_PATH = os.getenv("ADMIN_ROLES_CONFIG", "/opt/binarybot/config/admin
 PERMISSIONS_CONFIG_PATH = os.getenv(
     "ADMIN_PERMISSIONS_CONFIG", "/opt/binarybot/config/admin_permissions.json"
 )
-
-ROLE_OWNER = "OWNER"
-ROLE_PRIMARY_ADMIN = "PRIMARY_ADMIN"
-ROLE_STRATEGY_ADMIN = "STRATEGY_ADMIN"
-ROLE_RESEARCH_ADMIN = "RESEARCH_ADMIN"
-ROLE_AFFILIATE_ADMIN = "AFFILIATE_ADMIN"
-ROLE_MODERATOR = "MODERATOR"
-ROLE_ANALYST = "ANALYST"
-ROLE_USER = "USER"
-
-ALL_ROLES = {
-    ROLE_OWNER,
-    ROLE_PRIMARY_ADMIN,
-    ROLE_STRATEGY_ADMIN,
-    ROLE_RESEARCH_ADMIN,
-    ROLE_AFFILIATE_ADMIN,
-    ROLE_MODERATOR,
-    ROLE_ANALYST,
-    ROLE_USER,
-}
-
-# Higher index = lower authority
-ROLE_PRIORITY = {
-    ROLE_OWNER: 0,
-    ROLE_PRIMARY_ADMIN: 1,
-    ROLE_STRATEGY_ADMIN: 2,
-    ROLE_RESEARCH_ADMIN: 2,
-    ROLE_ANALYST: 3,
-    ROLE_MODERATOR: 4,
-    ROLE_AFFILIATE_ADMIN: 4,
-    ROLE_USER: 99,
-}
 
 # Canonical permission surface for admin tier.
 PERMISSION_MATRIX: Dict[str, Set[str]] = {
