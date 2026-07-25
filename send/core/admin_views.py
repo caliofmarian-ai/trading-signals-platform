@@ -183,3 +183,165 @@ def render_affiliate_scope(scope: Optional[Dict[str, Any]]) -> str:
         f"Commission %: {_clean(scope.get('commission_percent'))}",
     ]
     return _lines(lines)
+
+
+# ---------------------------------------------------------------------------
+# Canonical panel renderers — one per new canonical admin tree node.
+# Source: ADMIN_TREE_MAP_v2.0.0.md §6; ADMIN_CONTROL_SPEC_v2.0.0.md §9–§14.
+# ---------------------------------------------------------------------------
+
+def render_distribution_panel(
+    admin_chat_id: int,
+    admin_thread_id: int,
+    routes: Optional[List[str]] = None,
+) -> str:
+    """
+    Distribution Control panel view.
+
+    Source: ADMIN_TREE_MAP_v2.0.0.md §6.5; ADMIN_CONTROL_SPEC_v2.0.0.md §9
+    Visibility: read-only; no mutation controls.
+    Data source: environment configuration (no live routing backend available).
+
+    Implementation decision: reads available routing configuration from env vars
+    because no live distribution-router query API exists at this time.
+    """
+    lines: List[str] = [
+        "Distribution Control",
+        "",
+        "Route Status",
+    ]
+
+    if admin_chat_id and admin_chat_id != 0:
+        lines.append(f"Admin control chat: {admin_chat_id}")
+        if admin_thread_id:
+            lines.append(f"Admin thread: {admin_thread_id}")
+    else:
+        lines.append("Admin control chat: not configured")
+
+    if routes:
+        lines.extend(["", "Configured Routes:"])
+        for route in routes:
+            lines.append(f"- {route}")
+    else:
+        lines.extend(["", "No additional routes configured."])
+
+    lines.extend([
+        "",
+        "Publication Controls",
+        "Distribution mutation controls require backend support.",
+        "Review SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md for full specification.",
+    ])
+    return _lines(lines)
+
+
+def render_intelligence_panel(recent_events: Optional[List[Dict[str, Any]]] = None) -> str:
+    """
+    Intelligence panel view.
+
+    Source: ADMIN_TREE_MAP_v2.0.0.md §6.7; ADMIN_CONTROL_SPEC_v2.0.0.md §11
+    Visibility: read-only; no mutation controls.
+    Data source: recent engine decision events.
+
+    Implementation decision: derives intelligence indicators from available engine
+    event data because no dedicated intelligence backend exists at this time.
+    """
+    lines: List[str] = [
+        "Intelligence",
+        "",
+    ]
+
+    events = recent_events or []
+    if not events:
+        lines.append("No recent decision events available.")
+        lines.extend([
+            "",
+            "Intelligence views become available once the engine has processed signals.",
+            "See Decision Visibility panel for the latest decision state.",
+        ])
+        return _lines(lines)
+
+    decisions = [e for e in events if e.get("event_type") in ("decision", "signal_decision")]
+    rejects = [e for e in events if e.get("event_type") in ("reject", "signal_reject")]
+    all_kinds = [str(e.get("data", {}).get("decision_kind", "") or "").upper() for e in events if isinstance(e.get("data"), dict)]
+    open_now_count = sum(1 for k in all_kinds if k == "OPEN_NOW")
+    confirm_count = sum(1 for k in all_kinds if k == "CONFIRM")
+    pre_count = sum(1 for k in all_kinds if k == "PRE")
+    reject_count = len(rejects) + sum(1 for k in all_kinds if k in ("REJECT", "REJECTED"))
+
+    lines.extend([
+        "Decision Intelligence",
+        f"Recent events analyzed: {len(events)}",
+        f"  OPEN_NOW signals: {open_now_count}",
+        f"  CONFIRM signals: {confirm_count}",
+        f"  PRE signals: {pre_count}",
+        f"  Rejections: {reject_count}",
+    ])
+
+    reject_reasons: Dict[str, int] = {}
+    for e in events:
+        data = e.get("data") if isinstance(e.get("data"), dict) else {}
+        reason = (
+            data.get("rejected_reason")
+            or data.get("reject_reason")
+            or (data.get("gates", {}) or {}).get("sr_gate", {}).get("reason")
+        )
+        if reason:
+            reject_reasons[str(reason)] = reject_reasons.get(str(reason), 0) + 1
+
+    if reject_reasons:
+        lines.extend(["", "Rejection Pattern Summary:"])
+        for reason, count in sorted(reject_reasons.items(), key=lambda x: -x[1])[:5]:
+            lines.append(f"  {reason}: {count}")
+
+    lines.extend([
+        "",
+        "Drift / Anomaly Indicators",
+        "Detailed drift detection requires extended history analysis.",
+        "See Research & Analytics panel for performance trends.",
+    ])
+    return _lines(lines)
+
+
+def render_system_health_summary(snapshot: Dict[str, Any]) -> str:
+    """
+    System Health panel summary view.
+
+    Source: ADMIN_TREE_MAP_v2.0.0.md §6.10; ADMIN_CONTROL_SPEC_v2.0.0.md §14
+    Visibility: read-only; sub-navigation to Engine/Diagnose/Audit available.
+    """
+    lines: List[str] = [
+        "System Health",
+        "",
+        f"Overall state: {_clean(snapshot.get('overall_state'))}",
+        f"Runtime phase: {_clean(snapshot.get('runtime_phase'))}",
+        f"Market data: {_clean(snapshot.get('market_data_state'))}",
+        f"Recovery state: {_clean(snapshot.get('recovery_state'))}",
+        f"Telegram: {_clean(snapshot.get('telegram_state'))}",
+        f"FSM state: {_clean(snapshot.get('fsm_state'))}",
+        f"Shadow mode: {_clean(snapshot.get('shadow_mode'))}",
+    ]
+    note = str(snapshot.get("market_data_note") or "").strip()
+    if note:
+        lines.extend(["", f"Note: {note}"])
+    return _lines(lines)
+
+
+def render_security_audit_panel() -> str:
+    """
+    Security & Audit panel view.
+
+    Source: ADMIN_TREE_MAP_v2.0.0.md §6.12
+    Visibility: read-only summary; audit artifact download available via sub-navigation.
+    """
+    return _lines([
+        "Security & Audit",
+        "",
+        "Audit surfaces available in this panel:",
+        "- Runtime Audit: generates a sanitized audit artifact",
+        "- File Browser: browse observability and audit directories",
+        "",
+        "Admin action logs are stored in admin_events.jsonl and admin_proofs.jsonl.",
+        "Use Runtime Audit to generate a downloadable audit artifact.",
+        "",
+        "Role change audit is performed via the Roles & Identity panel.",
+    ])

@@ -28,6 +28,8 @@ from core.admin_commands import (
     get_all_known_symbols,
     _load_active_symbols,
     _find_latest_report_json,
+    _iter_jsonl,
+    ENGINE_EVENTS_PATH,
     REPORTS_DIR,
 )
 from core.admin_permissions import is_owner
@@ -178,9 +180,11 @@ def _format_card(title: str, body: str) -> str:
     return f"{title}\n\n{clean_body}"
 
 
-def _admin_reply_markup(cmd: str, *, owner_private: bool) -> Optional[Dict[str, Any]]:
+def _admin_reply_markup(cmd: str, user_id: int, *, owner_private: bool) -> Optional[Dict[str, Any]]:
+    from core.admin_permissions import get_primary_role
+    role = get_primary_role(user_id)
     if cmd == "/admin":
-        return telegram_admin_ui.admin_home_markup(include_roles_reload=not owner_private)
+        return telegram_admin_ui.admin_home_markup(role=role, include_roles_reload=not owner_private)
     if cmd == "/strategy":
         return telegram_admin_ui.strategy_markup()
     if cmd in {"/thresholds", "/sr", "/spike"}:
@@ -250,7 +254,7 @@ def _render_panel_for_command(cmd: str, user_id: int, *, owner_private: bool) ->
     # Extract base command (without arguments)
     base_cmd = cmd.split()[0].lower()
     title = title_map.get(cmd) or title_map.get(base_cmd, "🛠️ Admin Panel")
-    markup = _admin_reply_markup(base_cmd, owner_private=owner_private)
+    markup = _admin_reply_markup(base_cmd, user_id, owner_private=owner_private)
     return _format_card(title, response_text), markup
 
 
@@ -440,19 +444,158 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             return {"text": f"Log export failed: {err}", "reply_markup": telegram_admin_ui.standard_back_markup()}
         return {"text": "", "reply_markup": None, "__file_path__": path, "__caption__": "binarybot_log.log"}
 
-    if action == "DIAGNOSE":
+    if action == "DIAGNOSE" or action == "OPS_DIAGNOSE" or action == "SH_DIAGNOSE":
         if not _check_rate_limit(user_id, "diagnose"):
             return {"text": "Rate limit exceeded.", "reply_markup": None}
         text = handle_diagnose(user_id)
         return {"text": text, "reply_markup": telegram_admin_ui.diagnose_markup()}
 
-    if action == "AUDIT":
+    if action == "AUDIT" or action == "SH_AUDIT" or action == "SECAUDIT_AUDIT":
         if not _check_rate_limit(user_id, "audit_runtime"):
             return {"text": "Rate limit exceeded.", "reply_markup": None}
         path, err = handle_audit_runtime(user_id)
         if err:
             return {"text": f"Audit failed: {err}", "reply_markup": telegram_admin_ui.standard_back_markup()}
         return {"text": "", "reply_markup": None, "__file_path__": path, "__caption__": "binarybot_audit.json"}
+
+    # ---- Canonical panel actions ----
+    # Source: ADMIN_TREE_MAP_v2.0.0.md §6
+
+    if action == "OPERATIONS":
+        # Operations panel: engine state, ops actions, strategy parameter access.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.2; ADMIN_CONTROL_SPEC_v2.0.0.md §6
+        text, _ = _render_panel_for_command("/engine", user_id, owner_private=owner_private)
+        return {
+            "text": _format_card("⚙️ Operations", text.split("\n\n", 1)[-1] if "\n\n" in text else text),
+            "reply_markup": telegram_admin_ui.operations_markup(),
+        }
+
+    if action == "OPS_ENGINE":
+        text, markup = _render_panel_for_command("/engine", user_id, owner_private=owner_private)
+        return {"text": text, "reply_markup": markup}
+
+    if action == "SYMBOLS_COV":
+        # Symbols & Coverage panel entry point.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.3; ADMIN_CONTROL_SPEC_v2.0.0.md §7
+        try:
+            all_syms = get_all_known_symbols()
+            active = _load_active_symbols()
+            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active)
+        except Exception:
+            markup = telegram_admin_ui.symbols_markup()
+        text, _ = _render_panel_for_command("/symbols list", user_id, owner_private=owner_private)
+        return {"text": _format_card("💱 Symbols & Coverage", text.split("\n\n", 1)[-1] if "\n\n" in text else text), "reply_markup": markup}
+
+    if action == "DECISION_VIS":
+        # Decision Visibility panel: last decision, gate results, rejection reasons.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.4; ADMIN_CONTROL_SPEC_v2.0.0.md §8
+        text, _ = _render_panel_for_command("/debug", user_id, owner_private=owner_private)
+        return {
+            "text": _format_card("🔍 Decision Visibility", text.split("\n\n", 1)[-1] if "\n\n" in text else text),
+            "reply_markup": telegram_admin_ui.decision_visibility_markup(),
+        }
+
+    if action == "DISTRIBUTION":
+        # Distribution Control panel: route status, channel readiness.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.5; ADMIN_CONTROL_SPEC_v2.0.0.md §9
+        from core.admin_views import render_distribution_panel
+        routes = []
+        if ADMIN_CONTROL_CHAT_ID:
+            routes.append(f"Admin control chat: {ADMIN_CONTROL_CHAT_ID}")
+        content = render_distribution_panel(ADMIN_CONTROL_CHAT_ID, ADMIN_CONTROL_THREAD_ID, routes)
+        return {
+            "text": _format_card("📡 Distribution Control", content),
+            "reply_markup": telegram_admin_ui.distribution_markup(),
+        }
+
+    if action == "RESEARCH":
+        # Research & Analytics panel: performance summaries, analytics reports.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.6; ADMIN_CONTROL_SPEC_v2.0.0.md §10
+        text, _ = _render_panel_for_command("/report", user_id, owner_private=owner_private)
+        try:
+            import os as _os
+            report_path = _find_latest_report_json()
+            if report_path and _os.path.isfile(report_path):
+                fname = _os.path.basename(report_path)
+                markup = telegram_admin_ui.research_markup(has_file=True, filename=fname)
+            else:
+                markup = telegram_admin_ui.research_markup()
+        except Exception:
+            markup = telegram_admin_ui.research_markup()
+        return {
+            "text": _format_card("📊 Research & Analytics", text.split("\n\n", 1)[-1] if "\n\n" in text else text),
+            "reply_markup": markup,
+        }
+
+    if action == "INTELLIGENCE":
+        # Intelligence panel: decision intelligence, drift signals, anomaly summaries.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.7; ADMIN_CONTROL_SPEC_v2.0.0.md §11
+        from core.admin_views import render_intelligence_panel
+        try:
+            recent_events: list = []
+            for ev in _iter_recent_engine_events(limit=50):
+                recent_events.append(ev)
+        except Exception:
+            recent_events = []
+        content = render_intelligence_panel(recent_events)
+        return {
+            "text": _format_card("🧠 Intelligence", content),
+            "reply_markup": telegram_admin_ui.intelligence_markup(),
+        }
+
+    if action == "SYSHEALTH":
+        # System Health panel: aggregated health summary.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.10; ADMIN_CONTROL_SPEC_v2.0.0.md §14
+        from core.admin_views import render_system_health_summary
+        snapshot = _build_status_snapshot()
+        content = render_system_health_summary(snapshot)
+        return {
+            "text": _format_card("🩺 System Health", content),
+            "reply_markup": telegram_admin_ui.system_health_markup(),
+        }
+
+    if action == "SH_ENGINE":
+        text, markup = _render_panel_for_command("/engine", user_id, owner_private=owner_private)
+        return {"text": text, "reply_markup": markup}
+
+    if action == "ROLES":
+        # Roles & Identity panel: role info, scope summary, reload option for authorized roles.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.9
+        from core.admin_permissions import get_primary_role, has_permission
+        can_reload = has_permission(user_id, "roles.write") and not owner_private
+        text, _ = _render_panel_for_command("/roles", user_id, owner_private=owner_private)
+        return {
+            "text": text,
+            "reply_markup": telegram_admin_ui.roles_identity_markup(can_reload=can_reload),
+        }
+
+    if action == "GOVDOCS":
+        # Governance & Docs panel: canonical specs, change-control references.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.11
+        if not _check_rate_limit(user_id, "files_list"):
+            return {"text": "Rate limit exceeded.", "reply_markup": None}
+        info = handle_docs_list(user_id)
+        if info.get("error"):
+            return {
+                "text": _format_card("📖 Governance & Docs", f"Error: {info['error']}"),
+                "reply_markup": telegram_admin_ui.standard_back_markup(),
+            }
+        fnames = info.get("filenames", [])
+        summary = f"{len(fnames)} canonical document(s) available." if fnames else "No documents found."
+        return {
+            "text": _format_card("📖 Governance & Docs", summary),
+            "reply_markup": telegram_admin_ui.governance_docs_markup(fnames),
+        }
+
+    if action == "SECAUDIT":
+        # Security & Audit panel: audit trail, admin action logs.
+        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.12
+        from core.admin_views import render_security_audit_panel
+        content = render_security_audit_panel()
+        return {
+            "text": _format_card("🔒 Security & Audit", content),
+            "reply_markup": telegram_admin_ui.security_audit_markup(),
+        }
 
     # ---- Standard navigation ----
     command_for_action = {
@@ -463,6 +606,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         "SR": "/sr",
         "SPIKE": "/spike",
         "SYMBOLS": "/symbols list",
+        "SYMBOLS_COV": "/symbols list",
         "ENGINE": "/engine",
         "DEBUG": "/debug",
         "REPORT": "/report",
@@ -529,6 +673,15 @@ def _build_status_snapshot() -> Dict[str, Any]:
         "shadow_mode": "ON" if bool(status.get("shadow_mode", _env_flag("SHADOW_MODE", default=False))) else "OFF",
         "broker_state": broker_state,
     }
+
+
+def _iter_recent_engine_events(limit: int = 50) -> list:
+    """Return the most recent engine events (up to limit) from engine_events.jsonl."""
+    try:
+        events = list(_iter_jsonl(ENGINE_EVENTS_PATH))
+        return events[-limit:] if len(events) > limit else events
+    except Exception:
+        return []
 
 
 _RETIRED_ADMIN_CALLBACKS: frozenset = frozenset({
