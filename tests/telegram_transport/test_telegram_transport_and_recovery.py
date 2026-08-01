@@ -887,16 +887,19 @@ def test_19_restart_reuses_persisted_active_message(tmp_path, monkeypatch):
     monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "0")
     monkeypatch.setenv("ROLES_CONFIG_PATH", str(roles_file))
     monkeypatch.setenv("RUNTIME_STATUS_PATH", str(status_file))
+    nav_mod = importlib.import_module("core.telegram_app_nav")
+    _bs_mod.telegram_app_nav = nav_mod
 
     pub_start = FakePublisher(start_id=9100)
     monkeypatch.setattr(_bs_mod, "telegram_publisher", pub_start)
-    _nav_mod.clear_active_message(owner_id, chat_id)
+    nav_mod.clear_active_message(owner_id, chat_id)
     _bs_mod.process_update(_msg_update(chat_id, owner_id, "/start"))
-    active_id = _nav_mod.get_active_message(owner_id, chat_id)
+    active_id = nav_mod.get_active_message(owner_id, chat_id)
     assert active_id == 9100
 
-    importlib.reload(_nav_mod)
-    assert _nav_mod.get_active_message(owner_id, chat_id) == active_id
+    nav_mod = importlib.reload(nav_mod)
+    _bs_mod.telegram_app_nav = nav_mod
+    assert nav_mod.get_active_message(owner_id, chat_id) == active_id
 
     pub_after = FakePublisher(start_id=9200)
     monkeypatch.setattr(_bs_mod, "telegram_publisher", pub_after)
@@ -921,20 +924,23 @@ def test_20_restart_with_deleted_message_generates_single_replacement(tmp_path, 
     monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "0")
     monkeypatch.setenv("ROLES_CONFIG_PATH", str(roles_file))
     monkeypatch.setenv("RUNTIME_STATUS_PATH", str(status_file))
+    nav_mod = importlib.import_module("core.telegram_app_nav")
+    _bs_mod.telegram_app_nav = nav_mod
 
     pub_start = FakePublisher(start_id=9300)
     monkeypatch.setattr(_bs_mod, "telegram_publisher", pub_start)
-    _nav_mod.clear_active_message(owner_id, chat_id)
+    nav_mod.clear_active_message(owner_id, chat_id)
     _bs_mod.process_update(_msg_update(chat_id, owner_id, "/start"))
-    active_id = _nav_mod.get_active_message(owner_id, chat_id)
+    active_id = nav_mod.get_active_message(owner_id, chat_id)
     assert active_id == 9300
 
-    importlib.reload(_nav_mod)
-    assert _nav_mod.get_active_message(owner_id, chat_id) == active_id
+    nav_mod = importlib.reload(nav_mod)
+    _bs_mod.telegram_app_nav = nav_mod
+    assert nav_mod.get_active_message(owner_id, chat_id) == active_id
 
     pub_after = FakePublisher(start_id=9400, edit_fail=True, edit_fail_msg="message to edit not found")
     monkeypatch.setattr(_bs_mod, "telegram_publisher", pub_after)
     _bs_mod.process_update(_msg_update(chat_id, owner_id, "/status"))
 
     assert len(pub_after.sends) == 1, "Deleted persisted message must trigger one replacement send"
-    assert _nav_mod.get_active_message(owner_id, chat_id) == 9400
+    assert nav_mod.get_active_message(owner_id, chat_id) == 9400
