@@ -432,10 +432,42 @@ def _format_card(title: str, body: str) -> str:
     return f"{title}\n\n{clean_body}"
 
 
+def _build_canonical_admin_root_page(
+    user_id: int,
+    *,
+    owner_private: bool,
+) -> tuple[str, Optional[Dict[str, Any]]]:
+    """
+    Single source of truth for every admin root entry point.
+
+    Both APP:ADMIN (welcome-page button) and ADMIN_NAV:HOME (back button from
+    any admin sub-panel) must resolve here so the canonical single-message
+    application model is preserved.
+
+    Text:   "⚙️ Admin Control Surface" card with role/identity content.
+    Markup: role-scoped canonical panel tree + trailing "🏠 Home" button
+            (APP:HOME callback) so the user can always return to the welcome page.
+    """
+    role = get_primary_role(user_id)
+    content = handle_admin_command_v2("/admin", user_id)
+    home_cb = telegram_app_nav.make_callback(telegram_app_nav.ACT_HOME)
+    markup = telegram_admin_ui.admin_home_markup(
+        role=role,
+        include_roles_reload=not owner_private,
+        home_button_callback=home_cb,
+    )
+    return _format_card("⚙️ Admin Control Surface", content), markup
+
+
 def _admin_reply_markup(cmd: str, user_id: int, *, owner_private: bool) -> Optional[Dict[str, Any]]:
     role = get_primary_role(user_id)
     if cmd == "/admin":
-        return telegram_admin_ui.admin_home_markup(role=role, include_roles_reload=not owner_private)
+        home_cb = telegram_app_nav.make_callback(telegram_app_nav.ACT_HOME)
+        return telegram_admin_ui.admin_home_markup(
+            role=role,
+            include_roles_reload=not owner_private,
+            home_button_callback=home_cb,
+        )
     if cmd == "/strategy":
         return telegram_admin_ui.strategy_markup()
     if cmd in {"/thresholds", "/sr", "/spike"}:
@@ -482,7 +514,7 @@ def _render_panel_for_command(cmd: str, user_id: int, *, owner_private: bool) ->
 
     response_text = handle_admin_command_v2(cmd, user_id)
     title_map = {
-        "/admin": "🛠️ Admin Panel",
+        "/admin": "⚙️ Admin Control Surface",
         "/strategy": "⚙️ Strategy Panel",
         "/thresholds": "🎯 Thresholds Panel",
         "/sr": "📐 S/R Panel",
@@ -849,8 +881,8 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         }
 
     # ---- Standard navigation ----
+    # HOME is handled below as the canonical admin root entry point.
     command_for_action = {
-        "HOME": "/admin",
         "STATUS": "/status",
         "STRATEGY": "/strategy",
         "THRESHOLDS": "/thresholds",
@@ -865,6 +897,11 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         "AFFILIATE": "/affiliate",
         "RELOAD_ROLES_EXEC": "/roles_reload",
     }.get(action)
+
+    # ---- HOME: canonical admin root — single source of truth ----
+    if action == "HOME":
+        text, markup = _build_canonical_admin_root_page(user_id, owner_private=owner_private)
+        return {"text": text, "reply_markup": markup}
 
     if command_for_action is None:
         return {"text": "Unknown action.", "reply_markup": None}
@@ -1172,14 +1209,34 @@ def process_update(update: Dict[str, Any]) -> None:
                 shadow = _env_flag("SHADOW_MODE", default=False)
                 primary_role = get_primary_role(user_id)
                 first_name = (cb.get("from") or {}).get("first_name", "") or ""
-                page_text, page_markup = telegram_app_nav.handle_app_action(
-                    action=app_action,
-                    user_id=user_id,
-                    primary_role=primary_role,
-                    first_name=first_name,
-                    shadow_mode=shadow,
-                    status_snapshot=_build_status_snapshot() if app_action == telegram_app_nav.ACT_STATUS else None,
-                )
+
+                # APP:ADMIN must resolve to the same canonical admin root as ADMIN_NAV:HOME.
+                # Intercept here so both entry points produce an identical page.
+                if app_action == telegram_app_nav.ACT_ADMIN:
+                    owner_private = _is_owner_private_for_message(msg_obj, user_id)
+                    if is_owner(user_id) or _is_admin_topic_context(msg_obj):
+                        page_text, page_markup = _build_canonical_admin_root_page(
+                            user_id, owner_private=owner_private
+                        )
+                    else:
+                        # Non-owner, non-admin context: informational redirect.
+                        page_text, page_markup = telegram_app_nav.handle_app_action(
+                            action=app_action,
+                            user_id=user_id,
+                            primary_role=primary_role,
+                            first_name=first_name,
+                            shadow_mode=shadow,
+                            status_snapshot=None,
+                        )
+                else:
+                    page_text, page_markup = telegram_app_nav.handle_app_action(
+                        action=app_action,
+                        user_id=user_id,
+                        primary_role=primary_role,
+                        first_name=first_name,
+                        shadow_mode=shadow,
+                        status_snapshot=_build_status_snapshot() if app_action == telegram_app_nav.ACT_STATUS else None,
+                    )
                 _send_interactive_page(
                     msg_obj,
                     user_id,
