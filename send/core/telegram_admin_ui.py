@@ -89,6 +89,7 @@ def admin_home_markup(
     *,
     role: str = "",
     include_roles_reload: bool = False,
+    home_button_callback: Optional[str] = None,
 ) -> dict[str, list[list[dict[str, str]]]]:
     """
     Canonical role-scoped admin home keyboard.
@@ -98,6 +99,10 @@ def admin_home_markup(
     unrecognised, all panels are shown (fail-safe for backward compatibility).
 
     Layout: 2 columns, following canonical panel order.
+
+    ``home_button_callback``: when provided, a "🏠 Home" row is appended as the
+    last row using that exact callback_data string.  Pass the APP:HOME callback
+    so the button navigates back to the role-scoped welcome page.
     """
     allowed = _PANEL_VISIBILITY.get(role, _ALL_PANEL_KEYS)
     visible = [(key, label) for key, label in _CANONICAL_PANELS if key in allowed]
@@ -112,6 +117,9 @@ def admin_home_markup(
 
     if include_roles_reload:
         rows.append([_btn("🔄 Reload Roles", "RELOAD_ROLES_CONFIRM")])
+
+    if home_button_callback is not None:
+        rows.append([{"text": "🏠 Home", "callback_data": home_button_callback}])
 
     return _kb(rows)
 
