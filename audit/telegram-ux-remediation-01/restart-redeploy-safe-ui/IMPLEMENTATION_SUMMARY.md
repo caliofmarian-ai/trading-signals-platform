@@ -1,5 +1,7 @@
 # Implementation Summary
 
+> Status update after deployment: PR #32 automated tests passed, but live acceptance failed. Two separate Admin-related bot messages were visible in one private session, later commands appeared unresponsive, and Issue #31 remains open pending this corrective remediation.
+
 ## Code changes
 - Added versioned Telegram UI active-state artifact support in `send/state_store/state_store.py`:
   - defaults, validator, load/save helpers

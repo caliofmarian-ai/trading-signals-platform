@@ -22,17 +22,18 @@ def _state_file(base_dir: Path) -> Path:
 def test_active_ui_persists_across_module_reload(tmp_path, monkeypatch):
     monkeypatch.setenv("BINARYBOT_BASE_DIR", str(tmp_path))
     monkeypatch.setenv("TELEGRAM_UI_PERSISTENCE", "1")
+    chat_id = -5001
 
     nav = _load_app_nav()
-    nav.clear_active_message(101, chat_id=5001, thread_id=11)
-    nav.clear_active_message(101, chat_id=5001, thread_id=22)
+    nav.clear_active_message(101, chat_id=chat_id, thread_id=11)
+    nav.clear_active_message(101, chat_id=chat_id, thread_id=22)
 
-    nav.set_active_message(101, chat_id=5001, thread_id=11, message_id=7001)
-    nav.set_active_message(101, chat_id=5001, thread_id=22, message_id=7002)
+    nav.set_active_message(101, chat_id=chat_id, thread_id=11, message_id=7001)
+    nav.set_active_message(101, chat_id=chat_id, thread_id=22, message_id=7002)
 
     nav = importlib.reload(nav)
-    assert nav.get_active_message(101, chat_id=5001, thread_id=11) == 7001
-    assert nav.get_active_message(101, chat_id=5001, thread_id=22) == 7002
+    assert nav.get_active_message(101, chat_id=chat_id, thread_id=11) == 7001
+    assert nav.get_active_message(101, chat_id=chat_id, thread_id=22) == 7002
 
 
 def test_corrupt_persistence_does_not_break_startup(tmp_path, monkeypatch):
