@@ -197,11 +197,15 @@ def test_stale_cross_instance_updates_preserve_independent_sessions(tmp_path, mo
 
 def test_repository_executable_sources_do_not_contain_runner_checkout_paths():
     repo_root = Path(__file__).resolve().parents[2]
+    runner_checkout_prefix = "/".join(("", "home", "runner", "work")) + "/"
+    github_workspace_prefix = "/".join(("", "github", "workspace")) + "/"
+    generic_workspace_prefix = "/".join(("", "workspace")) + "/"
+    repo_name_pair = "/".join(("trading-signals-platform", "trading-signals-platform"))
     blocked_tokens = (
-        "/home/runner/work/",
-        "/github/workspace/",
-        "/workspace/",
-        "trading-signals-platform/trading-signals-platform",
+        runner_checkout_prefix,
+        github_workspace_prefix,
+        generic_workspace_prefix,
+        repo_name_pair,
     )
     blocked_files: list[str] = []
     scan_roots = (repo_root / "send", repo_root / "scripts", repo_root / "tests")
