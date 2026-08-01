@@ -26,8 +26,9 @@ Implementation decision record:
 - USER role /start shows the platform introduction and public action buttons.
 - No button press grants any role; roles are resolved exclusively from admin_permissions.
 - All pages have: title, concise description, authorized buttons, no dead end.
-- Active message tracking is per-user, in-memory only. If no tracked message exists,
-  a new message is sent; subsequent navigations edit that message.
+- Active message tracking is scoped by `(chat_id, user_id, thread_id)` and in-memory only.
+  If no tracked message exists for the current session, a new message is sent;
+  subsequent navigations edit that message.
 """
 from __future__ import annotations
 
@@ -75,28 +76,34 @@ def parse_app_action(callback_data: str) -> Optional[str]:
 
 # ---------------------------------------------------------------------------
 # Active UI message state
-# Single-source-of-truth for the "current bot UI message" per user.
+# Single-source-of-truth for the "current bot UI message" per chat/user/thread session.
 # In-memory only; intentionally not persisted (canonical docs do not require
 # persistence of navigation state across restarts).
 # ---------------------------------------------------------------------------
 
-# { user_id: (chat_id, message_id) }
-_active_ui: Dict[int, Tuple[int, int]] = {}
+_SessionKey = Tuple[int, int, Optional[int]]
+
+# { (chat_id, user_id, thread_id): message_id }
+_active_ui: Dict[_SessionKey, int] = {}
 
 
-def set_active_message(user_id: int, chat_id: int, message_id: int) -> None:
-    """Record the message that represents the active UI panel for this user."""
-    _active_ui[user_id] = (chat_id, message_id)
+def _active_session_key(chat_id: int, user_id: int, thread_id: Optional[int] = None) -> _SessionKey:
+    return (int(chat_id), int(user_id), int(thread_id) if thread_id is not None else None)
 
 
-def get_active_message(user_id: int) -> Optional[Tuple[int, int]]:
-    """Return (chat_id, message_id) for the active UI panel, or None."""
-    return _active_ui.get(user_id)
+def set_active_message(user_id: int, chat_id: int, message_id: int, thread_id: Optional[int] = None) -> None:
+    """Record the active UI message for the chat/user/thread session."""
+    _active_ui[_active_session_key(chat_id, user_id, thread_id)] = int(message_id)
 
 
-def clear_active_message(user_id: int) -> None:
-    """Forget the active UI message for this user (e.g. after it is deleted)."""
-    _active_ui.pop(user_id, None)
+def get_active_message(user_id: int, chat_id: int, thread_id: Optional[int] = None) -> Optional[int]:
+    """Return message_id for the active UI panel in this chat/user/thread session."""
+    return _active_ui.get(_active_session_key(chat_id, user_id, thread_id))
+
+
+def clear_active_message(user_id: int, chat_id: int, thread_id: Optional[int] = None) -> None:
+    """Forget active UI message for this chat/user/thread session."""
+    _active_ui.pop(_active_session_key(chat_id, user_id, thread_id), None)
 
 
 # ---------------------------------------------------------------------------
