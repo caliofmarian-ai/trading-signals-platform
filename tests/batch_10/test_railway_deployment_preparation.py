@@ -59,6 +59,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch):
         "ENABLE_TELEGRAM",
         "TELEGRAM_BOT_TOKEN",
         "TWELVE_DATA_API_KEY",
+        "ADMIN_EVENTS_LOG",
         "OBS_DIR",
         "OUTCOMES_LOG",
         "ANALYTICS_DIR",
@@ -103,6 +104,24 @@ def test_initialize_creates_required_directories(railway_root: Path, monkeypatch
         railway_root / "snapshots",
     }
     assert expected.issubset(set(map(Path, summary["created_dirs"])) | {p for p in expected if p.exists()})
+
+
+def test_initialize_creates_required_runtime_files(railway_root: Path, monkeypatch: pytest.MonkeyPatch):
+    _set_base_env(monkeypatch, railway_root)
+    mod = _fresh_import("scripts.railway_init")
+    summary = mod.initialize_for_railway()
+    expected = {
+        railway_root / "observability" / "admin_events.jsonl",
+        railway_root / "observability" / "admin_proofs.jsonl",
+        railway_root / "observability" / "distribution_events.jsonl",
+        railway_root / "observability" / "engine_events.jsonl",
+        railway_root / "observability" / "error_events.jsonl",
+        railway_root / "observability" / "fsm_events.jsonl",
+        railway_root / "outcomes" / "outcomes.jsonl",
+    }
+    assert expected.issubset(set(map(Path, summary["created_files"])) | {p for p in expected if p.exists()})
+    for path in expected:
+        assert path.read_text(encoding="utf-8") == ""
 
 
 def test_initialize_seeds_required_configs(railway_root: Path, monkeypatch: pytest.MonkeyPatch):
@@ -195,6 +214,7 @@ def test_path_contract_derives_all_runtime_paths(railway_root: Path, monkeypatch
     common = _fresh_import("scripts.railway_common")
     env_map = common.apply_path_contract(railway_root)
     assert env_map["OBS_DIR"] == str(railway_root / "observability")
+    assert env_map["ADMIN_EVENTS_LOG"] == str(railway_root / "observability" / "admin_events.jsonl")
     assert env_map["OUTCOMES_LOG"] == str(railway_root / "outcomes" / "outcomes.jsonl")
     assert env_map["ANALYTICS_DIR"] == str(railway_root / "analytics")
     assert env_map["ALGO_PARAMS_PATH"] == str(railway_root / "config" / "algo_params.json")

@@ -3,26 +3,43 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.pycache
 
 # Virtual environments
 venv/
 .venv/
 env/
+ENV/
+
+# Tool caches
+.pytest_cache/
+.cache/
+.mypy_cache/
+.ruff_cache/
 
 # Runtime logs (should not be version-controlled)
 *.log
 engine.log
 
+# Runtime-owned repository paths
+send/observability/*.jsonl
+send/outcomes/*.jsonl
+send/outcomes/open_now_registry.json
+send/outcomes/outcomes_index.json
+send/state/*.json
+send/analytics/cache/
+send/analytics/reports/daily_strategy_audit_*.json
+send/analytics/reports/daily_strategy_audit_*.md
+send/config/.env.example
+send/config/*.bak.*
+
 # Temporary decision/patch working files
 tmp_decision_*
+*.tmp
+*.temp
+*~
 
 # Development archives
 *.zip
-
-# Pytest cache
-.pytest_cache/
-.cache/
 
 # Coverage
 .coverage
@@ -41,7 +58,5 @@ Thumbs.db
 # Lock files written by storage.with_lock
 send/state/.locks/
 
-# Runtime observability output (test artifacts and live write targets)
-# Note: existing empty placeholder *.jsonl files in send/observability/ remain tracked;
-# new test-generated content accumulation is suppressed here.
+# Runtime observability temp output
 send/observability/*.jsonl.tmp
