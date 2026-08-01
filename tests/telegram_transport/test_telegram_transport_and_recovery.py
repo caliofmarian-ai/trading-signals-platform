@@ -871,3 +871,76 @@ def test_18_full_e2e_single_message(tmp_path, monkeypatch):
         assert edit["message_id"] == active_id, (
             f"Edit targeted wrong message: expected {active_id}, got {edit['message_id']}"
         )
+
+
+def test_19_restart_reuses_persisted_active_message(tmp_path, monkeypatch):
+    owner_id = 1991
+    chat_id = owner_id
+
+    roles_file = tmp_path / "roles.json"
+    roles_file.write_text(json.dumps(_make_roles(owner_id)))
+    status_file = tmp_path / "status.json"
+    status_file.write_text(json.dumps({"phase": "running"}))
+
+    monkeypatch.setenv("BINARYBOT_BASE_DIR", str(tmp_path))
+    monkeypatch.setenv("TELEGRAM_UI_PERSISTENCE", "1")
+    monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "0")
+    monkeypatch.setenv("ROLES_CONFIG_PATH", str(roles_file))
+    monkeypatch.setenv("RUNTIME_STATUS_PATH", str(status_file))
+    nav_mod = importlib.import_module("core.telegram_app_nav")
+    _bs_mod.telegram_app_nav = nav_mod
+
+    pub_start = FakePublisher(start_id=9100)
+    monkeypatch.setattr(_bs_mod, "telegram_publisher", pub_start)
+    nav_mod.clear_active_message(owner_id, chat_id)
+    _bs_mod.process_update(_msg_update(chat_id, owner_id, "/start"))
+    active_id = nav_mod.get_active_message(owner_id, chat_id)
+    assert active_id == 9100
+
+    nav_mod = importlib.reload(nav_mod)
+    _bs_mod.telegram_app_nav = nav_mod
+    assert nav_mod.get_active_message(owner_id, chat_id) == active_id
+
+    pub_after = FakePublisher(start_id=9200)
+    monkeypatch.setattr(_bs_mod, "telegram_publisher", pub_after)
+    _bs_mod.process_update(_msg_update(chat_id, owner_id, "/status"))
+
+    assert len(pub_after.sends) == 0, "Restarted runtime must reuse persisted active message"
+    assert len(pub_after.edits) == 1
+    assert pub_after.edits[0]["message_id"] == active_id
+
+
+def test_20_restart_with_deleted_message_generates_single_replacement(tmp_path, monkeypatch):
+    owner_id = 1992
+    chat_id = owner_id
+
+    roles_file = tmp_path / "roles.json"
+    roles_file.write_text(json.dumps(_make_roles(owner_id)))
+    status_file = tmp_path / "status.json"
+    status_file.write_text(json.dumps({"phase": "running"}))
+
+    monkeypatch.setenv("BINARYBOT_BASE_DIR", str(tmp_path))
+    monkeypatch.setenv("TELEGRAM_UI_PERSISTENCE", "1")
+    monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "0")
+    monkeypatch.setenv("ROLES_CONFIG_PATH", str(roles_file))
+    monkeypatch.setenv("RUNTIME_STATUS_PATH", str(status_file))
+    nav_mod = importlib.import_module("core.telegram_app_nav")
+    _bs_mod.telegram_app_nav = nav_mod
+
+    pub_start = FakePublisher(start_id=9300)
+    monkeypatch.setattr(_bs_mod, "telegram_publisher", pub_start)
+    nav_mod.clear_active_message(owner_id, chat_id)
+    _bs_mod.process_update(_msg_update(chat_id, owner_id, "/start"))
+    active_id = nav_mod.get_active_message(owner_id, chat_id)
+    assert active_id == 9300
+
+    nav_mod = importlib.reload(nav_mod)
+    _bs_mod.telegram_app_nav = nav_mod
+    assert nav_mod.get_active_message(owner_id, chat_id) == active_id
+
+    pub_after = FakePublisher(start_id=9400, edit_fail=True, edit_fail_msg="message to edit not found")
+    monkeypatch.setattr(_bs_mod, "telegram_publisher", pub_after)
+    _bs_mod.process_update(_msg_update(chat_id, owner_id, "/status"))
+
+    assert len(pub_after.sends) == 1, "Deleted persisted message must trigger one replacement send"
+    assert nav_mod.get_active_message(owner_id, chat_id) == 9400

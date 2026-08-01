@@ -26,13 +26,16 @@ Implementation decision record:
 - USER role /start shows the platform introduction and public action buttons.
 - No button press grants any role; roles are resolved exclusively from admin_permissions.
 - All pages have: title, concise description, authorized buttons, no dead end.
-- Active message tracking is scoped by `(chat_id, user_id, thread_id)` and in-memory only.
+- Active message tracking is scoped by `(chat_id, user_id, thread_id)` and kept in-memory
+  with minimal persisted metadata for restart/redeploy-safe recovery.
   If no tracked message exists for the current session, a new message is sent;
   subsequent navigations edit that message.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+import os
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.role_constants import (
     ROLE_OWNER,
@@ -46,6 +49,7 @@ from core.role_constants import (
     ROLE_LABELS,
     ADMIN_TIER_ROLES,
 )
+from state_store import state_store
 
 # ---------------------------------------------------------------------------
 # Callback routing
@@ -77,14 +81,151 @@ def parse_app_action(callback_data: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Active UI message state
 # Single-source-of-truth for the "current bot UI message" per chat/user/thread session.
-# In-memory only; intentionally not persisted (canonical docs do not require
-# persistence of navigation state across restarts).
+# Hybrid model:
+# - in-memory authoritative map for runtime-speed lookups
+# - persisted minimal metadata for restart/redeploy-safe recovery
 # ---------------------------------------------------------------------------
 
 _SessionKey = Tuple[int, int, Optional[int]]
 
-# { (chat_id, user_id, thread_id): message_id }
-_active_ui: Dict[_SessionKey, int] = {}
+_ACTIVE_UI_VERSION = "1.0.0"
+_DEFAULT_RETENTION_SECONDS = 7 * 24 * 60 * 60
+_DEFAULT_MAX_SESSIONS = 1000
+
+# { (chat_id, user_id, thread_id): {"message_id": int, "updated_ts": int} }
+_active_ui: Dict[_SessionKey, Dict[str, int]] = {}
+
+
+def _safe_env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except Exception:
+        return default
+    return value if value > 0 else default
+
+
+_ACTIVE_UI_RETENTION_SECONDS = _safe_env_int("TELEGRAM_UI_STATE_RETENTION_SECONDS", _DEFAULT_RETENTION_SECONDS)
+_ACTIVE_UI_MAX_SESSIONS = _safe_env_int("TELEGRAM_UI_STATE_MAX_SESSIONS", _DEFAULT_MAX_SESSIONS)
+
+
+def _now_ts() -> int:
+    return int(time.time())
+
+
+def _persistence_enabled() -> bool:
+    mode = os.getenv("TELEGRAM_UI_PERSISTENCE", "auto").strip().lower()
+    if mode in {"0", "false", "off", "no", "disabled"}:
+        return False
+    if mode in {"1", "true", "on", "yes", "enabled"}:
+        return True
+    return bool(os.getenv("BINARYBOT_BASE_DIR", "").strip())
+
+
+def _log_ui_state_warning(code: str, message: str, context: Dict[str, Any]) -> None:
+    try:
+        from core import observability_logger
+
+        observability_logger.log_warning(
+            warn_type=code,
+            message=message,
+            context=context,
+            source={"module": "telegram_app_nav", "function": "_log_ui_state_warning"},
+        )
+    except Exception:
+        pass
+
+
+def _prune_active_ui(now_ts: Optional[int] = None) -> None:
+    now = now_ts if now_ts is not None else _now_ts()
+    cutoff = now - _ACTIVE_UI_RETENTION_SECONDS
+    stale = [key for key, entry in _active_ui.items() if int(entry.get("updated_ts", 0)) < cutoff]
+    for key in stale:
+        _active_ui.pop(key, None)
+
+    if len(_active_ui) <= _ACTIVE_UI_MAX_SESSIONS:
+        return
+    ordered = sorted(_active_ui.items(), key=lambda item: int(item[1].get("updated_ts", 0)), reverse=True)
+    keep = {key for key, _ in ordered[:_ACTIVE_UI_MAX_SESSIONS]}
+    for key in list(_active_ui):
+        if key not in keep:
+            _active_ui.pop(key, None)
+
+
+def _serialize_active_ui() -> Dict[str, Any]:
+    _prune_active_ui()
+    sessions = [
+        {
+            "chat_id": key[0],
+            "user_id": key[1],
+            "thread_id": key[2],
+            "message_id": int(entry["message_id"]),
+            "updated_ts": int(entry.get("updated_ts", _now_ts())),
+        }
+        for key, entry in _active_ui.items()
+    ]
+    return {
+        "version": _ACTIVE_UI_VERSION,
+        "retention_seconds": _ACTIVE_UI_RETENTION_SECONDS,
+        "max_sessions": _ACTIVE_UI_MAX_SESSIONS,
+        "sessions": sessions,
+        "last_updated_ts": _now_ts(),
+    }
+
+
+def _persist_active_ui() -> None:
+    if not _persistence_enabled():
+        return
+    try:
+        state_store.save_telegram_ui_state(_serialize_active_ui())
+    except Exception as exc:
+        _log_ui_state_warning(
+            "TELEGRAM_UI_STATE_SAVE_FAILED",
+            "Failed to persist Telegram UI active-message state",
+            {"error": str(exc)},
+        )
+
+
+def _load_active_ui() -> None:
+    _active_ui.clear()
+    if not _persistence_enabled():
+        return
+    try:
+        raw_state = state_store.load_telegram_ui_state()
+    except Exception as exc:
+        _log_ui_state_warning(
+            "TELEGRAM_UI_STATE_LOAD_FAILED",
+            "Telegram UI persisted state is unreadable; starting with empty active sessions",
+            {"error": str(exc)},
+        )
+        return
+
+    sessions = raw_state.get("sessions", [])
+    if not isinstance(sessions, list):
+        _log_ui_state_warning(
+            "TELEGRAM_UI_STATE_INVALID_SHAPE",
+            "Telegram UI persisted state has invalid sessions payload; starting empty",
+            {},
+        )
+        return
+    for item in sessions:
+        if not isinstance(item, dict):
+            continue
+        try:
+            key = _active_session_key(
+                int(item.get("chat_id")),
+                int(item.get("user_id")),
+                int(item.get("thread_id")) if item.get("thread_id") is not None else None,
+            )
+            _active_ui[key] = {
+                "message_id": int(item.get("message_id")),
+                "updated_ts": int(item.get("updated_ts") or _now_ts()),
+            }
+        except Exception:
+            continue
+    _prune_active_ui()
 
 
 def _active_session_key(chat_id: int, user_id: int, thread_id: Optional[int] = None) -> _SessionKey:
@@ -93,17 +234,37 @@ def _active_session_key(chat_id: int, user_id: int, thread_id: Optional[int] = N
 
 def set_active_message(user_id: int, chat_id: int, message_id: int, thread_id: Optional[int] = None) -> None:
     """Record the active UI message for the chat/user/thread session."""
-    _active_ui[_active_session_key(chat_id, user_id, thread_id)] = int(message_id)
+    _active_ui[_active_session_key(chat_id, user_id, thread_id)] = {
+        "message_id": int(message_id),
+        "updated_ts": _now_ts(),
+    }
+    _prune_active_ui()
+    _persist_active_ui()
 
 
 def get_active_message(user_id: int, chat_id: int, thread_id: Optional[int] = None) -> Optional[int]:
     """Return message_id for the active UI panel in this chat/user/thread session."""
-    return _active_ui.get(_active_session_key(chat_id, user_id, thread_id))
+    key = _active_session_key(chat_id, user_id, thread_id)
+    entry = _active_ui.get(key)
+    if entry is None:
+        return None
+    now_ts = _now_ts()
+    if int(entry.get("updated_ts", 0)) < (now_ts - _ACTIVE_UI_RETENTION_SECONDS):
+        _active_ui.pop(key, None)
+        _persist_active_ui()
+        return None
+    return int(entry.get("message_id"))
 
 
 def clear_active_message(user_id: int, chat_id: int, thread_id: Optional[int] = None) -> None:
     """Forget active UI message for this chat/user/thread session."""
-    _active_ui.pop(_active_session_key(chat_id, user_id, thread_id), None)
+    key = _active_session_key(chat_id, user_id, thread_id)
+    removed = _active_ui.pop(key, None)
+    if removed is not None:
+        _persist_active_ui()
+
+
+_load_active_ui()
 
 
 # ---------------------------------------------------------------------------
