@@ -25,3 +25,4 @@
 - Live Telegram acceptance reproduced a duplicate-page defect when `/status` was sent repeatedly while Status was already active.
 - Root cause: generic exception fallback in `_send_app_nav_reply()` treated all edit errors as stale-message failures and sent a new message.
 - Remediation: explicit no-op classification for Telegram `Bad Request: message is not modified` so repeated identical requests are idempotent.
+- Follow-up live acceptance then confirmed **incomplete route convergence** remained in admin routing families (`/admin` + `ADMIN_NAV` paths), requiring unified single-message remediation across all interactive routes.
