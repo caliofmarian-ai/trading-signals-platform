@@ -285,8 +285,19 @@ def _send_interactive_page(
                     message_id=new_msg_id,
                     thread_id=thread_id,
                 )
-    except Exception:
-        pass
+    except Exception as send_exc:
+        observability_logger.log_error({
+            "event_type": "error",
+            "data": {
+                "severity": "ERROR",
+                "error_type": "telegram_app_nav_send_failure",
+                "message": str(send_exc),
+                "context": {
+                    "chat_id": chat_id,
+                    "user_id": user_id,
+                },
+            },
+        })
 
 
 def _classify_edit_message_failure(exc: Exception) -> str:
