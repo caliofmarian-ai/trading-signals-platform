@@ -178,10 +178,8 @@ def test_stale_cross_instance_updates_preserve_independent_sessions(tmp_path, mo
     monkeypatch.setenv("TELEGRAM_UI_PERSISTENCE", "1")
     primary = _load_app_nav()
 
-    spec = importlib.util.spec_from_file_location(
-        "core.telegram_app_nav_secondary",
-        "/home/runner/work/trading-signals-platform/trading-signals-platform/send/core/telegram_app_nav.py",
-    )
+    module_file = Path(primary.__file__).resolve()
+    spec = importlib.util.spec_from_file_location("core.telegram_app_nav_secondary", module_file)
     assert spec is not None and spec.loader is not None
     secondary = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(secondary)
@@ -195,3 +193,23 @@ def test_stale_cross_instance_updates_preserve_independent_sessions(tmp_path, mo
     sessions = {(item["chat_id"], item["user_id"], item["thread_id"]): item["message_id"] for item in payload["sessions"]}
     assert sessions[(9001, 201, None)] == 3001
     assert sessions[(9002, 202, None)] == 3002
+
+
+def test_repository_executable_sources_do_not_contain_runner_checkout_paths():
+    repo_root = Path(__file__).resolve().parents[2]
+    blocked_tokens = (
+        "/home/runner/work/",
+        "/github/workspace/",
+        "/workspace/",
+        "trading-signals-platform/trading-signals-platform",
+    )
+    blocked_files: list[str] = []
+    scan_roots = (repo_root / "send", repo_root / "scripts", repo_root / "tests")
+    scan_exts = {".py", ".sh", ".bash", ".zsh"}
+    for scan_root in scan_roots:
+        for path in scan_root.rglob("*"):
+            if path.is_file() and path.suffix in scan_exts:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+                if any(token in text for token in blocked_tokens):
+                    blocked_files.append(str(path.relative_to(repo_root)))
+    assert blocked_files == []
