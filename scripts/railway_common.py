@@ -56,6 +56,7 @@ def runtime_paths(base_dir: Path) -> Dict[str, Path]:
         "observability": observability_dir,
         "analytics": analytics_dir,
         "snapshots": snapshots_dir,
+        "admin_events_log": observability_dir / "admin_events.jsonl",
         "outcomes_log": outcomes_dir / "outcomes.jsonl",
         "engine_events_log": observability_dir / "engine_events.jsonl",
         "fsm_events_log": observability_dir / "fsm_events.jsonl",
@@ -75,6 +76,7 @@ def apply_path_contract(base_dir: Path | None = None) -> Dict[str, str]:
     defaults = {
         "BINARYBOT_BASE_DIR": str(paths["base"]),
         "OBS_DIR": str(paths["observability"]),
+        "ADMIN_EVENTS_LOG": str(paths["admin_events_log"]),
         "OUTCOMES_LOG": str(paths["outcomes_log"]),
         "ANALYTICS_DIR": str(paths["analytics"]),
         "DIST_EVENTS_LOG": str(paths["dist_events_log"]),

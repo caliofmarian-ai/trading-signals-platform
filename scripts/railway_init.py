@@ -88,6 +88,21 @@ def initialize_for_railway(*, base_dir: Path | None = None) -> Dict[str, Any]:
             created_dirs.append(str(extra))
         extra.mkdir(parents=True, exist_ok=True)
 
+    created_files: list[str] = []
+    for key in (
+        "admin_events_log",
+        "admin_proofs_log",
+        "dist_events_log",
+        "engine_events_log",
+        "error_events_log",
+        "fsm_events_log",
+        "outcomes_log",
+    ):
+        path = paths[key]
+        if not path.exists():
+            created_files.append(str(path))
+            path.touch()
+
     seeded: list[str] = []
     preserved: list[str] = []
     source_config_dir = SEND_ROOT / "config"
@@ -112,6 +127,7 @@ def initialize_for_railway(*, base_dir: Path | None = None) -> Dict[str, Any]:
     return {
         "base_dir": str(base_dir),
         "created_dirs": created_dirs,
+        "created_files": created_files,
         "seeded_files": seeded,
         "preserved_files": preserved,
     }
