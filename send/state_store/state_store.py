@@ -29,6 +29,7 @@ _MISSING = object()
 
 FSM_STATE_VERSION = "1.1.0"
 RESTART_GUARD_VERSION = "1.1.0"
+TELEGRAM_UI_STATE_VERSION = "1.0.0"
 
 
 def runtime_root() -> str:
@@ -60,6 +61,7 @@ DIST_STATE_PATH = storage.state_path("dist_state.json")
 RESTART_GUARD_PATH = storage.state_path("restart_guard.json")
 ACTIVE_SYMBOLS_PATH = storage.config_path("active_symbols.json")
 SETTINGS_PATH = storage.config_path("admin_settings.json")
+TELEGRAM_UI_STATE_PATH = storage.state_path("telegram_ui_state.json")
 
 
 def _now_ts() -> int:
@@ -68,6 +70,10 @@ def _now_ts() -> int:
 
 def _legacy_root_path(name: str) -> str:
     return storage.root_path(name)
+
+
+def _telegram_ui_state_path() -> str:
+    return storage.state_path("telegram_ui_state.json")
 
 
 def _safe_int(value: Any, field_name: str) -> Optional[int]:
@@ -196,6 +202,16 @@ def default_settings() -> Dict[str, Any]:
 def default_active_symbols() -> Dict[str, Any]:
     return {
         "symbols": [],
+        "last_updated_ts": _now_ts(),
+    }
+
+
+def default_telegram_ui_state() -> Dict[str, Any]:
+    return {
+        "version": TELEGRAM_UI_STATE_VERSION,
+        "retention_seconds": 7 * 24 * 60 * 60,
+        "max_sessions": 1000,
+        "sessions": [],
         "last_updated_ts": _now_ts(),
     }
 
@@ -369,6 +385,69 @@ def validate_active_symbols(raw: Any) -> Dict[str, Any]:
         if isinstance(value, list):
             normalized[key] = [str(item).strip().upper() for item in value if str(item).strip()]
     normalized["last_updated_ts"] = _safe_int(normalized.get("last_updated_ts"), "last_updated_ts") or _now_ts()
+    return normalized
+
+
+def validate_telegram_ui_state(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise StateValidationError("Telegram UI state must be an object")
+
+    normalized = dict(default_telegram_ui_state())
+    normalized.update(raw)
+
+    version = str(normalized.get("version") or TELEGRAM_UI_STATE_VERSION).strip()
+    if version != TELEGRAM_UI_STATE_VERSION:
+        raise StateValidationError(f"Telegram UI state version is unsupported: {version}")
+
+    retention_seconds = _safe_int(normalized.get("retention_seconds"), "Telegram UI retention_seconds") or (7 * 24 * 60 * 60)
+    if retention_seconds < 60:
+        retention_seconds = 60
+
+    max_sessions = _safe_int(normalized.get("max_sessions"), "Telegram UI max_sessions") or 1000
+    if max_sessions < 1:
+        max_sessions = 1
+
+    sessions_raw = normalized.get("sessions", [])
+    if not isinstance(sessions_raw, list):
+        raise StateValidationError("Telegram UI sessions must be a list")
+
+    now_ts = _now_ts()
+    cutoff_ts = now_ts - retention_seconds
+    dedup: Dict[tuple[int, int, Optional[int]], Dict[str, Any]] = {}
+
+    for item in sessions_raw:
+        if not isinstance(item, dict):
+            raise StateValidationError("Telegram UI session entries must be objects")
+
+        chat_id = _safe_int(item.get("chat_id"), "Telegram UI session chat_id")
+        user_id = _safe_int(item.get("user_id"), "Telegram UI session user_id")
+        message_id = _safe_int(item.get("message_id"), "Telegram UI session message_id")
+        thread_id = _safe_int(item.get("thread_id"), "Telegram UI session thread_id")
+        updated_ts = _safe_int(item.get("updated_ts"), "Telegram UI session updated_ts") or now_ts
+        if chat_id is None or user_id is None or message_id is None:
+            raise StateValidationError("Telegram UI session chat_id/user_id/message_id are required integers")
+        if updated_ts < cutoff_ts:
+            continue
+        key = (chat_id, user_id, thread_id)
+        prior = dedup.get(key)
+        if prior is None or updated_ts >= int(prior["updated_ts"]):
+            dedup[key] = {
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "thread_id": thread_id,
+                "message_id": message_id,
+                "updated_ts": updated_ts,
+            }
+
+    sessions = sorted(dedup.values(), key=lambda row: int(row["updated_ts"]), reverse=True)
+    if len(sessions) > max_sessions:
+        sessions = sessions[:max_sessions]
+
+    normalized["version"] = TELEGRAM_UI_STATE_VERSION
+    normalized["retention_seconds"] = retention_seconds
+    normalized["max_sessions"] = max_sessions
+    normalized["sessions"] = sessions
+    normalized["last_updated_ts"] = _safe_int(normalized.get("last_updated_ts"), "Telegram UI last_updated_ts") or now_ts
     return normalized
 
 
@@ -610,6 +689,36 @@ def save_active_symbols(obj: Dict[str, Any], path: Optional[str] = None) -> None
             validator=validate_active_symbols,
         ),
         obj,
+    )
+
+
+def load_telegram_ui_state(path: Optional[str] = None) -> Dict[str, Any]:
+    canonical_path = path or _telegram_ui_state_path()
+    legacy_paths = () if path else (_legacy_root_path("telegram_ui_state.json"),)
+    return _load_artifact(
+        _artifact(
+            name="telegram_ui_state",
+            canonical_path=canonical_path,
+            legacy_paths=legacy_paths,
+            lock_name="telegram_ui_state",
+            default_factory=default_telegram_ui_state,
+            validator=validate_telegram_ui_state,
+        )
+    )
+
+
+def save_telegram_ui_state(state: Dict[str, Any], path: Optional[str] = None) -> None:
+    canonical_path = path or _telegram_ui_state_path()
+    _save_artifact(
+        _artifact(
+            name="telegram_ui_state",
+            canonical_path=canonical_path,
+            legacy_paths=(),
+            lock_name="telegram_ui_state",
+            default_factory=default_telegram_ui_state,
+            validator=validate_telegram_ui_state,
+        ),
+        state,
     )
 
 
