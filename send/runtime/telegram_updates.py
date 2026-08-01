@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import os
+import json
+import sys
+import threading
 import time
 import requests
 from typing import Dict, Any
@@ -12,6 +15,7 @@ from core import bot_service
 from core import outcome_service
 from core import observability_logger
 from core import telegram_publisher
+from core import telegram_app_nav
 
 
 def _get_bot_token() -> str:
@@ -27,10 +31,53 @@ def _base_url() -> str:
 POLL_INTERVAL = 1.5
 
 LAST_UPDATE_ID = None
+_POLLER_LOCK = threading.Lock()
+_POLLER_STARTED = False
+
+
+def _runtime_instance_id() -> str:
+    for name in ("RUN_ID", "RAILWAY_DEPLOYMENT_ID", "RAILWAY_SERVICE_ID"):
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return f"pid-{os.getpid()}"
+
+
+def _emit_poller_startup(event: str, extra: Dict[str, Any]) -> None:
+    payload = {
+        "event": event,
+        "component": "telegram_poller",
+        "pid": os.getpid(),
+        "runtime_instance_id": _runtime_instance_id(),
+        "deployment_identifier": os.getenv("RAILWAY_DEPLOYMENT_ID", "").strip() or "unknown",
+    }
+    payload.update(extra)
+    observability_logger.log_warning(
+        warn_type="telegram_poller_startup",
+        message="Telegram polling instance state changed",
+        context=payload,
+        source={"module": "telegram_updates", "function": "poll_updates"},
+    )
+    try:
+        print(json.dumps(payload, sort_keys=True), file=sys.stderr, flush=True)
+    except Exception:
+        pass
 
 
 def poll_updates():
-    global LAST_UPDATE_ID
+    global LAST_UPDATE_ID, _POLLER_STARTED
+    with _POLLER_LOCK:
+        if _POLLER_STARTED:
+            _emit_poller_startup("duplicate_poller_blocked", {"last_update_id": LAST_UPDATE_ID})
+            return
+        _POLLER_STARTED = True
+    _emit_poller_startup(
+        "poller_started",
+        {
+            "state_path": telegram_app_nav.get_runtime_diagnostics().get("resolved_state_path"),
+            "active_ui_initialized": telegram_app_nav.get_runtime_diagnostics().get("initialized"),
+        },
+    )
 
     while True:
         try:

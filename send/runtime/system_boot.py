@@ -63,6 +63,7 @@ from runtime.distribution_scheduler import scheduler_loop
 from runtime import runtime_status
 from core import fsm_runtime
 from core import distribution_router
+from core import telegram_app_nav
 from core.observability_logger import build_event, log_event, log_warning, send_control_notification
 from monitoring.restart_guard import mark_graceful_shutdown, record_start
 from snapshots import snapshot_manager
@@ -281,6 +282,22 @@ def start_system() -> None:
         "event_type": "engine_start",
         "message": "BinaryBot runtime starting",
     })
+
+    ui_init = telegram_app_nav.initialize_active_ui_state()
+    log_warning(
+        warn_type="telegram_ui_state_initialized",
+        message="Telegram UI active-state initialization completed before polling startup",
+        context={
+            "initialized": ui_init.get("initialized"),
+            "persistence_enabled": ui_init.get("persistence_enabled"),
+            "runtime_path_ready": ui_init.get("runtime_path_ready"),
+            "resolved_state_path": ui_init.get("resolved_state_path"),
+            "load_result": ui_init.get("load_result"),
+            "pid": ui_init.get("pid"),
+            "deployment_id": ui_init.get("deployment_id"),
+        },
+        source={"module": "system_boot", "function": "start_system"},
+    )
 
     # engine thread
     engine_thread = threading.Thread(target=start_engine, daemon=True)

@@ -11,7 +11,10 @@
 from __future__ import annotations
 
 import os
+import json
+import sys
 import time
+import uuid
 from typing import Optional, Dict, Any
 
 from core import telegram_publisher
@@ -177,6 +180,20 @@ def _send_reply(message: Dict[str, Any], text: str, reply_markup: Optional[Dict[
     )
 
 
+def _emit_interactive_trace(payload: Dict[str, Any], *, critical: bool = False) -> None:
+    observability_logger.log_warning(
+        warn_type="telegram_ui_navigation_trace",
+        message="Telegram interactive navigation decision",
+        context=payload,
+        source={"module": "bot_service", "function": "_send_interactive_page"},
+    )
+    if critical:
+        try:
+            print(json.dumps({"component": "telegram_ui_navigation", **payload}, sort_keys=True), file=sys.stderr, flush=True)
+        except Exception:
+            pass
+
+
 def _edit_interactive_message(
     *,
     chat_id: int,
@@ -185,7 +202,7 @@ def _edit_interactive_message(
     message_id: int,
     text: str,
     reply_markup: Optional[Dict[str, Any]],
-) -> bool:
+) -> tuple[bool, str]:
     """Try to edit a candidate interactive page message.
 
     Returns True when edit is successful or idempotent no-op, else False.
@@ -198,7 +215,7 @@ def _edit_interactive_message(
             message_id=message_id,
             thread_id=thread_id,
         )
-        return True
+        return True, "edited"
     except Exception as exc:
         failure_category = _classify_edit_message_failure(exc)
         if failure_category == "no_op":
@@ -208,14 +225,14 @@ def _edit_interactive_message(
                 message_id=message_id,
                 thread_id=thread_id,
             )
-            return True
+            return True, "no_op"
         if failure_category == "stale":
             telegram_app_nav.clear_active_message(
                 user_id=user_id,
                 chat_id=chat_id,
                 thread_id=thread_id,
             )
-            return False
+            return False, "stale"
         _log_app_nav_edit_failure(
             category=failure_category,
             chat_id=chat_id,
@@ -223,7 +240,7 @@ def _edit_interactive_message(
             message_id=message_id,
             exc=exc,
         )
-        return False
+        return False, failure_category
 
 
 def _send_interactive_page(
@@ -233,6 +250,7 @@ def _send_interactive_page(
     reply_markup: Optional[Dict[str, Any]],
     *,
     preferred_message_id: Optional[int] = None,
+    trace_context: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Canonical single-message delivery path for interactive Telegram pages."""
     target = reply_target_from_message(message)
@@ -241,32 +259,63 @@ def _send_interactive_page(
 
     chat_id = target.chat_id
     thread_id = target.thread_id
+    nav_diag = telegram_app_nav.get_runtime_diagnostics(chat_id=chat_id, user_id=user_id, thread_id=thread_id)
+    trace_payload: Dict[str, Any] = {
+        "correlation_id": (trace_context or {}).get("correlation_id") or uuid.uuid4().hex[:12],
+        "update_id": (trace_context or {}).get("update_id"),
+        "command_family": (trace_context or {}).get("command_family", "unknown"),
+        "chat_id": chat_id,
+        "user_id": user_id,
+        "thread_id": thread_id,
+        "session_key_fingerprint": nav_diag.get("session_key_fingerprint"),
+        "preferred_message_id": preferred_message_id,
+        "active_in_memory_message_id": nav_diag.get("active_message_id"),
+        "persisted_message_id": nav_diag.get("persisted_message_id"),
+        "resolved_state_file_path": nav_diag.get("resolved_state_path"),
+        "save_state_result": nav_diag.get("save_result"),
+        "load_state_result": nav_diag.get("load_result"),
+        "process_id": nav_diag.get("pid"),
+        "runtime_instance_id": nav_diag.get("deployment_id"),
+        "deployment_identifier": nav_diag.get("deployment_id"),
+    }
 
-    if preferred_message_id is not None and _edit_interactive_message(
-        chat_id=chat_id,
-        user_id=user_id,
-        thread_id=thread_id,
-        message_id=preferred_message_id,
-        text=text,
-        reply_markup=reply_markup,
-    ):
-        return
+    if preferred_message_id is not None:
+        edited, category = _edit_interactive_message(
+            chat_id=chat_id,
+            user_id=user_id,
+            thread_id=thread_id,
+            message_id=preferred_message_id,
+            text=text,
+            reply_markup=reply_markup,
+        )
+        if edited:
+            trace_payload["selected_operation"] = "edit_preferred"
+            trace_payload["edit_result_category"] = category
+            _emit_interactive_trace(trace_payload)
+            return
+        trace_payload["preferred_edit_result_category"] = category
 
     active_message_id = telegram_app_nav.get_active_message(
         user_id=user_id,
         chat_id=chat_id,
         thread_id=thread_id,
     )
+    trace_payload["active_in_memory_message_id"] = active_message_id
     if active_message_id is not None and active_message_id != preferred_message_id:
-        if _edit_interactive_message(
+        edited, category = _edit_interactive_message(
             chat_id=chat_id,
             user_id=user_id,
             thread_id=thread_id,
             message_id=active_message_id,
             text=text,
             reply_markup=reply_markup,
-        ):
+        )
+        if edited:
+            trace_payload["selected_operation"] = "edit_active"
+            trace_payload["edit_result_category"] = category
+            _emit_interactive_trace(trace_payload)
             return
+        trace_payload["active_edit_result_category"] = category
 
     try:
         result = telegram_publisher.send_message(
@@ -275,9 +324,12 @@ def _send_interactive_page(
             reply_markup=reply_markup,
             thread_id=thread_id,
         )
+        trace_payload["selected_operation"] = "send_replacement"
+        trace_payload["edit_result_category"] = trace_payload.get("active_edit_result_category") or trace_payload.get("preferred_edit_result_category") or "send_required"
         if isinstance(result, dict):
             msg_result = result.get("result") or {}
             new_msg_id = msg_result.get("message_id")
+            trace_payload["replacement_message_id"] = new_msg_id
             if new_msg_id:
                 telegram_app_nav.set_active_message(
                     user_id=user_id,
@@ -285,7 +337,16 @@ def _send_interactive_page(
                     message_id=new_msg_id,
                     thread_id=thread_id,
                 )
+        _emit_interactive_trace(
+            trace_payload,
+            critical=bool(trace_payload.get("preferred_edit_result_category") == "stale" or trace_payload.get("active_edit_result_category") == "stale"),
+        )
+        return
     except Exception as send_exc:
+        trace_payload["selected_operation"] = "send_replacement"
+        trace_payload["edit_result_category"] = "send_failed"
+        trace_payload["send_error"] = str(send_exc)
+        _emit_interactive_trace(trace_payload, critical=True)
         observability_logger.log_error({
             "event_type": "error",
             "data": {
@@ -295,6 +356,8 @@ def _send_interactive_page(
                 "context": {
                     "chat_id": chat_id,
                     "user_id": user_id,
+                    "thread_id": thread_id,
+                    "session_key_fingerprint": trace_payload.get("session_key_fingerprint"),
                 },
             },
         })
@@ -1010,6 +1073,7 @@ def process_update(update: Dict[str, Any]) -> None:
       - __file_path__ responses → send_document (separate message, canonical exception).
     """
     try:
+        update_id = update.get("update_id")
         msg = update.get("message") or {}
         cb = update.get("callback_query") or {}
         text = ""
@@ -1029,23 +1093,47 @@ def process_update(update: Dict[str, Any]) -> None:
                 page_text, page_markup = telegram_app_nav.render_welcome_page(
                     user_id, primary_role, first_name=first_name, shadow_mode=shadow
                 )
-                _send_app_nav_reply(msg, user_id, page_text, page_markup)
+                _send_interactive_page(
+                    msg,
+                    user_id,
+                    page_text,
+                    page_markup,
+                    trace_context={"update_id": update_id, "command_family": "/start"},
+                )
                 return
 
             if cmd == "/help":
                 primary_role = get_primary_role(user_id)
                 page_text, page_markup = telegram_app_nav.render_help_page(primary_role)
-                _send_app_nav_reply(msg, user_id, page_text, page_markup)
+                _send_interactive_page(
+                    msg,
+                    user_id,
+                    page_text,
+                    page_markup,
+                    trace_context={"update_id": update_id, "command_family": "/help"},
+                )
                 return
 
             if cmd == "/status":
                 page_text, page_markup = telegram_app_nav.render_status_page(_build_status_snapshot())
-                _send_app_nav_reply(msg, user_id, page_text, page_markup)
+                _send_interactive_page(
+                    msg,
+                    user_id,
+                    page_text,
+                    page_markup,
+                    trace_context={"update_id": update_id, "command_family": "/status"},
+                )
                 return
 
             if cmd in admin_command_names():
                 if not _can_run_admin_command(msg, user_id, cmd):
-                    _send_interactive_page(msg, user_id, "Access denied (wrong chat).", None)
+                    _send_interactive_page(
+                        msg,
+                        user_id,
+                        "Access denied (wrong chat).",
+                        None,
+                        trace_context={"update_id": update_id, "command_family": cmd},
+                    )
                     return
                 owner_private = _is_owner_private_for_message(msg, user_id)
                 response_text, reply_markup = _render_panel_for_command(text, user_id, owner_private=owner_private)
@@ -1054,9 +1142,21 @@ def process_update(update: Dict[str, Any]) -> None:
                     file_path = response_text[len("__FILE_PATH__:"):]
                     _send_document_reply(msg, file_path, caption=cmd)
                     return
-                _send_interactive_page(msg, user_id, response_text, reply_markup)
+                _send_interactive_page(
+                    msg,
+                    user_id,
+                    response_text,
+                    reply_markup,
+                    trace_context={"update_id": update_id, "command_family": cmd},
+                )
                 return
-            _send_interactive_page(msg, user_id, UNKNOWN_COMMAND_TEXT, None)
+            _send_interactive_page(
+                msg,
+                user_id,
+                UNKNOWN_COMMAND_TEXT,
+                None,
+                trace_context={"update_id": update_id, "command_family": cmd},
+            )
             return
 
         if cb:
@@ -1086,6 +1186,7 @@ def process_update(update: Dict[str, Any]) -> None:
                     page_text,
                     page_markup,
                     preferred_message_id=message_id,
+                    trace_context={"update_id": update_id, "command_family": f"APP:{app_action}"},
                 )
                 return
 
@@ -1098,6 +1199,7 @@ def process_update(update: Dict[str, Any]) -> None:
                     "Access denied (wrong chat).",
                     None,
                     preferred_message_id=message_id,
+                    trace_context={"update_id": update_id, "command_family": f"ADMIN_NAV:{admin_action}"},
                 )
                 return
 
@@ -1134,6 +1236,7 @@ def process_update(update: Dict[str, Any]) -> None:
                     res.get("text", ""),
                     res.get("reply_markup"),
                     preferred_message_id=message_id,
+                    trace_context={"update_id": update_id, "command_family": data.split(":", 1)[0] if isinstance(data, str) and ":" in data else data},
                 )
 
     except Exception as e:

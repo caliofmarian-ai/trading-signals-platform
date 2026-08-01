@@ -900,6 +900,56 @@ def _fake_threads(monkeypatch: pytest.MonkeyPatch, boot):
     monkeypatch.setattr(boot, "scheduler_loop", lambda: None)
 
 
+def test_system_boot_initializes_active_ui_before_polling(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("RAILWAY_READINESS_EVALUATED", "1")
+    monkeypatch.setenv("ENABLE_TELEGRAM", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:TOKEN")
+    boot = fresh_imports("runtime.system_boot")
+    calls: list[str] = []
+
+    monkeypatch.setattr(boot, "_register_shutdown_hooks", lambda: None)
+    monkeypatch.setattr(
+        boot,
+        "record_start",
+        lambda: {
+            "restart_count": 0,
+            "window_seconds": 60,
+            "max_restarts": 3,
+            "previous_shutdown_kind": "graceful",
+            "recovery_required": False,
+            "crash_loop": False,
+        },
+    )
+    monkeypatch.setattr(boot.fsm_runtime, "load_state", lambda: None)
+    monkeypatch.setattr(boot.distribution_router, "load_state", lambda: None)
+    monkeypatch.setattr(boot.telegram_app_nav, "initialize_active_ui_state", lambda force_reload=False: calls.append("init") or {"initialized": True, "persistence_enabled": True, "runtime_path_ready": True, "resolved_state_path": "/tmp/state.json", "load_result": {"status": "ok"}, "pid": 1, "deployment_id": "test"})
+
+    class _Thread:
+        def __init__(self, target=None, daemon=None):
+            self.target = target
+
+        def start(self):
+            if self.target is boot.poll_updates:
+                assert calls == ["init"]
+                calls.append("poll")
+            return None
+
+    monkeypatch.setattr(boot.threading, "Thread", _Thread)
+    monkeypatch.setattr(boot, "start_engine", lambda: None)
+    monkeypatch.setattr(boot, "poll_updates", lambda: None)
+    monkeypatch.setattr(boot, "scheduler_loop", lambda: None)
+    monkeypatch.setattr(boot.time, "sleep", lambda seconds: (_ for _ in ()).throw(SystemExit(0)))
+
+    with pytest.raises(SystemExit):
+        boot.start_system()
+
+    assert calls[:2] == ["init", "poll"]
+
+
 def test_no_false_bot_live_before_readiness_evaluation(
     canonical_runtime_root: Path,
     fresh_imports,

@@ -707,6 +707,14 @@ def test_13_poller_continues_after_failure(monkeypatch):
     )
 
 
+def test_13b_duplicate_poller_start_is_blocked(monkeypatch):
+    starts: list[dict] = []
+    monkeypatch.setattr(_poller_mod, "_emit_poller_startup", lambda event, extra: starts.append({"event": event, **extra}))
+    monkeypatch.setattr(_poller_mod, "_POLLER_STARTED", True)
+    _poller_mod.poll_updates()
+    assert starts and starts[0]["event"] == "duplicate_poller_blocked"
+
+
 # ---------------------------------------------------------------------------
 # Test 14 — Railway-visible safe log line is emitted
 # ---------------------------------------------------------------------------
@@ -944,3 +952,42 @@ def test_20_restart_with_deleted_message_generates_single_replacement(tmp_path, 
 
     assert len(pub_after.sends) == 1, "Deleted persisted message must trigger one replacement send"
     assert nav_mod.get_active_message(owner_id, chat_id) == 9400
+
+
+def test_21_restart_then_repeated_admin_stays_single_message(tmp_path, monkeypatch):
+    owner_id = 1993
+    chat_id = owner_id
+
+    roles_file = tmp_path / "roles.json"
+    roles_file.write_text(json.dumps(_make_roles(owner_id)))
+    status_file = tmp_path / "status.json"
+    status_file.write_text(json.dumps({"phase": "running"}))
+
+    monkeypatch.setenv("BINARYBOT_BASE_DIR", str(tmp_path))
+    monkeypatch.setenv("TELEGRAM_UI_PERSISTENCE", "1")
+    monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "0")
+    monkeypatch.setenv("ROLES_CONFIG_PATH", str(roles_file))
+    monkeypatch.setenv("RUNTIME_STATUS_PATH", str(status_file))
+    nav_mod = importlib.import_module("core.telegram_app_nav")
+    nav_mod.initialize_active_ui_state(force_reload=True)
+    _bs_mod.telegram_app_nav = nav_mod
+
+    pub_start = FakePublisher(start_id=9500)
+    monkeypatch.setattr(_bs_mod, "telegram_publisher", pub_start)
+    nav_mod.clear_active_message(owner_id, chat_id)
+    _bs_mod.process_update(_msg_update(chat_id, owner_id, "/start"))
+    active_id = nav_mod.get_active_message(owner_id, chat_id)
+    assert active_id == 9500
+
+    nav_mod = importlib.reload(nav_mod)
+    nav_mod.initialize_active_ui_state(force_reload=True)
+    _bs_mod.telegram_app_nav = nav_mod
+
+    pub_after = FakePublisher(start_id=9600)
+    monkeypatch.setattr(_bs_mod, "telegram_publisher", pub_after)
+    _bs_mod.process_update(_msg_update(chat_id, owner_id, "/admin", message_id=301))
+    _bs_mod.process_update(_msg_update(chat_id, owner_id, "/admin", message_id=302))
+
+    assert len(pub_after.sends) == 0
+    assert len(pub_after.edits) == 2
+    assert {edit["message_id"] for edit in pub_after.edits} == {active_id}

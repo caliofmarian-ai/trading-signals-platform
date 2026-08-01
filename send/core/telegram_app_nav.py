@@ -34,6 +34,10 @@ Implementation decision record:
 from __future__ import annotations
 
 import os
+import json
+import hashlib
+import sys
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -49,6 +53,7 @@ from core.role_constants import (
     ROLE_LABELS,
     ADMIN_TIER_ROLES,
 )
+from core.telegram_targets import valid_thread_id
 from state_store import state_store
 
 # ---------------------------------------------------------------------------
@@ -94,6 +99,11 @@ _DEFAULT_MAX_SESSIONS = 1000
 
 # { (chat_id, user_id, thread_id): {"message_id": int, "updated_ts": int} }
 _active_ui: Dict[_SessionKey, Dict[str, int]] = {}
+_active_ui_lock = threading.RLock()
+_active_ui_initialized = False
+_active_ui_init_path: Optional[str] = None
+_last_load_result: Dict[str, Any] = {"status": "not_started"}
+_last_save_result: Dict[str, Any] = {"status": "not_started"}
 
 
 def _safe_env_int(name: str, default: int) -> int:
@@ -124,7 +134,34 @@ def _persistence_enabled() -> bool:
     return bool(os.getenv("BINARYBOT_BASE_DIR", "").strip())
 
 
+def _runtime_path_ready() -> bool:
+    return bool(os.getenv("BINARYBOT_BASE_DIR", "").strip())
+
+
+def _deployment_identifier() -> str:
+    for name in ("RAILWAY_DEPLOYMENT_ID", "RAILWAY_SERVICE_ID", "RUN_ID"):
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return "unknown"
+
+
+def _emit_stdout_diagnostic(code: str, context: Dict[str, Any]) -> None:
+    payload = {
+        "component": "telegram_ui_state",
+        "code": code,
+        "pid": os.getpid(),
+        "deployment_id": _deployment_identifier(),
+        "context": context,
+    }
+    try:
+        print(json.dumps(payload, sort_keys=True), file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
 def _log_ui_state_warning(code: str, message: str, context: Dict[str, Any]) -> None:
+    _emit_stdout_diagnostic(code, context)
     try:
         from core import observability_logger
 
@@ -176,45 +213,76 @@ def _serialize_active_ui() -> Dict[str, Any]:
 
 
 def _persist_active_ui() -> None:
-    if not _persistence_enabled():
+    global _last_save_result
+    if not _persistence_enabled() or not _runtime_path_ready():
+        _last_save_result = {
+            "status": "skipped",
+            "reason": "persistence_disabled_or_runtime_path_unset",
+            "path": _resolved_state_path(),
+        }
         return
     try:
         state_store.save_telegram_ui_state(_serialize_active_ui())
+        _last_save_result = {
+            "status": "ok",
+            "path": _resolved_state_path(),
+            "session_count": len(_active_ui),
+        }
     except Exception as exc:
+        _last_save_result = {
+            "status": "error",
+            "error": str(exc),
+            "path": _resolved_state_path(),
+        }
         _log_ui_state_warning(
             "TELEGRAM_UI_STATE_SAVE_FAILED",
             "Failed to persist Telegram UI active-message state",
-            {"error": str(exc)},
+            _last_save_result,
         )
 
 
-def _load_active_ui() -> None:
+def _resolved_state_path() -> Optional[str]:
+    try:
+        return state_store.telegram_ui_state_path()
+    except Exception:
+        return None
+
+
+def _load_active_ui() -> Dict[str, Any]:
+    global _last_load_result
     _active_ui.clear()
+    path = _resolved_state_path()
     if not _persistence_enabled():
-        return
+        _last_load_result = {"status": "skipped", "reason": "persistence_disabled", "path": path}
+        return dict(_last_load_result)
+    if not _runtime_path_ready():
+        _last_load_result = {"status": "deferred", "reason": "runtime_path_unset", "path": path}
+        return dict(_last_load_result)
     try:
         raw_state = state_store.load_telegram_ui_state()
     except Exception as exc:
+        _last_load_result = {"status": "error", "error": str(exc), "path": path}
         _log_ui_state_warning(
             "TELEGRAM_UI_STATE_LOAD_FAILED",
             "Telegram UI persisted state is unreadable; starting with empty active sessions",
-            {"error": str(exc)},
+            _last_load_result,
         )
-        return
+        return dict(_last_load_result)
 
     sessions = raw_state.get("sessions", [])
     if not isinstance(sessions, list):
+        _last_load_result = {"status": "error", "reason": "invalid_sessions_payload", "path": path}
         _log_ui_state_warning(
             "TELEGRAM_UI_STATE_INVALID_SHAPE",
             "Telegram UI persisted state has invalid sessions payload; starting empty",
-            {},
+            _last_load_result,
         )
-        return
+        return dict(_last_load_result)
     for item in sessions:
         if not isinstance(item, dict):
             continue
         try:
-            key = _active_session_key(
+            key = normalize_session_key(
                 int(item.get("chat_id")),
                 int(item.get("user_id")),
                 int(item.get("thread_id")) if item.get("thread_id") is not None else None,
@@ -226,45 +294,237 @@ def _load_active_ui() -> None:
         except Exception:
             continue
     _prune_active_ui()
+    _last_load_result = {
+        "status": "ok",
+        "path": path,
+        "session_count": len(_active_ui),
+    }
+    return dict(_last_load_result)
 
 
-def _active_session_key(chat_id: int, user_id: int, thread_id: Optional[int] = None) -> _SessionKey:
-    return (int(chat_id), int(user_id), int(thread_id) if thread_id is not None else None)
+def normalize_session_key(chat_id: int, user_id: int, thread_id: Optional[int] = None) -> _SessionKey:
+    normalized_chat_id = int(chat_id)
+    normalized_user_id = int(user_id)
+    normalized_thread_id = valid_thread_id(
+        normalized_chat_id,
+        int(thread_id) if thread_id is not None else None,
+    )
+    return (normalized_chat_id, normalized_user_id, normalized_thread_id)
+
+
+def session_key_fingerprint(chat_id: int, user_id: int, thread_id: Optional[int] = None) -> str:
+    key = normalize_session_key(chat_id, user_id, thread_id)
+    raw = f"{key[0]}:{key[1]}:{key[2]}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def initialize_active_ui_state(*, force_reload: bool = False) -> Dict[str, Any]:
+    global _active_ui_initialized, _active_ui_init_path
+    with _active_ui_lock:
+        path = _resolved_state_path()
+        if (
+            not force_reload
+            and _active_ui_initialized
+            and _active_ui_init_path == path
+            and (_runtime_path_ready() or not _persistence_enabled())
+        ):
+            return get_runtime_diagnostics()
+        load_result = _load_active_ui()
+        _active_ui_initialized = True
+        _active_ui_init_path = path
+        if load_result.get("status") in {"ok", "deferred", "skipped"}:
+            _emit_stdout_diagnostic(
+                "TELEGRAM_UI_STATE_INITIALIZED",
+                {
+                    "status": load_result.get("status"),
+                    "path": path,
+                    "session_count": len(_active_ui),
+                },
+            )
+        return get_runtime_diagnostics()
+
+
+def _ensure_initialized() -> None:
+    path = _resolved_state_path()
+    if not _active_ui_initialized or (_runtime_path_ready() and _active_ui_init_path != path):
+        initialize_active_ui_state(force_reload=True)
+
+
+def get_runtime_diagnostics(
+    *,
+    chat_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    thread_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    with _active_ui_lock:
+        result: Dict[str, Any] = {
+            "initialized": _active_ui_initialized,
+            "persistence_enabled": _persistence_enabled(),
+            "runtime_path_ready": _runtime_path_ready(),
+            "resolved_state_path": _resolved_state_path(),
+            "load_result": dict(_last_load_result),
+            "save_result": dict(_last_save_result),
+            "pid": os.getpid(),
+            "deployment_id": _deployment_identifier(),
+        }
+        if chat_id is not None and user_id is not None:
+            key = normalize_session_key(chat_id, user_id, thread_id)
+            entry = _active_ui.get(key) or {}
+            result.update(
+                {
+                    "session_key": key,
+                    "session_key_fingerprint": session_key_fingerprint(chat_id, user_id, thread_id),
+                    "active_message_id": entry.get("message_id"),
+                    "persisted_message_id": entry.get("message_id"),
+                }
+            )
+        return result
 
 
 def set_active_message(user_id: int, chat_id: int, message_id: int, thread_id: Optional[int] = None) -> None:
     """Record the active UI message for the chat/user/thread session."""
-    _active_ui[_active_session_key(chat_id, user_id, thread_id)] = {
-        "message_id": int(message_id),
-        "updated_ts": _now_ts(),
-    }
-    _prune_active_ui()
-    _persist_active_ui()
+    global _last_save_result
+    _ensure_initialized()
+    with _active_ui_lock:
+        key = normalize_session_key(chat_id, user_id, thread_id)
+        now_ts = _now_ts()
+        _active_ui[key] = {
+            "message_id": int(message_id),
+            "updated_ts": now_ts,
+        }
+        _prune_active_ui(now_ts)
+        if not _persistence_enabled() or not _runtime_path_ready():
+            return
+        try:
+            state_store.update_telegram_ui_state(
+                lambda payload: _merge_session_update(payload, key, int(message_id), now_ts)
+            )
+            _last_save_result = {
+                "status": "ok",
+                "path": _resolved_state_path(),
+                "session_count": len(_active_ui),
+            }
+        except Exception as exc:
+            _last_save_result = {
+                "status": "error",
+                "error": str(exc),
+                "path": _resolved_state_path(),
+            }
+            _log_ui_state_warning(
+                "TELEGRAM_UI_STATE_SAVE_FAILED",
+                "Failed to persist Telegram UI active-message state",
+                _last_save_result,
+            )
 
 
 def get_active_message(user_id: int, chat_id: int, thread_id: Optional[int] = None) -> Optional[int]:
     """Return message_id for the active UI panel in this chat/user/thread session."""
-    key = _active_session_key(chat_id, user_id, thread_id)
-    entry = _active_ui.get(key)
-    if entry is None:
-        return None
-    now_ts = _now_ts()
-    if int(entry.get("updated_ts", 0)) < (now_ts - _ACTIVE_UI_RETENTION_SECONDS):
-        _active_ui.pop(key, None)
-        _persist_active_ui()
-        return None
-    return int(entry.get("message_id"))
+    _ensure_initialized()
+    with _active_ui_lock:
+        key = normalize_session_key(chat_id, user_id, thread_id)
+        entry = _active_ui.get(key)
+        if entry is None:
+            return None
+        now_ts = _now_ts()
+        if int(entry.get("updated_ts", 0)) < (now_ts - _ACTIVE_UI_RETENTION_SECONDS):
+            _active_ui.pop(key, None)
+            if _persistence_enabled() and _runtime_path_ready():
+                try:
+                    state_store.update_telegram_ui_state(lambda payload: _merge_session_clear(payload, key))
+                except Exception as exc:
+                    _log_ui_state_warning(
+                        "TELEGRAM_UI_STATE_SAVE_FAILED",
+                        "Failed to prune stale Telegram UI active-message state",
+                        {"error": str(exc), "path": _resolved_state_path()},
+                    )
+            return None
+        return int(entry.get("message_id"))
 
 
 def clear_active_message(user_id: int, chat_id: int, thread_id: Optional[int] = None) -> None:
     """Forget active UI message for this chat/user/thread session."""
-    key = _active_session_key(chat_id, user_id, thread_id)
-    removed = _active_ui.pop(key, None)
-    if removed is not None:
-        _persist_active_ui()
+    global _last_save_result
+    _ensure_initialized()
+    with _active_ui_lock:
+        key = normalize_session_key(chat_id, user_id, thread_id)
+        removed = _active_ui.pop(key, None)
+        if removed is None:
+            return
+        if not _persistence_enabled() or not _runtime_path_ready():
+            return
+        try:
+            state_store.update_telegram_ui_state(lambda payload: _merge_session_clear(payload, key))
+            _last_save_result = {
+                "status": "ok",
+                "path": _resolved_state_path(),
+                "session_count": len(_active_ui),
+            }
+        except Exception as exc:
+            _last_save_result = {
+                "status": "error",
+                "error": str(exc),
+                "path": _resolved_state_path(),
+            }
+            _log_ui_state_warning(
+                "TELEGRAM_UI_STATE_SAVE_FAILED",
+                "Failed to persist Telegram UI active-message state",
+                _last_save_result,
+            )
 
 
-_load_active_ui()
+def _merge_session_update(
+    payload: Dict[str, Any],
+    key: _SessionKey,
+    message_id: int,
+    updated_ts: int,
+) -> Dict[str, Any]:
+    sessions = [item for item in list(payload.get("sessions", [])) if isinstance(item, dict)]
+    updated = False
+    for item in sessions:
+        if _session_key_from_item(item) == key:
+            item["message_id"] = int(message_id)
+            item["updated_ts"] = int(updated_ts)
+            updated = True
+            break
+    if not updated:
+        sessions.append(
+            {
+                "chat_id": key[0],
+                "user_id": key[1],
+                "thread_id": key[2],
+                "message_id": int(message_id),
+                "updated_ts": int(updated_ts),
+            }
+        )
+    payload["version"] = _ACTIVE_UI_VERSION
+    payload["retention_seconds"] = _ACTIVE_UI_RETENTION_SECONDS
+    payload["max_sessions"] = _ACTIVE_UI_MAX_SESSIONS
+    payload["sessions"] = sessions
+    return payload
+
+
+def _merge_session_clear(payload: Dict[str, Any], key: _SessionKey) -> Dict[str, Any]:
+    payload["sessions"] = [
+        item
+        for item in list(payload.get("sessions", []))
+        if isinstance(item, dict)
+        and _session_key_from_item(item) != key
+    ]
+    payload["version"] = _ACTIVE_UI_VERSION
+    payload["retention_seconds"] = _ACTIVE_UI_RETENTION_SECONDS
+    payload["max_sessions"] = _ACTIVE_UI_MAX_SESSIONS
+    return payload
+
+
+def _session_key_from_item(item: Dict[str, Any]) -> Optional[_SessionKey]:
+    try:
+        return normalize_session_key(
+            int(item.get("chat_id")),
+            int(item.get("user_id")),
+            int(item.get("thread_id")) if item.get("thread_id") is not None else None,
+        )
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
