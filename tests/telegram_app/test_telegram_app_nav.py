@@ -88,41 +88,55 @@ class TestParseAppAction:
 # ---------------------------------------------------------------------------
 
 class TestActiveMessageState:
-    """Canonical §D: Single active UI message per user."""
+    """Canonical §D: Single active UI message per chat/user/thread session."""
 
     def test_set_and_get_active_message(self):
         from core.telegram_app_nav import set_active_message, get_active_message, clear_active_message
-        clear_active_message(99001)
+        clear_active_message(99001, chat_id=100)
         set_active_message(99001, chat_id=100, message_id=200)
-        result = get_active_message(99001)
-        assert result == (100, 200)
+        result = get_active_message(99001, chat_id=100)
+        assert result == 200
 
     def test_get_returns_none_for_unknown_user(self):
         from core.telegram_app_nav import get_active_message, clear_active_message
-        clear_active_message(99002)
-        assert get_active_message(99002) is None
+        clear_active_message(99002, chat_id=100)
+        assert get_active_message(99002, chat_id=100) is None
 
     def test_clear_removes_entry(self):
         from core.telegram_app_nav import set_active_message, get_active_message, clear_active_message
         set_active_message(99003, chat_id=100, message_id=300)
-        clear_active_message(99003)
-        assert get_active_message(99003) is None
+        clear_active_message(99003, chat_id=100)
+        assert get_active_message(99003, chat_id=100) is None
 
     def test_overwrite_updates_message_id(self):
         from core.telegram_app_nav import set_active_message, get_active_message, clear_active_message
-        clear_active_message(99004)
+        clear_active_message(99004, chat_id=100)
         set_active_message(99004, chat_id=100, message_id=400)
         set_active_message(99004, chat_id=100, message_id=500)
-        assert get_active_message(99004) == (100, 500)
+        assert get_active_message(99004, chat_id=100) == 500
 
     def test_different_users_are_independent(self):
         from core.telegram_app_nav import set_active_message, get_active_message, clear_active_message
-        clear_active_message(99005)
-        clear_active_message(99006)
+        clear_active_message(99005, chat_id=10)
+        clear_active_message(99006, chat_id=20)
         set_active_message(99005, chat_id=10, message_id=11)
         set_active_message(99006, chat_id=20, message_id=22)
-        assert get_active_message(99005) == (10, 11)
-        assert get_active_message(99006) == (20, 22)
+        assert get_active_message(99005, chat_id=10) == 11
+        assert get_active_message(99006, chat_id=20) == 22
+
+    def test_same_user_different_chats_are_independent(self):
+        from core.telegram_app_nav import set_active_message, get_active_message
+        set_active_message(99007, chat_id=101, message_id=701)
+        set_active_message(99007, chat_id=202, message_id=702)
+        assert get_active_message(99007, chat_id=101) == 701
+        assert get_active_message(99007, chat_id=202) == 702
+
+    def test_same_chat_user_different_threads_are_independent(self):
+        from core.telegram_app_nav import set_active_message, get_active_message
+        set_active_message(99008, chat_id=-10001, thread_id=42, message_id=801)
+        set_active_message(99008, chat_id=-10001, thread_id=99, message_id=802)
+        assert get_active_message(99008, chat_id=-10001, thread_id=42) == 801
+        assert get_active_message(99008, chat_id=-10001, thread_id=99) == 802
 
 
 # ---------------------------------------------------------------------------

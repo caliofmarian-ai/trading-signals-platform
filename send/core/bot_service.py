@@ -197,17 +197,24 @@ def _send_app_nav_reply(
         return
 
     chat_id = target.chat_id
-    active = telegram_app_nav.get_active_message(user_id)
+    active_message_id = telegram_app_nav.get_active_message(
+        user_id=user_id,
+        chat_id=chat_id,
+        thread_id=target.thread_id,
+    )
 
-    if active is not None and active[0] == chat_id:
+    if active_message_id is not None:
         # Try to edit the existing active message
-        active_message_id = active[1]
         try:
             telegram_publisher.edit_message(chat_id, active_message_id, text, reply_markup)
             return
         except Exception:
             # Edit failed (message too old, deleted, etc.) — fall through to send new
-            telegram_app_nav.clear_active_message(user_id)
+            telegram_app_nav.clear_active_message(
+                user_id=user_id,
+                chat_id=chat_id,
+                thread_id=target.thread_id,
+            )
 
     # Send a new message and track it
     try:
@@ -222,7 +229,12 @@ def _send_app_nav_reply(
             msg_result = result.get("result") or {}
             new_msg_id = msg_result.get("message_id")
             if new_msg_id:
-                telegram_app_nav.set_active_message(user_id, chat_id, new_msg_id)
+                telegram_app_nav.set_active_message(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    message_id=new_msg_id,
+                    thread_id=target.thread_id,
+                )
     except Exception:
         pass
 
@@ -951,7 +963,13 @@ def process_update(update: Dict[str, Any]) -> None:
                     try:
                         telegram_publisher.edit_message(chat_id, message_id, page_text, page_markup)
                         # Update active message tracking to this message
-                        telegram_app_nav.set_active_message(user_id, chat_id, message_id)
+                        target = reply_target_from_message(msg_obj)
+                        telegram_app_nav.set_active_message(
+                            user_id=user_id,
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            thread_id=target.thread_id if target is not None else None,
+                        )
                         return
                     except Exception:
                         pass

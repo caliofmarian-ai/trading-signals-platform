@@ -358,6 +358,48 @@ class TestAppCallbackNavigation:
 
 
 # ---------------------------------------------------------------------------
+# Test: Active UI session key scoping (chat_id + user_id + thread_id)
+# ---------------------------------------------------------------------------
+
+class TestActiveUISessionScoping:
+    def test_same_user_in_different_threads_tracks_separate_active_messages(self, roles_config_file):
+        import importlib, sys
+        with patch.dict(os.environ, {"ADMIN_ROLES_CONFIG": roles_config_file, "SHADOW_MODE": "false",
+                                      "ENABLE_TELEGRAM": "false", "ADMIN_CONTROL_CHAT_ID": "9999"}):
+            for m in list(sys.modules.keys()):
+                if any(x in m for x in ["admin_permissions", "telegram_app_nav", "bot_service"]):
+                    sys.modules.pop(m, None)
+            bot = importlib.import_module("core.bot_service")
+            sends = []
+            edits = []
+            next_message_id = {"value": 100}
+
+            def _fake_send(*a, **kw):
+                next_message_id["value"] += 1
+                sends.append({"text": kw.get("text", ""), "thread_id": kw.get("thread_id")})
+                return {"result": {"message_id": next_message_id["value"]}}
+
+            with patch.object(importlib.import_module("core.telegram_publisher"), "send_message", _fake_send), \
+                 patch.object(importlib.import_module("core.telegram_publisher"), "edit_message",
+                               lambda *a, **kw: edits.append({"args": a, "kwargs": kw})):
+                # First render in thread 42 -> send + track active message for thread 42
+                bot.process_update(_message_update(
+                    chat_id=-100200300, user_id=1000, text="/status", chat_type="supergroup", thread_id=42
+                ))
+                # Same thread -> edit tracked message
+                bot.process_update(_message_update(
+                    chat_id=-100200300, user_id=1000, text="/status", chat_type="supergroup", thread_id=42
+                ))
+                # Different thread -> must send new message (separate session key)
+                bot.process_update(_message_update(
+                    chat_id=-100200300, user_id=1000, text="/status", chat_type="supergroup", thread_id=99
+                ))
+
+        assert len(sends) == 2
+        assert len(edits) == 1
+
+
+# ---------------------------------------------------------------------------
 # Test: Stale and duplicate callback handling
 # ---------------------------------------------------------------------------
 
