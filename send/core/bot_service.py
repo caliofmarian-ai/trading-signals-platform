@@ -177,6 +177,58 @@ def _send_reply(message: Dict[str, Any], text: str, reply_markup: Optional[Dict[
     )
 
 
+def _classify_edit_message_failure(exc: Exception) -> str:
+    """
+    Classify Telegram edit failure outcomes.
+
+    Returns:
+    - "no_op": requested content already active (`message is not modified`)
+    - "stale": message is deleted/not found/inaccessible for editing
+    - "unexpected": any other failure
+    """
+    detail = str(exc).lower()
+    if "message is not modified" in detail:
+        return "no_op"
+
+    stale_markers = (
+        "message to edit not found",
+        "message can't be edited",
+        "message can not be edited",
+        "message to be replied not found",
+        "chat not found",
+        "bot was blocked by the user",
+        "message identifier is not specified",
+    )
+    if any(marker in detail for marker in stale_markers):
+        return "stale"
+
+    return "unexpected"
+
+
+def _log_app_nav_edit_failure(
+    *,
+    category: str,
+    chat_id: int,
+    user_id: int,
+    message_id: int,
+    exc: Exception,
+) -> None:
+    observability_logger.log_error({
+        "event_type": "error",
+        "data": {
+            "severity": "ERROR",
+            "error_type": "telegram_app_nav_edit_failure",
+            "message": str(exc),
+            "context": {
+                "category": category,
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "message_id": message_id,
+            },
+        },
+    })
+
+
 def _send_app_nav_reply(
     message: Dict[str, Any],
     user_id: int,
@@ -208,13 +260,27 @@ def _send_app_nav_reply(
         try:
             telegram_publisher.edit_message(chat_id, active_message_id, text, reply_markup)
             return
-        except Exception:
-            # Edit failed (message too old, deleted, etc.) — fall through to send new
-            telegram_app_nav.clear_active_message(
-                user_id=user_id,
-                chat_id=chat_id,
-                thread_id=target.thread_id,
-            )
+        except Exception as exc:
+            failure_category = _classify_edit_message_failure(exc)
+            if failure_category == "no_op":
+                # Telegram reports no-op as an error; keep active state unchanged.
+                return
+            if failure_category == "stale":
+                # Edit target is stale/deleted/inaccessible for edit; replace it.
+                telegram_app_nav.clear_active_message(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    thread_id=target.thread_id,
+                )
+            else:
+                # Preserve fallback behavior while recording unexpected edit failures.
+                _log_app_nav_edit_failure(
+                    category=failure_category,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    message_id=active_message_id,
+                    exc=exc,
+                )
 
     # Send a new message and track it
     try:

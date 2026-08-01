@@ -399,7 +399,6 @@ class TestActiveUISessionScoping:
         assert len(edits) == 1
 
 
-# ---------------------------------------------------------------------------
 # Test: Stale and duplicate callback handling
 # ---------------------------------------------------------------------------
 
