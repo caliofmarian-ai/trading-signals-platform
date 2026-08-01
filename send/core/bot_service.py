@@ -177,6 +177,118 @@ def _send_reply(message: Dict[str, Any], text: str, reply_markup: Optional[Dict[
     )
 
 
+def _edit_interactive_message(
+    *,
+    chat_id: int,
+    user_id: int,
+    thread_id: Optional[int],
+    message_id: int,
+    text: str,
+    reply_markup: Optional[Dict[str, Any]],
+) -> bool:
+    """Try to edit a candidate interactive page message.
+
+    Returns True when edit is successful or idempotent no-op, else False.
+    """
+    try:
+        telegram_publisher.edit_message(chat_id, message_id, text, reply_markup)
+        telegram_app_nav.set_active_message(
+            user_id=user_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            thread_id=thread_id,
+        )
+        return True
+    except Exception as exc:
+        failure_category = _classify_edit_message_failure(exc)
+        if failure_category == "no_op":
+            telegram_app_nav.set_active_message(
+                user_id=user_id,
+                chat_id=chat_id,
+                message_id=message_id,
+                thread_id=thread_id,
+            )
+            return True
+        if failure_category == "stale":
+            telegram_app_nav.clear_active_message(
+                user_id=user_id,
+                chat_id=chat_id,
+                thread_id=thread_id,
+            )
+            return False
+        _log_app_nav_edit_failure(
+            category=failure_category,
+            chat_id=chat_id,
+            user_id=user_id,
+            message_id=message_id,
+            exc=exc,
+        )
+        return False
+
+
+def _send_interactive_page(
+    message: Dict[str, Any],
+    user_id: int,
+    text: str,
+    reply_markup: Optional[Dict[str, Any]],
+    *,
+    preferred_message_id: Optional[int] = None,
+) -> None:
+    """Canonical single-message delivery path for interactive Telegram pages."""
+    target = reply_target_from_message(message)
+    if target is None:
+        return
+
+    chat_id = target.chat_id
+    thread_id = target.thread_id
+
+    if preferred_message_id is not None and _edit_interactive_message(
+        chat_id=chat_id,
+        user_id=user_id,
+        thread_id=thread_id,
+        message_id=preferred_message_id,
+        text=text,
+        reply_markup=reply_markup,
+    ):
+        return
+
+    active_message_id = telegram_app_nav.get_active_message(
+        user_id=user_id,
+        chat_id=chat_id,
+        thread_id=thread_id,
+    )
+    if active_message_id is not None and active_message_id != preferred_message_id:
+        if _edit_interactive_message(
+            chat_id=chat_id,
+            user_id=user_id,
+            thread_id=thread_id,
+            message_id=active_message_id,
+            text=text,
+            reply_markup=reply_markup,
+        ):
+            return
+
+    try:
+        result = telegram_publisher.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            thread_id=thread_id,
+        )
+        if isinstance(result, dict):
+            msg_result = result.get("result") or {}
+            new_msg_id = msg_result.get("message_id")
+            if new_msg_id:
+                telegram_app_nav.set_active_message(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    message_id=new_msg_id,
+                    thread_id=thread_id,
+                )
+    except Exception:
+        pass
+
+
 def _classify_edit_message_failure(exc: Exception) -> str:
     """
     Classify Telegram edit failure outcomes.
@@ -235,74 +347,7 @@ def _send_app_nav_reply(
     text: str,
     reply_markup: Optional[Dict[str, Any]],
 ) -> None:
-    """
-    Send or edit the single active UI message for this user.
-
-    - If we have an existing active UI message for this user in the same chat,
-      attempt to edit it (single-message navigation pattern, canonical §D).
-    - On edit failure (message deleted/too old), or when no active message exists,
-      send a new message and record it as the active UI message.
-    - File/document delivery bypasses this (separate mechanism, canonical §D).
-    """
-    target = reply_target_from_message(message)
-    if target is None:
-        return
-
-    chat_id = target.chat_id
-    active_message_id = telegram_app_nav.get_active_message(
-        user_id=user_id,
-        chat_id=chat_id,
-        thread_id=target.thread_id,
-    )
-
-    if active_message_id is not None:
-        # Try to edit the existing active message
-        try:
-            telegram_publisher.edit_message(chat_id, active_message_id, text, reply_markup)
-            return
-        except Exception as exc:
-            failure_category = _classify_edit_message_failure(exc)
-            if failure_category == "no_op":
-                # Telegram reports no-op as an error; keep active state unchanged.
-                return
-            if failure_category == "stale":
-                # Edit target is stale/deleted/inaccessible for edit; replace it.
-                telegram_app_nav.clear_active_message(
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    thread_id=target.thread_id,
-                )
-            else:
-                # Preserve fallback behavior while recording unexpected edit failures.
-                _log_app_nav_edit_failure(
-                    category=failure_category,
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    message_id=active_message_id,
-                    exc=exc,
-                )
-
-    # Send a new message and track it
-    try:
-        result = telegram_publisher.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=reply_markup,
-            thread_id=target.thread_id,
-        )
-        # Track the new message if the publisher returns message_id
-        if isinstance(result, dict):
-            msg_result = result.get("result") or {}
-            new_msg_id = msg_result.get("message_id")
-            if new_msg_id:
-                telegram_app_nav.set_active_message(
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    message_id=new_msg_id,
-                    thread_id=target.thread_id,
-                )
-    except Exception:
-        pass
+    _send_interactive_page(message, user_id, text, reply_markup)
 
 
 
@@ -989,7 +1034,7 @@ def process_update(update: Dict[str, Any]) -> None:
 
             if cmd in admin_command_names():
                 if not _can_run_admin_command(msg, user_id, cmd):
-                    _send_reply(msg, "Access denied (wrong chat).")
+                    _send_interactive_page(msg, user_id, "Access denied (wrong chat).", None)
                     return
                 owner_private = _is_owner_private_for_message(msg, user_id)
                 response_text, reply_markup = _render_panel_for_command(text, user_id, owner_private=owner_private)
@@ -998,9 +1043,9 @@ def process_update(update: Dict[str, Any]) -> None:
                     file_path = response_text[len("__FILE_PATH__:"):]
                     _send_document_reply(msg, file_path, caption=cmd)
                     return
-                _send_reply(msg, response_text, reply_markup)
+                _send_interactive_page(msg, user_id, response_text, reply_markup)
                 return
-            _send_reply(msg, UNKNOWN_COMMAND_TEXT)
+            _send_interactive_page(msg, user_id, UNKNOWN_COMMAND_TEXT, None)
             return
 
         if cb:
@@ -1024,29 +1069,25 @@ def process_update(update: Dict[str, Any]) -> None:
                     shadow_mode=shadow,
                     status_snapshot=_build_status_snapshot() if app_action == telegram_app_nav.ACT_STATUS else None,
                 )
-                # Edit the message that held the button (single-message pattern)
-                if message_id:
-                    try:
-                        telegram_publisher.edit_message(chat_id, message_id, page_text, page_markup)
-                        # Update active message tracking to this message
-                        target = reply_target_from_message(msg_obj)
-                        telegram_app_nav.set_active_message(
-                            user_id=user_id,
-                            chat_id=chat_id,
-                            message_id=message_id,
-                            thread_id=target.thread_id if target is not None else None,
-                        )
-                        return
-                    except Exception:
-                        pass
-                # Fallback: send new message
-                _send_app_nav_reply(msg_obj, user_id, page_text, page_markup)
+                _send_interactive_page(
+                    msg_obj,
+                    user_id,
+                    page_text,
+                    page_markup,
+                    preferred_message_id=message_id,
+                )
                 return
 
             # ---- ADMIN_NAV: callbacks — require admin context ----
             admin_action = telegram_admin_ui.parse_action(data)
             if admin_action is not None and not _can_use_admin_callback(msg_obj, user_id):
-                _send_reply(msg_obj, "Access denied (wrong chat).")
+                _send_interactive_page(
+                    msg_obj,
+                    user_id,
+                    "Access denied (wrong chat).",
+                    None,
+                    preferred_message_id=message_id,
+                )
                 return
 
             if admin_action is not None:
@@ -1075,16 +1116,14 @@ def process_update(update: Dict[str, Any]) -> None:
                 if outcome_line and outcome_line not in original_text:
                     new_text = f"{original_text}\n\n{outcome_line}".strip()
                 telegram_publisher.edit_message(chat_id, message_id, new_text, {"inline_keyboard": []})
-            elif message_id and res.get("reply_markup") is not None:
-                try:
-                    telegram_publisher.edit_message(
-                        chat_id, message_id, res.get("text"), res.get("reply_markup")
-                    )
-                except Exception:
-                    # Graceful fallback: send as new message if edit fails
-                    _send_reply(msg_obj, res.get("text", ""), res.get("reply_markup"))
             else:
-                _send_reply(msg_obj, res.get("text", ""), res.get("reply_markup"))
+                _send_interactive_page(
+                    msg_obj,
+                    user_id,
+                    res.get("text", ""),
+                    res.get("reply_markup"),
+                    preferred_message_id=message_id,
+                )
 
     except Exception as e:
         observability_logger.log_error({

@@ -51,6 +51,34 @@ def _capture_send(monkeypatch: pytest.MonkeyPatch, module) -> list[dict]:
     return calls
 
 
+def _capture_send_with_message_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    module,
+    *,
+    start_message_id: int = 5000,
+) -> list[dict]:
+    calls: list[dict] = []
+    next_id = start_message_id
+
+    def _send_message(chat_id: int, text: str, reply_markup=None, thread_id=None):
+        nonlocal next_id
+        calls.append(
+            {
+                "chat_id": chat_id,
+                "text": text,
+                "reply_markup": reply_markup,
+                "thread_id": thread_id,
+                "message_id": next_id,
+            }
+        )
+        result = {"ok": True, "result": {"message_id": next_id}}
+        next_id += 1
+        return result
+
+    monkeypatch.setattr(module.telegram_publisher, "send_message", _send_message)
+    return calls
+
+
 def _capture_edit(monkeypatch: pytest.MonkeyPatch, module, side_effect=None) -> list[dict]:
     calls: list[dict] = []
 
@@ -224,7 +252,7 @@ def test_repeated_identical_status_callback_noop_error_is_idempotent(
     bot.process_update(_callback_update(chat_id=123, user_id=1, data="APP:STATUS", message_id=9001))
     bot.process_update(_callback_update(chat_id=123, user_id=1, data="APP:STATUS", message_id=9001))
 
-    assert len(edits) == 4  # callback edit + active-edit retry, twice
+    assert len(edits) == 2
     assert sends == []
     assert app_nav.get_active_message(user_id=1, chat_id=123) == 9001
 
@@ -272,6 +300,270 @@ def test_stale_active_message_edit_failure_sends_exactly_one_replacement(
     assert len(edits) == 1
     assert edits[0]["message_id"] == 9001
     assert len(sends) == 1
+
+
+def test_navigation_start_status_admin_engine_symbols_keeps_single_ui_message(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    bot = fresh_imports("core.bot_service")
+    sends = _capture_send_with_message_ids(monkeypatch, bot)
+    edits = _capture_edit(monkeypatch, bot)
+
+    for cmd in ("/start", "/status", "/admin", "/engine", "/symbols"):
+        bot.process_update(_message_update(chat_id=1001, user_id=1001, text=cmd))
+
+    assert len(sends) == 1
+    assert len(edits) == 4
+    assert all(call["message_id"] == sends[0]["message_id"] for call in edits)
+
+
+def test_home_admin_engine_admin_edits_single_message(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    bot = fresh_imports("core.bot_service")
+    sends = _capture_send_with_message_ids(monkeypatch, bot)
+    edits = _capture_edit(monkeypatch, bot)
+
+    bot.process_update(_message_update(chat_id=1001, user_id=1001, text="/admin"))
+    active = sends[0]["message_id"]
+    for data in ("ADMIN_NAV:OPERATIONS", "ADMIN_NAV:OPS_ENGINE", "ADMIN_NAV:HOME"):
+        bot.process_update(_callback_update(chat_id=1001, user_id=1001, data=data, message_id=active))
+
+    assert len(sends) == 1
+    assert len(edits) == 3
+    assert all(call["message_id"] == active for call in edits)
+
+
+def test_admin_distribution_symbols_coverage_keeps_single_message(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    bot = fresh_imports("core.bot_service")
+    sends = _capture_send_with_message_ids(monkeypatch, bot)
+    edits = _capture_edit(monkeypatch, bot)
+
+    bot.process_update(_message_update(chat_id=1001, user_id=1001, text="/admin"))
+    active = sends[0]["message_id"]
+    for data in ("ADMIN_NAV:DISTRIBUTION", "ADMIN_NAV:HOME", "ADMIN_NAV:SYMBOLS_COV"):
+        bot.process_update(_callback_update(chat_id=1001, user_id=1001, data=data, message_id=active))
+
+    assert len(sends) == 1
+    assert len(edits) == 3
+    assert all(call["message_id"] == active for call in edits)
+
+
+def test_slash_then_callback_keeps_single_message(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bot = fresh_imports("core.bot_service")
+    sends = _capture_send_with_message_ids(monkeypatch, bot)
+    edits = _capture_edit(monkeypatch, bot)
+
+    bot.process_update(_message_update(chat_id=123, user_id=1, text="/status"))
+    active = sends[0]["message_id"]
+    bot.process_update(_callback_update(chat_id=123, user_id=1, data="APP:HELP", message_id=active))
+
+    assert len(sends) == 1
+    assert len(edits) == 1
+    assert edits[0]["message_id"] == active
+
+
+def test_callback_then_slash_keeps_single_message(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bot = fresh_imports("core.bot_service")
+    sends = _capture_send_with_message_ids(monkeypatch, bot)
+    edits = _capture_edit(monkeypatch, bot)
+
+    bot.process_update(_message_update(chat_id=123, user_id=1, text="/start"))
+    active = sends[0]["message_id"]
+    bot.process_update(_callback_update(chat_id=123, user_id=1, data="APP:STATUS", message_id=active))
+    bot.process_update(_message_update(chat_id=123, user_id=1, text="/help"))
+
+    assert len(sends) == 1
+    assert len(edits) == 2
+    assert all(call["message_id"] == active for call in edits)
+
+
+def test_successful_admin_nav_edit_updates_active_tracking(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    bot = fresh_imports("core.bot_service")
+    app_nav = bot.telegram_app_nav
+    sends = _capture_send_with_message_ids(monkeypatch, bot)
+    edits = _capture_edit(monkeypatch, bot)
+
+    bot.process_update(_message_update(chat_id=1001, user_id=1001, text="/admin"))
+    bot.process_update(_callback_update(chat_id=1001, user_id=1001, data="ADMIN_NAV:ENGINE", message_id=9100))
+    assert app_nav.get_active_message(user_id=1001, chat_id=1001) == 9100
+
+    bot.process_update(_message_update(chat_id=1001, user_id=1001, text="/symbols"))
+    assert sends and len(sends) == 1
+    assert edits[-1]["message_id"] == 9100
+
+
+def test_failed_admin_nav_edit_sends_single_tracked_replacement(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    bot = fresh_imports("core.bot_service")
+    app_nav = bot.telegram_app_nav
+    sends = _capture_send_with_message_ids(monkeypatch, bot)
+    stale_err = RuntimeError(
+        "Telegram edit_message failed: {'ok': False, 'error_code': 400, "
+        "'description': 'Bad Request: message to edit not found'}"
+    )
+    _capture_edit(monkeypatch, bot, side_effect=stale_err)
+
+    bot.process_update(_message_update(chat_id=1001, user_id=1001, text="/admin"))
+    bot.process_update(_callback_update(chat_id=1001, user_id=1001, data="ADMIN_NAV:ENGINE", message_id=9100))
+
+    assert len(sends) == 2
+    assert app_nav.get_active_message(user_id=1001, chat_id=1001) == sends[-1]["message_id"]
+
+
+def test_same_user_different_chats_keep_independent_active_message(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bot = fresh_imports("core.bot_service")
+    sends = _capture_send_with_message_ids(monkeypatch, bot)
+    edits = _capture_edit(monkeypatch, bot)
+
+    bot.process_update(_message_update(chat_id=111, user_id=1, text="/start"))
+    bot.process_update(_message_update(chat_id=222, user_id=1, text="/start"))
+    bot.process_update(_message_update(chat_id=111, user_id=1, text="/help"))
+
+    assert len(sends) == 2
+    assert edits[0]["message_id"] == sends[0]["message_id"]
+
+
+def test_same_user_different_topics_keep_independent_active_message(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bot = fresh_imports("core.bot_service")
+    sends = _capture_send_with_message_ids(monkeypatch, bot)
+    edits = _capture_edit(monkeypatch, bot)
+
+    bot.process_update(_message_update(chat_id=-1001, user_id=1, text="/status", chat_type="supergroup", message_thread_id=10))
+    bot.process_update(_message_update(chat_id=-1001, user_id=1, text="/status", chat_type="supergroup", message_thread_id=20))
+    bot.process_update(_message_update(chat_id=-1001, user_id=1, text="/help", chat_type="supergroup", message_thread_id=10))
+
+    assert len(sends) == 2
+    assert edits[0]["message_id"] == sends[0]["message_id"]
+    assert edits[0]["chat_id"] == -1001
+
+
+def test_file_delivery_remains_separate_document_and_preserves_active_ui(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    bot = fresh_imports("core.bot_service")
+    app_nav = bot.telegram_app_nav
+    sends = _capture_send_with_message_ids(monkeypatch, bot)
+    edits = _capture_edit(monkeypatch, bot)
+    docs: list[dict] = []
+
+    sample = tmp_path / "binarybot_log.log"
+    sample.write_text("ok", encoding="utf-8")
+    monkeypatch.setattr(bot, "handle_log_export", lambda user_id: (str(sample), None))
+    monkeypatch.setattr(
+        bot.telegram_publisher,
+        "send_document",
+        lambda chat_id, file_path, caption=None, thread_id=None: docs.append(
+            {"chat_id": chat_id, "file_path": file_path, "caption": caption, "thread_id": thread_id}
+        ),
+    )
+
+    bot.process_update(_message_update(chat_id=1001, user_id=1001, text="/admin"))
+    active = sends[0]["message_id"]
+    bot.process_update(_callback_update(chat_id=1001, user_id=1001, data="ADMIN_NAV:LOG", message_id=active))
+
+    assert len(docs) == 1
+    assert sends and len(sends) == 1
+    assert edits == []
+    assert app_nav.get_active_message(user_id=1001, chat_id=1001) == active
+
+
+def test_unauthorized_and_rate_limited_callbacks_do_not_accumulate_messages(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "-1001")
+    monkeypatch.setenv("ADMIN_CONTROL_THREAD_ID", "999")
+    bot = fresh_imports("core.bot_service")
+    sends = _capture_send_with_message_ids(monkeypatch, bot)
+    edits = _capture_edit(monkeypatch, bot)
+
+    bot.process_update(_callback_update(chat_id=-1001, user_id=2002, data="ADMIN_NAV:HOME", message_id=55, chat_type="supergroup"))
+    bot.process_update(_callback_update(chat_id=-1001, user_id=2002, data="ADMIN_NAV:HOME", message_id=55, chat_type="supergroup"))
+
+    monkeypatch.setattr(bot, "_check_rate_limit", lambda _user_id, _operation: False)
+    bot.process_update(_callback_update(chat_id=1001, user_id=1001, data="ADMIN_NAV:FILES_HOME", message_id=88))
+
+    assert sends == []
+    assert len(edits) == 3
+    assert all("Access denied" in edits[i]["text"] for i in (0, 1))
+    assert "Rate limit exceeded" in edits[2]["text"]
+
+
+def test_representative_navigation_journey_finishes_with_single_interactive_message(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "1001")
+    bot = fresh_imports("core.bot_service")
+    sends = _capture_send_with_message_ids(monkeypatch, bot)
+    edits = _capture_edit(monkeypatch, bot)
+
+    bot.process_update(_message_update(chat_id=1001, user_id=1001, text="/start"))
+    active = sends[0]["message_id"]
+    journey = [
+        ("message", "/status"),
+        ("message", "/admin"),
+        ("callback", "ADMIN_NAV:OPERATIONS"),
+        ("callback", "ADMIN_NAV:OPS_ENGINE"),
+        ("callback", "ADMIN_NAV:HOME"),
+        ("callback", "ADMIN_NAV:DISTRIBUTION"),
+        ("callback", "ADMIN_NAV:HOME"),
+        ("message", "/symbols"),
+        ("message", "/help"),
+    ]
+    for typ, value in journey:
+        if typ == "message":
+            bot.process_update(_message_update(chat_id=1001, user_id=1001, text=value))
+        else:
+            bot.process_update(_callback_update(chat_id=1001, user_id=1001, data=value, message_id=active))
+
+    assert len(sends) == 1
+    assert len(edits) == len(journey)
+    assert all(call["message_id"] == active for call in edits)
 
 
 def test_unknown_slash_command_gets_explicit_reply(
