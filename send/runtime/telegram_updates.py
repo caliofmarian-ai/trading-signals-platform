@@ -11,6 +11,7 @@ from typing import Dict, Any
 from core import bot_service
 from core import outcome_service
 from core import observability_logger
+from core import telegram_publisher
 
 
 def _get_bot_token() -> str:
@@ -61,14 +62,32 @@ def poll_updates():
                 process_update(update)
 
         except Exception as e:
-
+            # Sanitize the exception string to strip any embedded bot token
+            # (requests exceptions can embed the full URL including the token).
+            safe_error = telegram_publisher._sanitize(str(e))
             observability_logger.log_error({
                 "event_type": "error",
                 "module": "telegram_updates",
-                "error": str(e)
+                "error": safe_error,
             })
 
             time.sleep(3)
+
+
+def _ack_callback(callback_id: Any) -> None:
+    """Send an empty answerCallbackQuery to dismiss the Telegram loading spinner."""
+    if not callback_id:
+        return
+    try:
+        telegram_publisher.answer_callback_query(str(callback_id))
+    except Exception as e:
+        safe_error = telegram_publisher._sanitize(str(e))
+        observability_logger.log_warning(
+            warn_type="callback_ack_failed",
+            message="Failed to acknowledge Telegram callback",
+            context={"callback_query_id": str(callback_id), "error": safe_error},
+            source={"module": "telegram_updates", "function": "_ack_callback"},
+        )
 
 
 def process_update(update: Dict[str, Any]):
@@ -101,8 +120,12 @@ def process_update(update: Dict[str, Any]):
             )
             _answer_callback_query(callback_id, result)
             return
- 
+
         bot_service.process_update(update)
+        # Acknowledge APP: and ADMIN_NAV: callbacks so Telegram dismisses the
+        # loading spinner.  VOTE_ callbacks are already acknowledged above via
+        # _answer_callback_query which encodes the outcome text.
+        _ack_callback(callback_id)
 
 
 def _answer_callback_query(callback_id: Any, result: Dict[str, Any]) -> None:
