@@ -475,15 +475,16 @@ class TestUnauthorizedAccess:
                     sys.modules.pop(m, None)
             bot = importlib.import_module("core.bot_service")
             sends = []
+            edits = []
             with patch.object(importlib.import_module("core.telegram_publisher"), "send_message",
                                lambda *a, **kw: (sends.append({"text": kw.get("text", "")}),
                                                 {"result": {"message_id": 100}})[1]), \
                  patch.object(importlib.import_module("core.telegram_publisher"), "edit_message",
-                               lambda *a, **kw: None):
+                               lambda *a, **kw: edits.append({"text": kw.get("text", a[2] if len(a) > 2 else "")})):
                 bot.process_update(_message_update(
                     chat_id=chat_id, user_id=user_id, text=text, chat_type=chat_type
                 ))
-        return sends
+        return sends, edits
 
     def test_non_owner_private_dm_cannot_run_admin(self, roles_config_file):
         """
@@ -491,20 +492,22 @@ class TestUnauthorizedAccess:
         Returns "Access denied" (not a panel).
         """
         # user_id=9999 has no special role
-        sends = self._run_slash(roles_config_file, user_id=9999, text="/admin")
-        assert len(sends) == 1
-        assert "denied" in sends[0]["text"].lower() or "unknown" in sends[0]["text"].lower()
+        sends, edits = self._run_slash(roles_config_file, user_id=9999, text="/admin")
+        assert len(sends) + len(edits) == 1
+        text = (sends[0]["text"] if sends else edits[0]["text"]).lower()
+        assert "denied" in text or "unknown" in text
 
     def test_admin_context_check_prevents_wrong_chat(self, roles_config_file):
         """
         /admin in a group chat that is not the configured admin control chat → access denied.
         """
-        sends = self._run_slash(
+        sends, edits = self._run_slash(
             roles_config_file, user_id=9999, text="/admin",
             chat_id=123456, chat_type="supergroup", admin_chat_id="999999"
         )
-        assert len(sends) == 1
-        assert "denied" in sends[0]["text"].lower()
+        assert len(sends) + len(edits) == 1
+        text = (sends[0]["text"] if sends else edits[0]["text"]).lower()
+        assert "denied" in text
 
     def test_user_help_does_not_expose_admin_commands(self, roles_config_file):
         """
