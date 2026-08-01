@@ -19,6 +19,20 @@ def _message_update(chat_id: int, user_id: int, text: str, *, chat_type: str = "
     return {"message": message}
 
 
+def _callback_update(chat_id: int, user_id: int, data: str, *, message_id: int = 2001, chat_type: str = "private"):
+    return {
+        "callback_query": {
+            "from": {"id": user_id},
+            "data": data,
+            "message": {
+                "chat": {"id": chat_id, "type": chat_type},
+                "message_id": message_id,
+                "text": "previous page text",
+            },
+        }
+    }
+
+
 def _capture_send(monkeypatch: pytest.MonkeyPatch, module) -> list[dict]:
     calls: list[dict] = []
 
@@ -34,6 +48,26 @@ def _capture_send(monkeypatch: pytest.MonkeyPatch, module) -> list[dict]:
         return {"ok": True}
 
     monkeypatch.setattr(module.telegram_publisher, "send_message", _send_message)
+    return calls
+
+
+def _capture_edit(monkeypatch: pytest.MonkeyPatch, module, side_effect=None) -> list[dict]:
+    calls: list[dict] = []
+
+    def _edit_message(chat_id: int, message_id: int, text: str, reply_markup=None):
+        calls.append(
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+                "reply_markup": reply_markup,
+            }
+        )
+        if side_effect is not None:
+            raise side_effect
+        return {"ok": True}
+
+    monkeypatch.setattr(module.telegram_publisher, "edit_message", _edit_message)
     return calls
 
 
@@ -147,6 +181,97 @@ def test_status_command_market_data_limited_state(
     assert "Overall: MARKET_DATA_LIMITED" in text
     assert "Market data: MARKET_DATA_LIMITED" in text
     assert "429" in text
+
+
+def test_repeated_status_noop_error_does_not_send_duplicate_or_clear_active(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bot = fresh_imports("core.bot_service")
+    app_nav = bot.telegram_app_nav
+    sends = _capture_send(monkeypatch, bot)
+    noop_err = RuntimeError(
+        "Telegram edit_message failed: {'ok': False, 'error_code': 400, "
+        "'description': 'Bad Request: message is not modified'}"
+    )
+    edits = _capture_edit(monkeypatch, bot, side_effect=noop_err)
+
+    app_nav.set_active_message(user_id=1, chat_id=123, message_id=9001)
+    bot.process_update(_message_update(chat_id=123, user_id=1, text="/status"))
+
+    assert len(edits) == 1
+    assert edits[0]["message_id"] == 9001
+    assert sends == []
+    assert app_nav.get_active_message(user_id=1, chat_id=123) == 9001
+
+
+def test_repeated_identical_status_callback_noop_error_is_idempotent(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bot = fresh_imports("core.bot_service")
+    app_nav = bot.telegram_app_nav
+    sends = _capture_send(monkeypatch, bot)
+    noop_err = RuntimeError(
+        "Telegram edit_message failed: {'ok': False, 'error_code': 400, "
+        "'description': 'Bad Request: message is not modified'}"
+    )
+    edits = _capture_edit(monkeypatch, bot, side_effect=noop_err)
+
+    app_nav.set_active_message(user_id=1, chat_id=123, message_id=9001)
+    bot.process_update(_callback_update(chat_id=123, user_id=1, data="APP:STATUS", message_id=9001))
+    bot.process_update(_callback_update(chat_id=123, user_id=1, data="APP:STATUS", message_id=9001))
+
+    assert len(edits) == 4  # callback edit + active-edit retry, twice
+    assert sends == []
+    assert app_nav.get_active_message(user_id=1, chat_id=123) == 9001
+
+
+def test_duplicate_rapid_status_requests_with_noop_error_stay_single_message(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bot = fresh_imports("core.bot_service")
+    app_nav = bot.telegram_app_nav
+    sends = _capture_send(monkeypatch, bot)
+    noop_err = RuntimeError(
+        "Telegram edit_message failed: {'ok': False, 'error_code': 400, "
+        "'description': 'Bad Request: message is not modified'}"
+    )
+    edits = _capture_edit(monkeypatch, bot, side_effect=noop_err)
+
+    app_nav.set_active_message(user_id=1, chat_id=123, message_id=9001)
+    for _ in range(5):
+        bot.process_update(_message_update(chat_id=123, user_id=1, text="/status"))
+
+    assert len(edits) == 5
+    assert sends == []
+    assert app_nav.get_active_message(user_id=1, chat_id=123) == 9001
+
+
+def test_stale_active_message_edit_failure_sends_exactly_one_replacement(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bot = fresh_imports("core.bot_service")
+    app_nav = bot.telegram_app_nav
+    sends = _capture_send(monkeypatch, bot)
+    stale_err = RuntimeError(
+        "Telegram edit_message failed: {'ok': False, 'error_code': 400, "
+        "'description': 'Bad Request: message to edit not found'}"
+    )
+    edits = _capture_edit(monkeypatch, bot, side_effect=stale_err)
+
+    app_nav.set_active_message(user_id=1, chat_id=123, message_id=9001)
+    bot.process_update(_message_update(chat_id=123, user_id=1, text="/status"))
+
+    assert len(edits) == 1
+    assert edits[0]["message_id"] == 9001
+    assert len(sends) == 1
 
 
 def test_unknown_slash_command_gets_explicit_reply(
