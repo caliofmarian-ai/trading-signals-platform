@@ -1,5 +1,7 @@
 # Live Acceptance Checklist
 
+> Historical note: the PR #32 live run failed this checklist in production. Two bot application messages became visible in one private session and later commands appeared unresponsive. Issue #31 remains open.
+
 - [ ] Deploy branch to Railway with persistent volume attached.
 - [ ] Open `/start`, verify one interactive UI message is tracked.
 - [ ] Restart service (no code change), trigger `/status`, confirm existing UI message is edited (no extra message).

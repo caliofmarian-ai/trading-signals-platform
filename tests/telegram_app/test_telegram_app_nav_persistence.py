@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
 import sys
 import threading
@@ -21,17 +22,18 @@ def _state_file(base_dir: Path) -> Path:
 def test_active_ui_persists_across_module_reload(tmp_path, monkeypatch):
     monkeypatch.setenv("BINARYBOT_BASE_DIR", str(tmp_path))
     monkeypatch.setenv("TELEGRAM_UI_PERSISTENCE", "1")
+    chat_id = -5001
 
     nav = _load_app_nav()
-    nav.clear_active_message(101, chat_id=5001, thread_id=11)
-    nav.clear_active_message(101, chat_id=5001, thread_id=22)
+    nav.clear_active_message(101, chat_id=chat_id, thread_id=11)
+    nav.clear_active_message(101, chat_id=chat_id, thread_id=22)
 
-    nav.set_active_message(101, chat_id=5001, thread_id=11, message_id=7001)
-    nav.set_active_message(101, chat_id=5001, thread_id=22, message_id=7002)
+    nav.set_active_message(101, chat_id=chat_id, thread_id=11, message_id=7001)
+    nav.set_active_message(101, chat_id=chat_id, thread_id=22, message_id=7002)
 
     nav = importlib.reload(nav)
-    assert nav.get_active_message(101, chat_id=5001, thread_id=11) == 7001
-    assert nav.get_active_message(101, chat_id=5001, thread_id=22) == 7002
+    assert nav.get_active_message(101, chat_id=chat_id, thread_id=11) == 7001
+    assert nav.get_active_message(101, chat_id=chat_id, thread_id=22) == 7002
 
 
 def test_corrupt_persistence_does_not_break_startup(tmp_path, monkeypatch):
@@ -110,3 +112,108 @@ def test_concurrent_updates_are_safe_and_atomic(tmp_path, monkeypatch):
     assert isinstance(payload.get("sessions"), list)
     tmp_files = list(state_file.parent.glob(".tmp_*.json"))
     assert not tmp_files
+
+
+def test_explicit_initialization_loads_after_import_when_runtime_path_is_late(tmp_path, monkeypatch):
+    state_file = _state_file(tmp_path)
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(
+        json.dumps(
+            {
+                "version": "1.0.0",
+                "retention_seconds": 604800,
+                "max_sessions": 1000,
+                "sessions": [
+                    {"chat_id": 77, "user_id": 88, "thread_id": None, "message_id": 9991, "updated_ts": int(time.time())}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("BINARYBOT_BASE_DIR", raising=False)
+    monkeypatch.setenv("TELEGRAM_UI_PERSISTENCE", "auto")
+
+    nav = _load_app_nav()
+    assert nav.get_runtime_diagnostics()["load_result"]["status"] in {"not_started", "deferred"}
+    assert nav.get_active_message(88, chat_id=77) is None
+
+    monkeypatch.setenv("BINARYBOT_BASE_DIR", str(tmp_path))
+    diag = nav.initialize_active_ui_state(force_reload=True)
+    assert diag["load_result"]["status"] == "ok"
+    assert nav.get_active_message(88, chat_id=77) == 9991
+
+
+def test_private_chat_session_key_normalization_is_stable(tmp_path, monkeypatch):
+    monkeypatch.setenv("BINARYBOT_BASE_DIR", str(tmp_path))
+    monkeypatch.setenv("TELEGRAM_UI_PERSISTENCE", "1")
+    nav = _load_app_nav()
+
+    key_from_message = nav.normalize_session_key(5001, 101, None)
+    key_from_callback = nav.normalize_session_key(5001, 101)
+    key_from_zero = nav.normalize_session_key(5001, 101, 0)
+
+    state_file = _state_file(tmp_path)
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(
+        json.dumps(
+            {
+                "version": "1.0.0",
+                "retention_seconds": 604800,
+                "max_sessions": 1000,
+                "sessions": [
+                    {"chat_id": 5001, "user_id": 101, "thread_id": None, "message_id": 7001, "updated_ts": int(time.time())}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    nav.initialize_active_ui_state(force_reload=True)
+    key_from_persisted = nav.get_runtime_diagnostics(chat_id=5001, user_id=101)["session_key"]
+
+    assert key_from_message == key_from_callback == key_from_zero == key_from_persisted == (5001, 101, None)
+
+
+def test_stale_cross_instance_updates_preserve_independent_sessions(tmp_path, monkeypatch):
+    monkeypatch.setenv("BINARYBOT_BASE_DIR", str(tmp_path))
+    monkeypatch.setenv("TELEGRAM_UI_PERSISTENCE", "1")
+    primary = _load_app_nav()
+
+    module_file = Path(primary.__file__).resolve()
+    spec = importlib.util.spec_from_file_location("core.telegram_app_nav_secondary", module_file)
+    assert spec is not None and spec.loader is not None
+    secondary = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(secondary)
+
+    primary.initialize_active_ui_state(force_reload=True)
+    secondary.initialize_active_ui_state(force_reload=True)
+    primary.set_active_message(201, chat_id=9001, message_id=3001)
+    secondary.set_active_message(202, chat_id=9002, message_id=3002)
+
+    payload = json.loads(_state_file(tmp_path).read_text(encoding="utf-8"))
+    sessions = {(item["chat_id"], item["user_id"], item["thread_id"]): item["message_id"] for item in payload["sessions"]}
+    assert sessions[(9001, 201, None)] == 3001
+    assert sessions[(9002, 202, None)] == 3002
+
+
+def test_repository_executable_sources_do_not_contain_runner_checkout_paths():
+    repo_root = Path(__file__).resolve().parents[2]
+    runner_checkout_prefix = "/".join(("", "home", "runner", "work")) + "/"
+    github_workspace_prefix = "/".join(("", "github", "workspace")) + "/"
+    generic_workspace_prefix = "/".join(("", "workspace")) + "/"
+    repo_name_pair = "/".join(("trading-signals-platform", "trading-signals-platform"))
+    blocked_tokens = (
+        runner_checkout_prefix,
+        github_workspace_prefix,
+        generic_workspace_prefix,
+        repo_name_pair,
+    )
+    blocked_files: list[str] = []
+    scan_roots = (repo_root / "send", repo_root / "scripts", repo_root / "tests")
+    scan_exts = {".py", ".sh", ".bash", ".zsh"}
+    for scan_root in scan_roots:
+        for path in scan_root.rglob("*"):
+            if path.is_file() and path.suffix in scan_exts:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+                if any(token in text for token in blocked_tokens):
+                    blocked_files.append(str(path.relative_to(repo_root)))
+    assert blocked_files == []

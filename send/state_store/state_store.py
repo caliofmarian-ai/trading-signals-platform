@@ -76,6 +76,10 @@ def _telegram_ui_state_path() -> str:
     return storage.state_path("telegram_ui_state.json")
 
 
+def telegram_ui_state_path() -> str:
+    return _telegram_ui_state_path()
+
+
 def _safe_int(value: Any, field_name: str) -> Optional[int]:
     if value is None:
         return None
@@ -720,6 +724,63 @@ def save_telegram_ui_state(state: Dict[str, Any], path: Optional[str] = None) ->
         ),
         state,
     )
+
+
+def update_telegram_ui_state(
+    updater: Callable[[Dict[str, Any]], Dict[str, Any]],
+    path: Optional[str] = None,
+) -> Dict[str, Any]:
+    canonical_path = path or _telegram_ui_state_path()
+    artifact = _artifact(
+        name="telegram_ui_state",
+        canonical_path=canonical_path,
+        legacy_paths=() if path else (_legacy_root_path("telegram_ui_state.json"),),
+        lock_name="telegram_ui_state",
+        default_factory=default_telegram_ui_state,
+        validator=validate_telegram_ui_state,
+    )
+    os.makedirs(os.path.dirname(artifact.canonical_path), exist_ok=True)
+    with with_lock(artifact.lock_name):
+        canonical_raw = _read_json_file(artifact.canonical_path)
+        legacy_payloads: list[tuple[str, Dict[str, Any]]] = []
+        for legacy_path in artifact.legacy_paths:
+            if legacy_path == artifact.canonical_path:
+                continue
+            legacy_raw = _read_json_file(legacy_path)
+            if legacy_raw is _MISSING:
+                continue
+            legacy_payloads.append((legacy_path, artifact.validator(legacy_raw)))
+
+        if canonical_raw is not _MISSING:
+            current = artifact.validator(canonical_raw)
+            for legacy_path, legacy_state in legacy_payloads:
+                if not _json_equal(current, legacy_state):
+                    raise StateConflictError(
+                        f"{artifact.name} conflict between canonical path {artifact.canonical_path} and legacy path {legacy_path}"
+                    )
+        elif not legacy_payloads:
+            current = artifact.default_factory()
+        else:
+            source_path, current = legacy_payloads[0]
+            for legacy_path, legacy_state in legacy_payloads[1:]:
+                if not _json_equal(current, legacy_state):
+                    raise StateConflictError(
+                        f"{artifact.name} conflict between legacy paths {source_path} and {legacy_path}"
+                    )
+            _emit_warning(
+                "LEGACY_STATE_MIGRATED",
+                f"{artifact.name} migrated from legacy path to canonical segmented path",
+                {
+                    "artifact": artifact.name,
+                    "source_path": source_path,
+                    "target_path": artifact.canonical_path,
+                },
+            )
+        updated = updater(dict(current))
+        normalized = artifact.validator(updated)
+        normalized["last_updated_ts"] = _now_ts()
+        save_json_atomic(artifact.canonical_path, normalized)
+        return normalized
 
 
 def get_buffer_mode() -> str:
