@@ -139,6 +139,15 @@ class FakePublisher:
         import re
         return re.sub(r"(?<=/bot)\d+:[A-Za-z0-9_-]+", "[REDACTED]", s)
 
+    def delete_message(self, chat_id, message_id):
+        return {
+            "outcome": "deleted",
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "error_code": None,
+            "description": None,
+        }
+
 
 def _make_roles(owner_id: int) -> Dict[str, Any]:
     return {
@@ -417,8 +426,11 @@ def test_07_deleted_active_message_replacement(tmp_path, monkeypatch):
 
 def test_08_replacement_becomes_active(tmp_path, monkeypatch):
     """
-    After a stale-message replacement, the new message must be tracked so
-    subsequent navigation edits it rather than sending yet another new message.
+    After /start creates a new anchor, subsequent navigation must edit it
+    rather than sending yet another new message.
+
+    With the hard-reset implementation, /start always bypasses editMessageText
+    and calls sendMessage directly. Subsequent /help must edit the new anchor.
     """
     owner_id = 995
     chat_id = owner_id
@@ -428,17 +440,16 @@ def test_08_replacement_becomes_active(tmp_path, monkeypatch):
     status_file = tmp_path / "status.json"
     status_file.write_text(json.dumps({"phase": "running"}))
 
-    # First edit fails (stale), subsequent edits succeed
-    pub = FakePublisher(edit_fail_once=True, edit_fail_msg="message to edit not found",
-                        start_id=6000)
+    # /start always sends (no edit needed); subsequent edits succeed.
+    pub = FakePublisher(start_id=6000)
     monkeypatch.setattr(_bs_mod, "telegram_publisher", pub)
     monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "0")
     monkeypatch.setenv("ROLES_CONFIG_PATH", str(roles_file))
     monkeypatch.setenv("RUNTIME_STATUS_PATH", str(status_file))
 
-    _nav_mod.set_active_message(owner_id, chat_id, 9998)  # stale
+    _nav_mod.set_active_message(owner_id, chat_id, 9998)  # old anchor
 
-    # /start — edit fails → send new (6000)
+    # /start — hard reset bypasses edit, sends new anchor (6000)
     _bs_mod.process_update(_msg_update(chat_id, owner_id, "/start"))
     assert len(pub.sends) == 1
     replacement_id = pub.sends[0]["message_id"]

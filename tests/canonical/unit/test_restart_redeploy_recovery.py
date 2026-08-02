@@ -148,6 +148,15 @@ class FakePublisher:
     def _sanitize(self, s: str) -> str:
         return s
 
+    def delete_message(self, chat_id, message_id):
+        return {
+            "outcome": "deleted",
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "error_code": None,
+            "description": None,
+        }
+
     # TelegramAPIError must be accessible on the fake for classification
     TelegramAPIError = _publisher_mod.TelegramAPIError
 

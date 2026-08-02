@@ -388,6 +388,181 @@ def _send_interactive_page(
         })
 
 
+def _handle_start_hard_reset(
+    *,
+    msg: Dict[str, Any],
+    user_id: int,
+    update_id: Any,
+    page_text: str,
+    page_markup: Optional[Dict[str, Any]],
+) -> None:
+    """Explicit /start hard-reset: always send a new anchor, never edit.
+
+    Design:
+    1. Normalize the private session key: (chat_id=user_id, user_id=user_id, thread_id=None)
+       in private chats.  Non-private chats fall through to _send_interactive_page.
+    2. Acquire a short-lived per-session reset guard (idempotency).
+    3. Read + clear the previous tracked message ID.
+    4. Best-effort deleteMessage on the old anchor.
+    5. Call sendMessage exactly once.
+    6. Persist the new message ID (best-effort).
+    7. Log full mandatory diagnostics.
+
+    Root cause context:
+    When a Telegram user deletes the conversation on their side, the bot message
+    is no longer visible.  However, Telegram may still return ok=true for
+    editMessageText on that message because the message exists server-side.
+    The bot therefore cannot rely on edit success as proof of visibility.
+    /start must always send a new visible message, regardless of edit success.
+    """
+    target = reply_target_from_message(msg)
+    if target is None:
+        return
+
+    chat_id = target.chat_id
+    thread_id = target.thread_id
+
+    # For non-private contexts (group chats, forum topics), fall through to the
+    # normal edit-first path so that group behavior is unchanged.
+    chat_type = (msg.get("chat") or {}).get("type", "")
+    is_private = (chat_type == "private") or (chat_id == user_id)
+
+    if not is_private:
+        _send_interactive_page(
+            msg,
+            user_id,
+            page_text,
+            page_markup,
+            trace_context={"update_id": update_id, "command_family": "/start"},
+        )
+        return
+
+    # Normalize the private session key (thread_id=None for private chats).
+    # Use target.chat_id for Telegram API calls; in real private chats chat_id==user_id.
+    private_chat_id = chat_id
+    private_thread_id: Optional[int] = None
+
+    diag: Dict[str, Any] = {
+        "event": "start_hard_reset",
+        "update_id": update_id,
+        "normalized_command": "/start",
+        "chat_id": private_chat_id,
+        "user_id": user_id,
+        "session_fingerprint": telegram_app_nav.session_key_fingerprint(private_chat_id, user_id, private_thread_id),
+        "edit_path_bypassed": True,
+        "runtime_instance_id": os.getenv("RUN_ID", "") or os.getenv("RAILWAY_DEPLOYMENT_ID", "") or f"pid-{os.getpid()}",
+        "deployment_id": os.getenv("RAILWAY_DEPLOYMENT_ID", "unknown"),
+        "process_id": os.getpid(),
+    }
+
+    # Step 2: Acquire the per-session reset guard.
+    guard = telegram_app_nav.acquire_start_reset_guard(private_chat_id, user_id, private_thread_id)
+    diag["reset_guard_acquired"] = guard.get("acquired", False)
+    diag["reset_generation"] = guard.get("generation", 0)
+
+    if not guard.get("acquired"):
+        # A concurrent /start is already in progress for this session.
+        # Serialize: do nothing here; the first /start will create the anchor.
+        diag["skipped_reason"] = "concurrent_reset_in_progress"
+        _emit_interactive_trace(diag)
+        return
+
+    try:
+        # Step 3: Read + clear previous session.
+        reset_prep = telegram_app_nav.prepare_start_hard_reset(private_chat_id, user_id, private_thread_id)
+        previous_message_id = reset_prep.get("previous_message_id")
+        diag["previous_active_message_id"] = previous_message_id
+        diag["session_clear_result"] = reset_prep.get("clear_result", {}).get("status", "unknown")
+
+        # Step 4: Best-effort deleteMessage on the old anchor.
+        delete_result: Optional[Dict[str, Any]] = None
+        if previous_message_id is not None:
+            diag["delete_attempted"] = True
+            try:
+                delete_result = telegram_publisher.delete_message(private_chat_id, previous_message_id)
+                diag["delete_result"] = delete_result.get("outcome")
+                diag["delete_error_code"] = delete_result.get("error_code")
+            except Exception as del_exc:
+                # delete_message is best-effort; any failure (including AttributeError
+                # from mocked publishers without this method) must never suppress the send.
+                diag["delete_result"] = f"error: {telegram_publisher._sanitize(str(del_exc))}"
+                diag["delete_error_code"] = None
+        else:
+            diag["delete_attempted"] = False
+            diag["delete_result"] = "skipped_no_previous_anchor"
+
+        # Step 5+6: sendMessage exactly once.
+        diag["send_attempted"] = True
+        new_message_id: Optional[int] = None
+        send_error: Optional[str] = None
+        try:
+            send_result = telegram_publisher.send_message(
+                chat_id=private_chat_id,
+                text=page_text,
+                reply_markup=page_markup,
+                thread_id=private_thread_id,
+            )
+            if isinstance(send_result, dict):
+                msg_result = send_result.get("result") or {}
+                new_message_id = msg_result.get("message_id")
+            diag["send_result"] = "ok"
+            diag["new_message_id"] = new_message_id
+        except Exception as send_exc:
+            send_error = telegram_publisher._sanitize(str(send_exc))
+            diag["send_result"] = "failed"
+            diag["send_error"] = send_error
+            # Per contract: if sendMessage fails, do not restore previous ID;
+            # leave session cleared; allow next /start to retry.
+            _emit_interactive_trace(diag, critical=True)
+            observability_logger.log_error({
+                "event_type": "error",
+                "data": {
+                    "severity": "ERROR",
+                    "error_type": "start_hard_reset_send_failure",
+                    "context": {
+                        "chat_id": private_chat_id,
+                        "user_id": user_id,
+                        "session_fingerprint": diag["session_fingerprint"],
+                    },
+                },
+            })
+            return
+
+        # Step 7: Persist the new anchor (best-effort).
+        # Visible delivery already succeeded; persistence failure must not delete the new message.
+        persistence_result = "skipped"
+        if new_message_id is not None:
+            try:
+                telegram_app_nav.set_active_message(
+                    user_id=user_id,
+                    chat_id=private_chat_id,
+                    message_id=new_message_id,
+                    thread_id=private_thread_id,
+                )
+                persistence_result = "ok"
+            except Exception as persist_exc:
+                persistence_result = f"failed: {telegram_publisher._sanitize(str(persist_exc))}"
+                observability_logger.log_error({
+                    "event_type": "error",
+                    "data": {
+                        "severity": "WARNING",
+                        "error_type": "start_hard_reset_persistence_failed",
+                        "message": persistence_result,
+                        "context": {
+                            "chat_id": private_chat_id,
+                            "user_id": user_id,
+                            "new_message_id": new_message_id,
+                        },
+                    },
+                })
+
+        diag["persistence_result"] = persistence_result
+        _emit_interactive_trace(diag)
+
+    finally:
+        telegram_app_nav.release_start_reset_guard(private_chat_id, user_id, private_thread_id)
+
+
 def _classify_edit_message_failure(exc: Exception) -> str:
     """
     Classify Telegram edit failure outcomes using structured error data first.
@@ -1170,12 +1345,12 @@ def process_update(update: Dict[str, Any]) -> None:
                 page_text, page_markup = telegram_app_nav.render_welcome_page(
                     user_id, primary_role, first_name=first_name, shadow_mode=shadow
                 )
-                _send_interactive_page(
-                    msg,
-                    user_id,
-                    page_text,
-                    page_markup,
-                    trace_context={"update_id": update_id, "command_family": "/start"},
+                _handle_start_hard_reset(
+                    msg=msg,
+                    user_id=user_id,
+                    update_id=update_id,
+                    page_text=page_text,
+                    page_markup=page_markup,
                 )
                 return
 

@@ -230,6 +230,106 @@ def answer_callback_query(
     return data
 
 
+# ---------------------------------------------------------------------------
+# Deletion outcomes (structured classification for delete_message callers)
+# ---------------------------------------------------------------------------
+
+DELETE_OUTCOME_DELETED = "deleted"          # successful deletion
+DELETE_OUTCOME_ABSENT = "message_absent"    # message not found (already gone)
+DELETE_OUTCOME_FORBIDDEN = "forbidden"      # deletion forbidden / message too old
+DELETE_OUTCOME_TRANSPORT = "transport_failure"  # network/connectivity problem
+DELETE_OUTCOME_UNEXPECTED = "unexpected"    # any other API failure
+
+
+def delete_message(chat_id: int, message_id: int) -> Dict[str, Any]:
+    """Best-effort delete a Telegram message.
+
+    Returns a structured result dict with:
+        outcome:     one of the DELETE_OUTCOME_* constants
+        chat_id:     echo of the input chat_id
+        message_id:  echo of the input message_id
+        error_code:  Telegram error_code if available, else None
+        description: sanitized error description if available, else None
+
+    Never raises; all outcomes are returned as structured data so that callers
+    (especially the /start hard-reset path) can classify results without
+    try/except and without ever being blocked by a failed deletion.
+    """
+    result: Dict[str, Any] = {
+        "outcome": DELETE_OUTCOME_UNEXPECTED,
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "error_code": None,
+        "description": None,
+    }
+    try:
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+        }
+        r = requests.post(f"{_base_url()}/deleteMessage", json=payload, timeout=10)
+        data = r.json()
+
+        if data.get("ok"):
+            result["outcome"] = DELETE_OUTCOME_DELETED
+            return result
+
+        error_code_raw = data.get("error_code")
+        error_code: Optional[int] = None
+        try:
+            error_code = int(error_code_raw) if error_code_raw is not None else None
+        except (TypeError, ValueError):
+            pass
+        description = _sanitize(str(data.get("description") or "no description"))
+        result["error_code"] = error_code
+        result["description"] = description
+        nd = description.lower().strip()
+
+        # Message already gone: absent outcome.
+        if r.status_code == 400 and any(
+            m in nd for m in (
+                "message to delete not found",
+                "message_id_invalid",
+                "message can't be deleted",
+                "chat not found",
+                "peer_id_invalid",
+            )
+        ):
+            result["outcome"] = DELETE_OUTCOME_ABSENT
+            return result
+
+        # Bot no longer has access to this chat.
+        if r.status_code == 400 and "bad request" in nd and "message_id_invalid" in nd:
+            result["outcome"] = DELETE_OUTCOME_ABSENT
+            return result
+
+        # Deletion forbidden / message too old.
+        if r.status_code in (400, 403) and any(
+            m in nd for m in (
+                "message can't be deleted for everyone",
+                "not enough rights",
+                "bot was kicked",
+                "bot was blocked",
+                "user is deactivated",
+                "forbidden",
+            )
+        ):
+            result["outcome"] = DELETE_OUTCOME_FORBIDDEN
+            return result
+
+        result["outcome"] = DELETE_OUTCOME_UNEXPECTED
+        return result
+
+    except requests.exceptions.RequestException as transport_exc:
+        result["outcome"] = DELETE_OUTCOME_TRANSPORT
+        result["description"] = _sanitize(str(transport_exc))
+        return result
+    except Exception as unexpected_exc:
+        result["outcome"] = DELETE_OUTCOME_UNEXPECTED
+        result["description"] = _sanitize(str(unexpected_exc))
+        return result
+
+
 def send_document(
     chat_id: int,
     file_path: str,
