@@ -638,18 +638,22 @@ class TestSingleMessageAdminNavigation:
             f"Labels expected: {admin_root_labels}"
         )
 
-        # All admin root renders must be identical
+        # Admin-root content stays canonical; APP entry renders may additionally
+        # expose an APP:BACK button when the user has a real application parent.
         ref_text = admin_root_renders[0]["text"]
-        ref_markup = json.dumps(admin_root_renders[0]["reply_markup"], sort_keys=True)
-        for i, render in enumerate(admin_root_renders[1:], 1):
+        with_back: list[str] = []
+        without_back: list[str] = []
+        for i, render in enumerate(admin_root_renders):
             assert render["text"] == ref_text, (
                 f"Admin root render #{i} text differs from render #0.\n"
                 f"Render #0 : {ref_text[:200]}\n"
                 f"Render #{i}: {render['text'][:200]}"
             )
             actual_markup = json.dumps(render["reply_markup"], sort_keys=True)
-            assert actual_markup == ref_markup, (
-                f"Admin root render #{i} markup differs from render #0.\n"
-                f"Render #0 : {ref_markup[:300]}\n"
-                f"Render #{i}: {actual_markup[:300]}"
-            )
+            if '"APP:BACK"' in actual_markup:
+                with_back.append(actual_markup)
+            else:
+                without_back.append(actual_markup)
+            assert '"APP:HOME"' in actual_markup
+        assert len(set(with_back)) <= 1
+        assert len(set(without_back)) <= 1
