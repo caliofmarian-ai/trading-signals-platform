@@ -105,6 +105,20 @@ _active_ui_init_path: Optional[str] = None
 _last_load_result: Dict[str, Any] = {"status": "not_started"}
 _last_save_result: Dict[str, Any] = {"status": "not_started"}
 
+# ---------------------------------------------------------------------------
+# Per-session /start reset idempotency guard
+#
+# Prevents two rapid concurrent /start commands for the same session from
+# creating uncontrolled duplicate anchors.
+#
+# Structure: { session_key: {"generation": int, "in_progress": bool, "ts": float} }
+# Guards are short-lived (RESET_GUARD_TTL_SEC) and scoped per session.
+# USER and ADMIN sessions use different session keys → independent guards.
+# ---------------------------------------------------------------------------
+_RESET_GUARDS: Dict[_SessionKey, Dict[str, Any]] = {}
+_RESET_GUARD_LOCK = threading.Lock()
+_RESET_GUARD_TTL_SEC = 30.0  # Guards expire after 30 s to prevent abandoned locks.
+
 
 def _safe_env_int(name: str, default: int) -> int:
     raw = os.getenv(name, "").strip()
@@ -564,6 +578,114 @@ def clear_active_message(user_id: int, chat_id: int, thread_id: Optional[int] = 
                 "persisted_absent": None,
                 "error": str(exc),
             }
+
+
+# ---------------------------------------------------------------------------
+# /start hard-reset idempotency guard helpers
+# ---------------------------------------------------------------------------
+
+def _prune_reset_guards(now: float) -> None:
+    """Remove expired guards. Caller must hold _RESET_GUARD_LOCK."""
+    expired = [k for k, g in _RESET_GUARDS.items() if now - g.get("ts", 0.0) > _RESET_GUARD_TTL_SEC]
+    for k in expired:
+        _RESET_GUARDS.pop(k, None)
+
+
+def acquire_start_reset_guard(chat_id: int, user_id: int, thread_id: Optional[int] = None) -> Dict[str, Any]:
+    """Acquire a per-session /start reset guard.
+
+    Returns a result dict:
+        acquired:    True  — guard acquired; caller must call release_start_reset_guard after.
+        acquired:    False — a concurrent /start is already in progress for this session.
+        generation:  monotonically increasing counter for this session.
+
+    Guards are short-lived (RESET_GUARD_TTL_SEC) and expire automatically.
+    USER and ADMIN session keys are always distinct → no cross-account coupling.
+    """
+    key = normalize_session_key(chat_id, user_id, thread_id)
+    now = time.monotonic()
+    with _RESET_GUARD_LOCK:
+        _prune_reset_guards(now)
+        guard = _RESET_GUARDS.get(key)
+        if guard is not None and guard.get("in_progress") and (now - guard.get("ts", 0.0)) < _RESET_GUARD_TTL_SEC:
+            return {
+                "acquired": False,
+                "generation": guard.get("generation", 0),
+                "reason": "concurrent_reset_in_progress",
+            }
+        current_gen = guard.get("generation", 0) if guard is not None else 0
+        new_gen = current_gen + 1
+        _RESET_GUARDS[key] = {"in_progress": True, "generation": new_gen, "ts": now}
+        return {"acquired": True, "generation": new_gen}
+
+
+def release_start_reset_guard(chat_id: int, user_id: int, thread_id: Optional[int] = None) -> None:
+    """Mark the per-session /start reset guard as complete (no longer in progress)."""
+    key = normalize_session_key(chat_id, user_id, thread_id)
+    with _RESET_GUARD_LOCK:
+        guard = _RESET_GUARDS.get(key)
+        if guard is not None:
+            guard["in_progress"] = False
+
+
+# ---------------------------------------------------------------------------
+# /start hard-reset: read-then-clear session state
+# ---------------------------------------------------------------------------
+
+def prepare_start_hard_reset(
+    chat_id: int,
+    user_id: int,
+    thread_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Read the previous active message ID and clear the session state for /start.
+
+    This is the first half of the /start hard-reset sequence:
+    1. Normalize the session key.
+    2. Read the previously tracked message ID.
+    3. Clear memory and persistence (best-effort).
+
+    Returns:
+        previous_message_id:  int or None — the old anchor before clearing
+        session_key:          normalized session key tuple (serializable as list)
+        session_fingerprint:  short hex fingerprint for logging
+        clear_result:         result from clear_active_message
+
+    Never raises.  Failures in persistence are captured and returned.
+    """
+    _ensure_initialized()
+    key = normalize_session_key(chat_id, user_id, thread_id)
+    # Read previous ID before clearing.
+    previous_message_id: Optional[int] = None
+    with _active_ui_lock:
+        entry = _active_ui.get(key)
+        if entry is not None:
+            try:
+                previous_message_id = int(entry["message_id"])
+            except (KeyError, TypeError, ValueError):
+                previous_message_id = None
+
+    # Also check persisted state for the previous ID if not in memory.
+    if previous_message_id is None:
+        try:
+            nav_diag = get_runtime_diagnostics(chat_id=chat_id, user_id=user_id, thread_id=thread_id)
+            persisted_id = nav_diag.get("persisted_message_id")
+            if persisted_id is not None:
+                previous_message_id = int(persisted_id)
+        except Exception:
+            pass
+
+    # Clear the session (best-effort).
+    try:
+        clear_result = clear_active_message(user_id=user_id, chat_id=chat_id, thread_id=thread_id)
+    except Exception as exc:
+        clear_result = {"status": "error", "error": str(exc)}
+
+    return {
+        "previous_message_id": previous_message_id,
+        "session_key": list(key),
+        "session_fingerprint": session_key_fingerprint(chat_id, user_id, thread_id),
+        "clear_result": clear_result,
+    }
 
 
 def _merge_session_update(
