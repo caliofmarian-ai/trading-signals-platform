@@ -41,7 +41,7 @@ Reference: `ADMIN_TREE_MAP_v2.0.0.md §6`
 | Audit (Security) | SECAUDIT_AUDIT | SECAUDIT | Child of Security & Audit |
 | Diagnose (general) | DIAGNOSE | HOME | General diagnose fallback |
 | Audit (general) | AUDIT | HOME | General audit fallback |
-| Reload Roles Confirm | RELOAD_ROLES_CONFIRM | HOME | Safe fallback |
+| Reload Roles Confirm | RELOAD_ROLES_CONFIRM | ROLES | Confirm child of Roles |
 
 ---
 
@@ -57,9 +57,13 @@ markup at render time via the `parent_action` parameter.
 | OPS_ENGINE | engine_markup | OPERATIONS | Operations |
 | SH_ENGINE | engine_markup | SYSHEALTH | System Health |
 | ENGINE (general) | engine_markup | HOME | Admin Home |
+| OPS_ENGINE refresh | engine_markup | OPERATIONS | Operations |
+| SH_ENGINE refresh | engine_markup | SYSHEALTH | System Health |
 | OPS_DIAGNOSE | diagnose_markup | OPERATIONS | Operations |
 | SH_DIAGNOSE | diagnose_markup | SYSHEALTH | System Health |
 | DIAGNOSE (general) | diagnose_markup | HOME | Admin Home |
+| OPS_DIAGNOSE refresh | diagnose_markup | OPERATIONS | Operations |
+| SH_DIAGNOSE refresh | diagnose_markup | SYSHEALTH | System Health |
 
 ---
 

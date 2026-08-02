@@ -22,6 +22,7 @@ Unversioned `APP:ACTION` callbacks remain parser-compatible for legacy/unit cove
 | Symbols (strategy context) | `SYMBOLS`, `SYM_TOGGLE:STRATEGY:<sym>`, `SYMBOLS_ALL:STRATEGY`, `SYMBOLS_NONE:STRATEGY` | Strategy-context mutations preserve Strategy parent |
 | Files | `FILES_HOME`, `FILES:<dir>:<page>`, `FILE_DL:<dir>:<name>` | Prev/Next preserve directory and page |
 | Docs | `GOVDOCS`, `DOCS`, `FILE_DL:doc:<name>` | Download keeps the listing message intact |
-| Diagnose | `DIAGNOSE`, `OPS_DIAGNOSE`, `SH_DIAGNOSE` | Refresh stays on diagnose |
+| Engine | `ENGINE`, `OPS_ENGINE`, `SH_ENGINE` | Refresh stays on the current engine surface and preserves its immediate parent |
+| Diagnose | `DIAGNOSE`, `OPS_DIAGNOSE`, `SH_DIAGNOSE` | Refresh stays on the current diagnose surface and preserves its immediate parent |
 | Runtime audit | `AUDIT`, `OPS_AUDIT`, `SH_AUDIT`, `DIAG_SH_AUDIT`, `SECAUDIT_AUDIT` | Parent-specific error return path preserved |
 | Roles reload | `RELOAD_ROLES_CONFIRM`, `RELOAD_ROLES_EXEC` | Cancel returns to Roles |

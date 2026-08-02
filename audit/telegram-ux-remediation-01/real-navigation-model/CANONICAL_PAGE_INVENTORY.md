@@ -58,8 +58,8 @@
 | Page ID | Callback | Immediate Parent | Refresh Target |
 |---------|----------|-----------------|----------------|
 | Strategy | `ADMIN_NAV:STRATEGY` | OPERATIONS | `ADMIN_NAV:STRATEGY` |
-| Engine (ops) | `ADMIN_NAV:OPS_ENGINE` | OPERATIONS | `ADMIN_NAV:ENGINE` |
-| Diagnose (ops) | `ADMIN_NAV:OPS_DIAGNOSE` | OPERATIONS | `ADMIN_NAV:DIAGNOSE` |
+| Engine (ops) | `ADMIN_NAV:OPS_ENGINE` | OPERATIONS | `ADMIN_NAV:OPS_ENGINE` |
+| Diagnose (ops) | `ADMIN_NAV:OPS_DIAGNOSE` | OPERATIONS | `ADMIN_NAV:OPS_DIAGNOSE` |
 
 ### Level 2: Strategy Sub-pages
 
@@ -82,8 +82,8 @@
 
 | Page ID | Callback | Immediate Parent | Refresh Target |
 |---------|----------|-----------------|----------------|
-| Engine (syshealth) | `ADMIN_NAV:SH_ENGINE` | SYSHEALTH | `ADMIN_NAV:ENGINE` |
-| Diagnose (syshealth) | `ADMIN_NAV:SH_DIAGNOSE` | SYSHEALTH | `ADMIN_NAV:DIAGNOSE` |
+| Engine (syshealth) | `ADMIN_NAV:SH_ENGINE` | SYSHEALTH | `ADMIN_NAV:SH_ENGINE` |
+| Diagnose (syshealth) | `ADMIN_NAV:SH_DIAGNOSE` | SYSHEALTH | `ADMIN_NAV:SH_DIAGNOSE` |
 | Audit (syshealth) | `ADMIN_NAV:SH_AUDIT` | SYSHEALTH | — (file download) |
 
 ### Level 2: Security & Audit Sub-pages

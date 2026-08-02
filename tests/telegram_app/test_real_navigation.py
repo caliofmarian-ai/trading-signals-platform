@@ -132,6 +132,7 @@ class _FakePublisher:
         self._next_id = 5000
         self.sends: list[Dict[str, Any]] = []
         self.edits: list[Dict[str, Any]] = []
+        self.documents: list[Dict[str, Any]] = []
         self.acks: list[str] = []
 
     def send_message(self, chat_id, text, reply_markup=None, thread_id=None):
@@ -154,6 +155,15 @@ class _FakePublisher:
             "reply_markup": reply_markup,
         })
         return {"ok": True, "result": {"message_id": message_id}}
+
+    def send_document(self, chat_id, file_path, caption=None, thread_id=None):
+        self.documents.append({
+            "chat_id": chat_id,
+            "file_path": file_path,
+            "caption": caption,
+            "thread_id": thread_id,
+        })
+        return {"ok": True}
 
     def answer_callback_query(self, callback_query_id, text="", show_alert=False):
         self.acks.append(callback_query_id)
@@ -621,6 +631,11 @@ class TestCanonicalAdminParentMap:
                 f"{page} should have HOME as parent (direct child of admin root)"
             )
 
+    def test_reload_roles_confirm_parent_is_roles(self):
+        _purge()
+        from core.telegram_admin_ui import CANONICAL_ADMIN_PARENT_MAP
+        assert CANONICAL_ADMIN_PARENT_MAP.get("RELOAD_ROLES_CONFIRM") == "ROLES"
+
 
 # ---------------------------------------------------------------------------
 # Refresh: does not add to history, re-renders same page
@@ -652,6 +667,30 @@ class TestRefreshBehavior:
         markup = diagnose_markup()
         cbs = _cbs(markup)
         assert f"{CALLBACK_PREFIX}DIAGNOSE" in cbs
+
+    def test_engine_refresh_operations_is_contextual(self):
+        _purge()
+        from core.telegram_admin_ui import engine_markup, CALLBACK_PREFIX
+        markup = engine_markup(include_roles_reload=False, parent_action="OPERATIONS")
+        assert f"{CALLBACK_PREFIX}OPS_ENGINE" in _cbs(markup)
+
+    def test_engine_refresh_syshealth_is_contextual(self):
+        _purge()
+        from core.telegram_admin_ui import engine_markup, CALLBACK_PREFIX
+        markup = engine_markup(include_roles_reload=False, parent_action="SYSHEALTH")
+        assert f"{CALLBACK_PREFIX}SH_ENGINE" in _cbs(markup)
+
+    def test_diagnose_refresh_operations_is_contextual(self):
+        _purge()
+        from core.telegram_admin_ui import diagnose_markup, CALLBACK_PREFIX
+        markup = diagnose_markup(parent_action="OPERATIONS")
+        assert f"{CALLBACK_PREFIX}OPS_DIAGNOSE" in _cbs(markup)
+
+    def test_diagnose_refresh_syshealth_is_contextual(self):
+        _purge()
+        from core.telegram_admin_ui import diagnose_markup, CALLBACK_PREFIX
+        markup = diagnose_markup(parent_action="SYSHEALTH")
+        assert f"{CALLBACK_PREFIX}SH_DIAGNOSE" in _cbs(markup)
 
     def test_decision_vis_refresh_is_self(self):
         """decision_visibility_markup Refresh targets DECISION_VIS."""
@@ -799,6 +838,34 @@ class TestRolesReloadNavigation:
 
 class TestProcessUpdateNavigationIntegration:
     def _load_modules(self, tmp_path: Path, monkeypatch, *, owner_ids: Optional[list[int]] = None):
+        for rel in (
+            "config",
+            "state",
+            "observability",
+            "outcomes",
+            "analytics",
+            "analytics/reports",
+            "docs",
+            "audit",
+            "snapshots",
+        ):
+            (tmp_path / rel).mkdir(parents=True, exist_ok=True)
+        (tmp_path / "config" / "active_symbols.json").write_text(json.dumps(["EURUSD"]), encoding="utf-8")
+        (tmp_path / "config" / "admin_settings.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "config" / "algo_params.json").write_text(
+            json.dumps(
+                {
+                    "score_thresholds": {"PRE": 60, "CONFIRM": 75, "OPEN": 85},
+                    "sr_required_multiplier": 1.5,
+                    "spike_filter": {
+                        "wick_body_ratio_max": 2.0,
+                        "range_z_max": 3.0,
+                        "jump_vs_atr_max": 2.5,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
         roles_file = tmp_path / "roles.json"
         roles_file.write_text(json.dumps({
             "owner": list(owner_ids or []),
@@ -814,6 +881,7 @@ class TestProcessUpdateNavigationIntegration:
         monkeypatch.setenv("ADMIN_ROLES_CONFIG", str(roles_file))
         monkeypatch.setenv("ROLES_CONFIG_PATH", str(roles_file))
         monkeypatch.setenv("RUNTIME_STATUS_PATH", str(status_file))
+        monkeypatch.setenv("BINARYBOT_BASE_DIR", str(tmp_path))
         monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "-100555000")
         monkeypatch.setenv("ADMIN_CONTROL_THREAD_ID", "77")
         monkeypatch.setenv("ENABLE_TELEGRAM", "false")
@@ -824,6 +892,17 @@ class TestProcessUpdateNavigationIntegration:
         pub = _FakePublisher()
         monkeypatch.setattr(bot, "telegram_publisher", pub)
         return bot, nav, pub
+
+    @staticmethod
+    def _admin_topic_callback(user_id: int, data: str, message_id: int) -> Dict[str, Any]:
+        return _callback_update(
+            -100555000,
+            user_id,
+            data,
+            chat_type="supergroup",
+            message_id=message_id,
+            thread_id=77,
+        )
 
     def test_home_status_back_round_trip_uses_real_history(self, tmp_path, monkeypatch):
         bot, nav, pub = self._load_modules(tmp_path, monkeypatch)
@@ -959,3 +1038,277 @@ class TestProcessUpdateNavigationIntegration:
         bot.process_update(_callback_update(9005, 9005, f"APP:{generation}:BACK", message_id=2222))
         assert "binarybot" in pub.edits[-1]["text"].lower()
         assert nav.get_current_nav_action(9005, 9005) == nav.ACT_HOME
+
+    def test_engine_refresh_preserves_operations_parent_and_edits_active_message(self, tmp_path, monkeypatch):
+        bot, _, pub = self._load_modules(tmp_path, monkeypatch, owner_ids=[9010])
+        bot.process_update(_message_update(9010, 9010, "/start"))
+        active_id = pub.sends[-1]["message_id"]
+        admin_cb = _find_callback(pub.sends[-1]["reply_markup"], "ADMIN")
+        assert admin_cb is not None
+
+        bot.process_update(_callback_update(9010, 9010, admin_cb, message_id=active_id))
+        bot.process_update(_callback_update(9010, 9010, "ADMIN_NAV:OPERATIONS", message_id=active_id))
+        bot.process_update(_callback_update(9010, 9010, "ADMIN_NAV:OPS_ENGINE", message_id=active_id))
+        refresh_cb = _find_callback(pub.edits[-1]["reply_markup"], "OPS_ENGINE")
+        assert refresh_cb == "ADMIN_NAV:OPS_ENGINE"
+
+        sends_before = len(pub.sends)
+        edits_before = len(pub.edits)
+        bot.process_update(_callback_update(9010, 9010, refresh_cb, message_id=active_id))
+        assert len(pub.sends) == sends_before
+        assert len(pub.edits) == edits_before + 1
+        assert pub.edits[-1]["message_id"] == active_id
+
+        back_cb = _find_callback(pub.edits[-1]["reply_markup"], "OPERATIONS")
+        assert back_cb == "ADMIN_NAV:OPERATIONS"
+        bot.process_update(_callback_update(9010, 9010, back_cb, message_id=active_id))
+        assert "⚙️ Operations" in pub.edits[-1]["text"]
+
+    def test_engine_refresh_preserves_syshealth_parent_and_edits_active_message(self, tmp_path, monkeypatch):
+        bot, _, pub = self._load_modules(tmp_path, monkeypatch, owner_ids=[9011])
+        bot.process_update(_message_update(9011, 9011, "/start"))
+        active_id = pub.sends[-1]["message_id"]
+        admin_cb = _find_callback(pub.sends[-1]["reply_markup"], "ADMIN")
+        assert admin_cb is not None
+
+        bot.process_update(_callback_update(9011, 9011, admin_cb, message_id=active_id))
+        bot.process_update(_callback_update(9011, 9011, "ADMIN_NAV:SYSHEALTH", message_id=active_id))
+        bot.process_update(_callback_update(9011, 9011, "ADMIN_NAV:SH_ENGINE", message_id=active_id))
+        refresh_cb = _find_callback(pub.edits[-1]["reply_markup"], "SH_ENGINE")
+        assert refresh_cb == "ADMIN_NAV:SH_ENGINE"
+
+        sends_before = len(pub.sends)
+        edits_before = len(pub.edits)
+        bot.process_update(_callback_update(9011, 9011, refresh_cb, message_id=active_id))
+        assert len(pub.sends) == sends_before
+        assert len(pub.edits) == edits_before + 1
+        assert pub.edits[-1]["message_id"] == active_id
+
+        back_cb = _find_callback(pub.edits[-1]["reply_markup"], "SYSHEALTH")
+        assert back_cb == "ADMIN_NAV:SYSHEALTH"
+        bot.process_update(_callback_update(9011, 9011, back_cb, message_id=active_id))
+        assert "🩺 System Health" in pub.edits[-1]["text"]
+
+    def test_diagnose_refresh_preserves_operations_parent(self, tmp_path, monkeypatch):
+        bot, _, pub = self._load_modules(tmp_path, monkeypatch, owner_ids=[9012])
+        bot.process_update(_message_update(9012, 9012, "/start"))
+        active_id = pub.sends[-1]["message_id"]
+        admin_cb = _find_callback(pub.sends[-1]["reply_markup"], "ADMIN")
+        assert admin_cb is not None
+
+        bot.process_update(_callback_update(9012, 9012, admin_cb, message_id=active_id))
+        bot.process_update(_callback_update(9012, 9012, "ADMIN_NAV:OPERATIONS", message_id=active_id))
+        bot.process_update(_callback_update(9012, 9012, "ADMIN_NAV:OPS_DIAGNOSE", message_id=active_id))
+        refresh_cb = _find_callback(pub.edits[-1]["reply_markup"], "OPS_DIAGNOSE")
+        assert refresh_cb == "ADMIN_NAV:OPS_DIAGNOSE"
+
+        bot.process_update(_callback_update(9012, 9012, refresh_cb, message_id=active_id))
+        back_cb = _find_callback(pub.edits[-1]["reply_markup"], "OPERATIONS")
+        assert back_cb == "ADMIN_NAV:OPERATIONS"
+        bot.process_update(_callback_update(9012, 9012, back_cb, message_id=active_id))
+        assert "⚙️ Operations" in pub.edits[-1]["text"]
+        assert len(pub.sends) == 1
+
+    def test_diagnose_refresh_preserves_syshealth_parent(self, tmp_path, monkeypatch):
+        bot, _, pub = self._load_modules(tmp_path, monkeypatch, owner_ids=[9013])
+        bot.process_update(_message_update(9013, 9013, "/start"))
+        active_id = pub.sends[-1]["message_id"]
+        admin_cb = _find_callback(pub.sends[-1]["reply_markup"], "ADMIN")
+        assert admin_cb is not None
+
+        bot.process_update(_callback_update(9013, 9013, admin_cb, message_id=active_id))
+        bot.process_update(_callback_update(9013, 9013, "ADMIN_NAV:SYSHEALTH", message_id=active_id))
+        bot.process_update(_callback_update(9013, 9013, "ADMIN_NAV:SH_DIAGNOSE", message_id=active_id))
+        refresh_cb = _find_callback(pub.edits[-1]["reply_markup"], "SH_DIAGNOSE")
+        assert refresh_cb == "ADMIN_NAV:SH_DIAGNOSE"
+
+        bot.process_update(_callback_update(9013, 9013, refresh_cb, message_id=active_id))
+        back_cb = _find_callback(pub.edits[-1]["reply_markup"], "SYSHEALTH")
+        assert back_cb == "ADMIN_NAV:SYSHEALTH"
+        bot.process_update(_callback_update(9013, 9013, back_cb, message_id=active_id))
+        assert "🩺 System Health" in pub.edits[-1]["text"]
+        assert len(pub.sends) == 1
+
+    def test_profile_confirm_cancel_returns_to_selector_without_mutation(self, tmp_path, monkeypatch):
+        bot, _, pub = self._load_modules(tmp_path, monkeypatch, owner_ids=[9014])
+        mutations: list[str] = []
+        monkeypatch.setattr(bot, "handle_strategy_profile", lambda profile, user_id: mutations.append(profile) or "unexpected")
+
+        bot.process_update(_message_update(9014, 9014, "/start"))
+        active_id = pub.sends[-1]["message_id"]
+        admin_cb = _find_callback(pub.sends[-1]["reply_markup"], "ADMIN")
+        assert admin_cb is not None
+
+        for action in (admin_cb, "ADMIN_NAV:OPERATIONS", "ADMIN_NAV:STRATEGY", "ADMIN_NAV:PROFILE_HOME"):
+            bot.process_update(_callback_update(9014, 9014, action, message_id=active_id))
+        confirm_cb = _find_callback(pub.edits[-1]["reply_markup"], "PROFILE_CONFIRM:BALANCED")
+        assert confirm_cb == "ADMIN_NAV:PROFILE_CONFIRM:BALANCED"
+
+        bot.process_update(_callback_update(9014, 9014, confirm_cb, message_id=active_id))
+        cancel_cb = _find_callback(pub.edits[-1]["reply_markup"], "PROFILE_HOME")
+        assert cancel_cb == "ADMIN_NAV:PROFILE_HOME"
+        bot.process_update(_callback_update(9014, 9014, cancel_cb, message_id=active_id))
+
+        assert mutations == []
+        assert "⚙️ Strategy Profile" in pub.edits[-1]["text"]
+        assert "ADMIN_NAV:PROFILE_CONFIRM:BALANCED" in _cbs(pub.edits[-1]["reply_markup"])
+        assert len(pub.sends) == 1
+
+    def test_profile_apply_returns_to_profile_selector_current_state(self, tmp_path, monkeypatch):
+        bot, _, pub = self._load_modules(tmp_path, monkeypatch, owner_ids=[9015])
+        state = {"current": None}
+
+        def _handle_strategy_profile(profile: str, user_id: int) -> str:
+            state["current"] = profile.upper()
+            return f"Strategy profile {state['current']} applied."
+
+        monkeypatch.setattr(bot, "handle_strategy_profile", _handle_strategy_profile)
+        monkeypatch.setattr(bot, "get_current_strategy_profile", lambda: state["current"])
+
+        bot.process_update(_message_update(9015, 9015, "/start"))
+        active_id = pub.sends[-1]["message_id"]
+        admin_cb = _find_callback(pub.sends[-1]["reply_markup"], "ADMIN")
+        assert admin_cb is not None
+
+        for action in (admin_cb, "ADMIN_NAV:OPERATIONS", "ADMIN_NAV:STRATEGY", "ADMIN_NAV:PROFILE_HOME"):
+            bot.process_update(_callback_update(9015, 9015, action, message_id=active_id))
+        bot.process_update(_callback_update(9015, 9015, "ADMIN_NAV:PROFILE_CONFIRM:BALANCED", message_id=active_id))
+        bot.process_update(_callback_update(9015, 9015, "ADMIN_NAV:PROFILE_EXEC:BALANCED", message_id=active_id))
+
+        assert "Strategy profile BALANCED applied." in pub.edits[-1]["text"]
+        assert any(text.startswith("✅ ") and "MEDIU / MEDIUM" in text for text in _texts(pub.edits[-1]["reply_markup"]))
+        assert "ADMIN_NAV:PROFILE_CONFIRM:BALANCED" in _cbs(pub.edits[-1]["reply_markup"])
+        assert len(pub.sends) == 1
+
+    def test_files_home_directory_prev_next_and_back_preserve_single_anchor(self, tmp_path, monkeypatch):
+        bot, nav, pub = self._load_modules(tmp_path, monkeypatch, owner_ids=[9016])
+        obs_dir = tmp_path / "observability"
+        obs_dir.mkdir(parents=True, exist_ok=True)
+        for idx in range(9):
+            (obs_dir / f"log_{idx}.log").write_text(f"log {idx}\n", encoding="utf-8")
+
+        bot.process_update(_message_update(9016, 9016, "/start"))
+        active_id = pub.sends[-1]["message_id"]
+        admin_cb = _find_callback(pub.sends[-1]["reply_markup"], "ADMIN")
+        assert admin_cb is not None
+
+        bot.process_update(_callback_update(9016, 9016, admin_cb, message_id=active_id))
+        bot.process_update(_callback_update(9016, 9016, "ADMIN_NAV:FILES_HOME", message_id=active_id))
+        dir_cb = _find_callback(pub.edits[-1]["reply_markup"], "FILES:obs:0")
+        assert dir_cb == "ADMIN_NAV:FILES:obs:0"
+
+        bot.process_update(_callback_update(9016, 9016, dir_cb, message_id=active_id))
+        next_cb = _find_callback(pub.edits[-1]["reply_markup"], "FILES:obs:1")
+        assert next_cb == "ADMIN_NAV:FILES:obs:1"
+        bot.process_update(_callback_update(9016, 9016, next_cb, message_id=active_id))
+        prev_cb = _find_callback(pub.edits[-1]["reply_markup"], "FILES:obs:0")
+        assert prev_cb == "ADMIN_NAV:FILES:obs:0"
+        bot.process_update(_callback_update(9016, 9016, prev_cb, message_id=active_id))
+        back_cb = _find_callback(pub.edits[-1]["reply_markup"], "FILES_HOME")
+        assert back_cb == "ADMIN_NAV:FILES_HOME"
+        bot.process_update(_callback_update(9016, 9016, back_cb, message_id=active_id))
+
+        assert "📁 File Browser" in pub.edits[-1]["text"]
+        assert len(pub.sends) == 1
+        assert nav.get_active_message(9016, chat_id=9016) == active_id
+        assert all(edit["message_id"] == active_id for edit in pub.edits)
+
+    def test_docs_download_leaves_docs_listing_anchor_active(self, tmp_path, monkeypatch):
+        bot, nav, pub = self._load_modules(tmp_path, monkeypatch, owner_ids=[9017])
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        (docs_dir / "guide.md").write_text("# guide\n", encoding="utf-8")
+
+        bot.process_update(_message_update(9017, 9017, "/start"))
+        active_id = pub.sends[-1]["message_id"]
+        admin_cb = _find_callback(pub.sends[-1]["reply_markup"], "ADMIN")
+        assert admin_cb is not None
+
+        bot.process_update(_callback_update(9017, 9017, admin_cb, message_id=active_id))
+        bot.process_update(_callback_update(9017, 9017, "ADMIN_NAV:DOCS", message_id=active_id))
+        download_cb = _find_callback(pub.edits[-1]["reply_markup"], "FILE_DL:doc:guide.md")
+        assert download_cb == "ADMIN_NAV:FILE_DL:doc:guide.md"
+
+        edits_before = len(pub.edits)
+        bot.process_update(_callback_update(9017, 9017, download_cb, message_id=active_id))
+        assert len(pub.edits) == edits_before
+        assert len(pub.documents) == 1
+        assert pub.documents[0]["caption"] == "guide.md"
+        assert len(pub.sends) == 1
+        assert nav.get_active_message(9017, chat_id=9017) == active_id
+
+    def test_report_download_leaves_research_anchor_active(self, tmp_path, monkeypatch):
+        bot, nav, pub = self._load_modules(tmp_path, monkeypatch, owner_ids=[9018])
+        reports_dir = tmp_path / "analytics" / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        (reports_dir / "daily_strategy_audit_2026-08-02.json").write_text("{\"ok\": true}\n", encoding="utf-8")
+
+        bot.process_update(_message_update(9018, 9018, "/start"))
+        active_id = pub.sends[-1]["message_id"]
+        admin_cb = _find_callback(pub.sends[-1]["reply_markup"], "ADMIN")
+        assert admin_cb is not None
+
+        bot.process_update(_callback_update(9018, 9018, admin_cb, message_id=active_id))
+        bot.process_update(_callback_update(9018, 9018, "ADMIN_NAV:RESEARCH", message_id=active_id))
+        download_cb = _find_callback(pub.edits[-1]["reply_markup"], "FILE_DL:rpt:daily_strategy_audit_2026-08-02.json")
+        assert download_cb == "ADMIN_NAV:FILE_DL:rpt:daily_strategy_audit_2026-08-02.json"
+
+        edits_before = len(pub.edits)
+        bot.process_update(_callback_update(9018, 9018, download_cb, message_id=active_id))
+        assert len(pub.edits) == edits_before
+        assert len(pub.documents) == 1
+        assert pub.documents[0]["caption"] == "daily_strategy_audit_2026-08-02.json"
+        assert len(pub.sends) == 1
+        assert nav.get_active_message(9018, chat_id=9018) == active_id
+
+    def test_roles_reload_cancel_returns_to_roles_without_mutation(self, tmp_path, monkeypatch):
+        bot, _, pub = self._load_modules(tmp_path, monkeypatch, owner_ids=[9019])
+        command_calls: list[str] = []
+
+        def _fake_admin_command(text: str, user_id: int) -> str:
+            command_calls.append(text)
+            if text == "/roles":
+                return "roles summary"
+            if text == "/roles_reload":
+                return "roles reloaded"
+            return "ok"
+
+        monkeypatch.setattr(bot, "handle_admin_command_v2", _fake_admin_command)
+
+        bot.process_update(_message_update(-100555000, 9019, "/admin", chat_type="supergroup", thread_id=77))
+        active_id = pub.sends[-1]["message_id"]
+        bot.process_update(self._admin_topic_callback(9019, "ADMIN_NAV:ROLES", active_id))
+        bot.process_update(self._admin_topic_callback(9019, "ADMIN_NAV:RELOAD_ROLES_CONFIRM", active_id))
+        cancel_cb = next(cb for cb in _cbs(pub.edits[-1]["reply_markup"]) if cb.endswith(":ROLES"))
+        assert cancel_cb == "ADMIN_NAV:ROLES"
+        bot.process_update(self._admin_topic_callback(9019, cancel_cb, active_id))
+
+        assert command_calls.count("/roles_reload") == 0
+        assert "roles summary" in pub.edits[-1]["text"]
+        assert "ADMIN_NAV:RELOAD_ROLES_CONFIRM" in _cbs(pub.edits[-1]["reply_markup"])
+        assert len(pub.sends) == 1
+
+    def test_roles_reload_success_returns_to_roles_surface(self, tmp_path, monkeypatch):
+        bot, _, pub = self._load_modules(tmp_path, monkeypatch, owner_ids=[9020])
+        command_calls: list[str] = []
+
+        def _fake_admin_command(text: str, user_id: int) -> str:
+            command_calls.append(text)
+            if text == "/roles":
+                return "roles summary"
+            if text == "/roles_reload":
+                return "roles reloaded"
+            return "ok"
+
+        monkeypatch.setattr(bot, "handle_admin_command_v2", _fake_admin_command)
+
+        bot.process_update(_message_update(-100555000, 9020, "/admin", chat_type="supergroup", thread_id=77))
+        active_id = pub.sends[-1]["message_id"]
+        bot.process_update(self._admin_topic_callback(9020, "ADMIN_NAV:ROLES", active_id))
+        bot.process_update(self._admin_topic_callback(9020, "ADMIN_NAV:RELOAD_ROLES_CONFIRM", active_id))
+        bot.process_update(self._admin_topic_callback(9020, "ADMIN_NAV:RELOAD_ROLES_EXEC", active_id))
+
+        assert command_calls.count("/roles_reload") == 1
+        assert "roles reloaded" in pub.edits[-1]["text"].lower()
+        assert "ADMIN_NAV:RELOAD_ROLES_CONFIRM" in _cbs(pub.edits[-1]["reply_markup"])
+        assert len(pub.sends) == 1

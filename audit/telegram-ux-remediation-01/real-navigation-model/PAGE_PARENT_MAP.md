@@ -22,4 +22,6 @@
 
 ## Context-bearing callbacks
 - Strategy symbol mutations encode `STRATEGY` in the callback so the refreshed page still returns to Strategy.
+- Engine refresh callbacks stay context-specific: `ENGINE` from Home, `OPS_ENGINE` from Operations, `SH_ENGINE` from System Health.
+- Diagnose refresh callbacks stay context-specific: `DIAGNOSE` from Home, `OPS_DIAGNOSE` from Operations, `SH_DIAGNOSE` from System Health.
 - Diagnose audit callbacks encode the originating branch where needed so failures return to the correct diagnose or health surface instead of jumping to admin root.

@@ -69,8 +69,8 @@ their parent in the markup at render time via the `parent_action` parameter.
 | Function | New Parameter | Default | Purpose |
 |----------|--------------|---------|---------|
 | `symbols_toggle_markup(...)` | `parent_action: str = "HOME"` | `"HOME"` | Back/Refresh target |
-| `engine_markup(...)` | `parent_action: str = "HOME"` | `"HOME"` | Back label and target |
-| `diagnose_markup(...)` | `parent_action: str = "HOME"` | `"HOME"` | Back label and target |
+| `engine_markup(...)` | `parent_action: str = "HOME"` | `"HOME"` | Back label, Back target, and Refresh target |
+| `diagnose_markup(...)` | `parent_action: str = "HOME"` | `"HOME"` | Back label, Back target, and Refresh target |
 
 ### Bot Service Dispatch Updates
 

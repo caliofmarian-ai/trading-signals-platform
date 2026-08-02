@@ -117,7 +117,7 @@ CANONICAL_ADMIN_PARENT_MAP: dict[str, str] = {
     "DIAGNOSE": "HOME",
     "AUDIT": "HOME",
     "SECAUDIT_AUDIT": "SECAUDIT",
-    "RELOAD_ROLES_CONFIRM": "HOME",
+    "RELOAD_ROLES_CONFIRM": "ROLES",
 }
 
 
@@ -326,7 +326,12 @@ def engine_markup(*, include_roles_reload: bool, parent_action: str = "HOME") ->
     reached from the Operations panel (OPS_ENGINE) and ``"SYSHEALTH"`` when
     reached from System Health (SH_ENGINE).  Defaults to ``"HOME"``.
     """
-    rows = [[_btn("🔄 Refresh Engine", "ENGINE"), _btn("📊 Status", "STATUS")]]
+    refresh_action = "ENGINE"
+    if parent_action == "OPERATIONS":
+        refresh_action = "OPS_ENGINE"
+    elif parent_action == "SYSHEALTH":
+        refresh_action = "SH_ENGINE"
+    rows = [[_btn("🔄 Refresh Engine", refresh_action), _btn("📊 Status", "STATUS")]]
     if include_roles_reload:
         rows.append([_btn("🔄 Reload Roles", "RELOAD_ROLES_CONFIRM")])
     back_label = "⬅️ Admin" if parent_action == "HOME" else f"⬅️ {_PANEL_BACK_LABELS.get(parent_action, 'Back')}"
@@ -396,13 +401,16 @@ def diagnose_markup(*, parent_action: str = "HOME") -> dict[str, list[list[dict[
     reached from System Health (SH_DIAGNOSE).  Defaults to ``"HOME"``.
     """
     audit_action = "AUDIT"
+    refresh_action = "DIAGNOSE"
     if parent_action == "OPERATIONS":
         audit_action = "OPS_AUDIT"
+        refresh_action = "OPS_DIAGNOSE"
     elif parent_action == "SYSHEALTH":
         audit_action = "DIAG_SH_AUDIT"
+        refresh_action = "SH_DIAGNOSE"
     back_label = "⬅️ Admin" if parent_action == "HOME" else f"⬅️ {_PANEL_BACK_LABELS.get(parent_action, 'Back')}"
     return _kb([
-        [_btn("🔍 Runtime Audit", audit_action), _btn("🔄 Refresh", "DIAGNOSE")],
+        [_btn("🔍 Runtime Audit", audit_action), _btn("🔄 Refresh", refresh_action)],
         [_btn(back_label, parent_action)],
     ])
 
