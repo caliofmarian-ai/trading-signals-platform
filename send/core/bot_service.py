@@ -1362,15 +1362,15 @@ def handle_callback(
     if message_thread_id is not None:
         context_message["message_thread_id"] = message_thread_id
     if not _is_admin_topic_context(context_message):
-        return {"text": "Access denied (wrong chat).", "reply_markup": None}
+        return {"text": "Access denied (wrong chat).", "reply_markup": None, "__toast__": True}
 
     if data in _RETIRED_ADMIN_CALLBACKS or any(data.startswith(p) for p in _RETIRED_ADMIN_PREFIXES):
-        return {"text": _RETIRED_MSG, "reply_markup": None}
+        return {"text": _RETIRED_MSG, "reply_markup": None, "__toast__": True}
 
-    return {"text": "Unknown action.", "reply_markup": None}
+    return {"text": "Unknown action.", "reply_markup": None, "__toast__": True}
 
 
-def process_update(update: Dict[str, Any]) -> None:
+def process_update(update: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Telegram update dispatcher.
 
@@ -1558,26 +1558,45 @@ def process_update(update: Dict[str, Any]) -> None:
                 thread_id = reply_target_from_message(msg_obj).thread_id if reply_target_from_message(msg_obj) is not None else None
                 callback_generation = app_cb.get("generation") if isinstance(app_cb, dict) else None
 
-                # APP:ADMIN must resolve to the same canonical admin root as ADMIN_NAV:HOME.
-                # Intercept here so both entry points produce an identical page.
-                if app_action == telegram_app_nav.ACT_ADMIN:
-                    owner_private = _is_owner_private_for_message(msg_obj, user_id)
-                    if not telegram_app_nav.callback_generation_is_current(
+                # Pre-compute stale state once for uniform handling across all APP: actions.
+                # A callback with a generation number that doesn't match the current session
+                # generation is stale — the user pressed a button from a previous /start cycle.
+                _callback_is_stale = (
+                    callback_generation is not None
+                    and not telegram_app_nav.callback_generation_is_current(
                         chat_id=chat_id,
                         user_id=user_id,
                         callback_generation=callback_generation,
                         thread_id=thread_id,
-                    ):
-                        page_text, page_markup = telegram_app_nav.handle_app_action(
-                            action=telegram_app_nav.ACT_HOME,
-                            user_id=user_id,
-                            primary_role=primary_role,
-                            first_name=first_name,
-                            shadow_mode=shadow,
-                            chat_id=chat_id,
-                            thread_id=thread_id,
-                        )
-                    elif is_owner(user_id) or _is_admin_topic_context(msg_obj):
+                    )
+                )
+
+                if _callback_is_stale:
+                    # Stale callbacks: silently redirect to Home and notify the user via toast.
+                    page_text, page_markup = telegram_app_nav.handle_app_action(
+                        action=telegram_app_nav.ACT_HOME,
+                        user_id=user_id,
+                        primary_role=primary_role,
+                        first_name=first_name,
+                        shadow_mode=shadow,
+                        chat_id=chat_id,
+                        thread_id=thread_id,
+                    )
+                    _send_interactive_page(
+                        msg_obj,
+                        user_id,
+                        page_text,
+                        page_markup,
+                        preferred_message_id=message_id,
+                        trace_context={"update_id": update_id, "command_family": f"APP:{app_action}:stale_generation"},
+                    )
+                    return {"callback_ack_text": "⏱ Button expired — returning to main menu."}
+
+                # APP:ADMIN must resolve to the same canonical admin root as ADMIN_NAV:HOME.
+                # Intercept here so both entry points produce an identical page.
+                if app_action == telegram_app_nav.ACT_ADMIN:
+                    owner_private = _is_owner_private_for_message(msg_obj, user_id)
+                    if is_owner(user_id) or _is_admin_topic_context(msg_obj):
                         nav_meta = telegram_app_nav.record_app_navigation(
                             chat_id=chat_id,
                             user_id=user_id,
@@ -1629,20 +1648,12 @@ def process_update(update: Dict[str, Any]) -> None:
                     preferred_message_id=message_id,
                     trace_context={"update_id": update_id, "command_family": f"APP:{app_action}"},
                 )
-                return
+                return None
 
             # ---- ADMIN_NAV: callbacks — require admin context ----
             admin_action = telegram_admin_ui.parse_action(data)
             if admin_action is not None and not _can_use_admin_callback(msg_obj, user_id):
-                _send_interactive_page(
-                    msg_obj,
-                    user_id,
-                    "Access denied (wrong chat).",
-                    None,
-                    preferred_message_id=message_id,
-                    trace_context={"update_id": update_id, "command_family": f"ADMIN_NAV:{admin_action}"},
-                )
-                return
+                return {"callback_ack_text": "🔒 Access denied — admin channel required."}
 
             if admin_action is not None:
                 res = _handle_admin_navigation_action(admin_action, user_id, msg_obj)
@@ -1660,7 +1671,13 @@ def process_update(update: Dict[str, Any]) -> None:
                 file_path = res["__file_path__"]
                 caption = res.get("__caption__", "")
                 _send_document_reply(msg_obj, file_path, caption=caption)
-                return
+                return None
+
+            # Toast responses: stale/unknown/retired/unauthorized callbacks must not
+            # overwrite the navigation message.  Ack text is returned for the caller
+            # (telegram_updates) to deliver as an answerCallbackQuery notification.
+            if res.get("__toast__"):
+                return {"callback_ack_text": res.get("text", "")}
 
             original_text = msg_obj.get("text", "") or ""
 
@@ -1679,6 +1696,7 @@ def process_update(update: Dict[str, Any]) -> None:
                     preferred_message_id=message_id,
                     trace_context={"update_id": update_id, "command_family": data.split(":", 1)[0] if isinstance(data, str) and ":" in data else data},
                 )
+            return None
 
     except Exception as e:
         observability_logger.log_error({

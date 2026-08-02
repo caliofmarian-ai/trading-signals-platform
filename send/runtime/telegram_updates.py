@@ -214,11 +214,19 @@ def process_update(update: Dict[str, Any]):
             _answer_callback_query(callback_id, result)
             return
 
-        bot_service.process_update(update)
-        # Acknowledge APP: and ADMIN_NAV: callbacks so Telegram dismisses the
-        # loading spinner.  VOTE_ callbacks are already acknowledged above via
-        # _answer_callback_query which encodes the outcome text.
-        _ack_callback(callback_id)
+        result = bot_service.process_update(update)
+        # Acknowledge the callback to dismiss the Telegram loading spinner.
+        # When process_update returns callback_ack_text (stale generation,
+        # unauthorized, unknown, or retired callback), deliver it as a
+        # user-visible toast.  All other callbacks receive an empty ack.
+        ack_text = (result or {}).get("callback_ack_text", "")
+        if ack_text:
+            try:
+                telegram_publisher.answer_callback_query(str(callback_id), text=ack_text)
+            except Exception:
+                _ack_callback(callback_id)
+        else:
+            _ack_callback(callback_id)
 
 
 def _answer_callback_query(callback_id: Any, result: Dict[str, Any]) -> None:
