@@ -29,10 +29,114 @@ def _sanitize(s: str) -> str:
     return _TOKEN_PATTERN.sub("[REDACTED]", s)
 
 
+# ---------------------------------------------------------------------------
+# Structured Telegram API exception
+# ---------------------------------------------------------------------------
+
+class TelegramAPIError(RuntimeError):
+    """Structured exception for Telegram API failures.
+
+    Attributes:
+        operation:    Name of the API operation that failed (e.g. "editMessageText").
+        http_status:  HTTP response status code.
+        error_code:   Telegram API ``error_code`` field (int) or None.
+        description:  Sanitized Telegram API ``description`` field.
+        retry_after:  Seconds to wait before retrying (flood-control), or None.
+    """
+
+    def __init__(
+        self,
+        operation: str,
+        http_status: int,
+        error_code: Optional[int],
+        description: str,
+        retry_after: Optional[int] = None,
+    ) -> None:
+        self.operation = operation
+        self.http_status = http_status
+        self.error_code = error_code
+        self.description = _sanitize(description)
+        self.retry_after = retry_after
+        super().__init__(
+            f"Telegram {operation} failed: "
+            f"http={http_status} code={error_code} description={self.description!r}"
+        )
+
+    @classmethod
+    def from_response(cls, operation: str, http_status: int, data: Dict[str, Any]) -> "TelegramAPIError":
+        """Construct from a parsed Telegram API response dict."""
+        error_code_raw = data.get("error_code")
+        error_code: Optional[int] = None
+        try:
+            error_code = int(error_code_raw) if error_code_raw is not None else None
+        except (TypeError, ValueError):
+            pass
+        description = str(data.get("description") or "no description")
+        retry_after: Optional[int] = None
+        params = data.get("parameters")
+        if isinstance(params, dict):
+            ra = params.get("retry_after")
+            try:
+                retry_after = int(ra) if ra is not None else None
+            except (TypeError, ValueError):
+                pass
+        return cls(
+            operation=operation,
+            http_status=http_status,
+            error_code=error_code,
+            description=description,
+            retry_after=retry_after,
+        )
+
+    # Normalized description for classification (lowercase, stripped).
+    @property
+    def normalized_description(self) -> str:
+        return self.description.lower().strip()
+
+    def is_stale_message(self) -> bool:
+        """Return True when the error unambiguously indicates a deleted/inaccessible message.
+
+        Classification uses structured fields (error_code, http_status) first,
+        then falls back to normalized description matching for known patterns.
+        Telegram HTTP 400 + error_code 400 with a stale-message description is
+        the canonical form.
+        """
+        # Structural: HTTP 400 with known stale codes/descriptions.
+        if self.http_status == 400:
+            stale_descriptions = (
+                "message to edit not found",
+                "message can't be edited",
+                "message can not be edited",
+                "message to be replied not found",
+            )
+            nd = self.normalized_description
+            if any(marker in nd for marker in stale_descriptions):
+                return True
+        # Structural: HTTP 403 indicates the bot lost access (blocked/kicked).
+        if self.http_status == 403:
+            nd = self.normalized_description
+            if "bot was blocked by the user" in nd or "user is deactivated" in nd:
+                return True
+        return False
+
+    def is_not_modified(self) -> bool:
+        """Return True when the message content was identical (no-op edit)."""
+        return "message is not modified" in self.normalized_description
+
+    def is_chat_not_found(self) -> bool:
+        nd = self.normalized_description
+        return "chat not found" in nd or "peer_id_invalid" in nd
+
+
+def _raise_from_response(operation: str, resp: requests.Response, data: Dict[str, Any]) -> None:
+    """Raise TelegramAPIError built from the HTTP response and parsed data."""
+    raise TelegramAPIError.from_response(operation, resp.status_code, data)
+
+
 def _safe_api_error(data: Dict[str, Any]) -> str:
-    """Return a log-safe summary of a Telegram API error response."""
+    """Return a log-safe summary of a Telegram API error response (legacy helper)."""
     error_code = data.get("error_code", "?")
-    description = data.get("description", "no description")
+    description = _sanitize(str(data.get("description", "no description")))
     return f"code={error_code} description={description!r}"
 
 
@@ -58,7 +162,7 @@ def send_message(
     data = r.json()
 
     if not data.get("ok"):
-        raise RuntimeError(f"Telegram send_message failed: {_safe_api_error(data)}")
+        _raise_from_response("sendMessage", r, data)
 
     return data
 
@@ -79,6 +183,10 @@ def edit_message(
     a 400 parse-entities error that was mis-classified as an unexpected failure
     and silently fell through to send_message, violating the single-message
     contract.
+
+    Raises ``TelegramAPIError`` (a subclass of ``RuntimeError``) on failure so
+    that callers can distinguish stale-message errors from network errors using
+    structured fields rather than brittle string matching.
     """
     payload: Dict[str, Any] = {
         "chat_id": chat_id,
@@ -95,7 +203,7 @@ def edit_message(
     data = r.json()
 
     if not data.get("ok"):
-        raise RuntimeError(f"Telegram edit_message failed: {_safe_api_error(data)}")
+        _raise_from_response("editMessageText", r, data)
 
     return data
 

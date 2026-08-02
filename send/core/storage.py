@@ -2,7 +2,7 @@
 # BinaryBot — Atomic Persistence Layer (canonical)
 # - JSON load/save atomic
 # - JSONL append-only
-# - cross-process locks (simple lockfiles)
+# - cross-process locks (simple lockfiles) with stale-lock recovery
 #
 # Hard rules:
 # - no module writes JSON directly (must use this)
@@ -14,6 +14,8 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import socket
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -136,11 +138,166 @@ def append_jsonl(path: str, record: Dict[str, Any]) -> None:
         os.fsync(f.fileno())
 
 
+# ---------------------------------------------------------------------------
+# Stale-lock detection helpers
+# ---------------------------------------------------------------------------
+
+def _current_deployment_id() -> str:
+    """Return a deployment-scoped identifier for ownership comparison."""
+    for name in ("RAILWAY_DEPLOYMENT_ID", "RAILWAY_SERVICE_ID", "RUN_ID"):
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _safe_hostname() -> str:
+    try:
+        return socket.gethostname()
+    except Exception:
+        return ""
+
+
+def _read_lock_metadata(lock_path: str) -> Dict[str, Any]:
+    """Parse ownership metadata written into a lock file.
+
+    Format:  ``key=value`` tokens separated by whitespace.
+    Returns an empty dict on any read or parse failure (treated as malformed).
+    """
+    try:
+        with open(lock_path, "r", encoding="utf-8") as fh:
+            content = fh.read()
+    except Exception:
+        return {}
+    result: Dict[str, Any] = {}
+    for token in content.split():
+        if "=" in token:
+            k, _, v = token.partition("=")
+            result[k.strip()] = v.strip()
+    return result
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """Return True when *pid* refers to a running process in the current OS context."""
+    # PID 0 and negative PIDs are not real owning processes.
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # PID exists but belongs to a different UID — consider alive to be safe.
+        return True
+    except Exception:
+        return False
+
+
+# A lock is always considered stale when it is older than this threshold,
+# even if the PID appears alive (e.g. PID reuse).
+_LOCK_STALE_AGE_SEC: float = 300.0
+
+
+def _lock_is_stale(lock_path: str) -> bool:
+    """Return True when the lock at *lock_path* can be safely reclaimed.
+
+    A lock is stale when ANY of the following are true:
+    1. Its owning PID is no longer running in this OS context.
+    2. Its deployment ID differs from the current deployment (different Redeploy).
+    3. It is older than ``_LOCK_STALE_AGE_SEC`` seconds.
+    4. Its metadata is malformed and it is at least 60 seconds old.
+
+    A lock is NOT reclaimed when the PID is alive AND the deployment matches.
+    """
+    try:
+        meta = _read_lock_metadata(lock_path)
+        if not meta:
+            # Malformed or empty — fall back to age check.
+            try:
+                age = time.time() - os.path.getmtime(lock_path)
+                return age > 60.0
+            except Exception:
+                return True
+
+        lock_pid_str = meta.get("pid", "")
+        lock_deploy = meta.get("deploy", "")
+        lock_ts_str = meta.get("ts", "")
+
+        current_deploy = _current_deployment_id()
+
+        # Different deployment → always stale (cross-redeploy orphan).
+        if lock_deploy and current_deploy and lock_deploy != current_deploy:
+            return True
+
+        # Explicit age threshold (handles PID reuse on long-lived systems).
+        if lock_ts_str:
+            try:
+                lock_age = time.time() - float(lock_ts_str)
+                if lock_age > _LOCK_STALE_AGE_SEC:
+                    return True
+            except ValueError:
+                pass
+
+        # Dead PID.
+        if lock_pid_str:
+            try:
+                lock_pid = int(lock_pid_str)
+                if not _is_pid_alive(lock_pid):
+                    return True
+            except ValueError:
+                pass
+
+        return False
+    except Exception:
+        return False
+
+
+def _reclaim_stale_lock(lock_path: str, lock_name: str) -> None:
+    """Atomically remove a lock file that has been confirmed stale.
+
+    Emits a structured diagnostic to stderr so that Railway log aggregation
+    captures the reclaim event without requiring a full logging stack.
+    """
+    try:
+        meta = _read_lock_metadata(lock_path)
+        payload = {
+            "event": "stale_lock_reclaimed",
+            "component": "storage_lock",
+            "lock_name": lock_name,
+            "lock_path": lock_path,
+            "stale_pid": meta.get("pid"),
+            "stale_deploy": meta.get("deploy"),
+            "stale_ts": meta.get("ts"),
+            "current_pid": os.getpid(),
+            "current_deploy": _current_deployment_id(),
+            "reclaim_ts": time.time(),
+        }
+        try:
+            print(json.dumps(payload, sort_keys=True), file=sys.stderr, flush=True)
+        except Exception:
+            pass
+        os.remove(lock_path)
+    except FileNotFoundError:
+        # Already removed by a concurrent reclaim — that is fine.
+        pass
+    except Exception:
+        pass
+
+
 @contextlib.contextmanager
 def with_lock(lock_name: str, base_dir: Optional[str] = None, timeout_sec: float = 10.0) -> Iterator[None]:
-    """
-    Cross-process lock using lockfile + O_EXCL create.
-    This works fine for a single host.
+    """Cross-process exclusive lock using O_EXCL lockfile creation.
+
+    Ownership metadata written to the lock file enables safe stale-lock
+    detection and reclaim when:
+
+    - The owning PID no longer exists (killed process, crash, SIGKILL).
+    - The lock was created by a different Railway deployment.
+    - The lock is older than ``_LOCK_STALE_AGE_SEC`` (300 s by default).
+
+    A lock held by a demonstrably live process on the current deployment
+    is never stolen.
 
     lock_name examples:
       - "focus_state"
@@ -148,6 +305,8 @@ def with_lock(lock_name: str, base_dir: Optional[str] = None, timeout_sec: float
       - "settings"
       - "active_symbols"
       - "outcomes"
+      - "telegram_ui_state"
+      - "restart_guard"
     """
     lock_dir = base_dir or state_path(".locks")
     os.makedirs(lock_dir, exist_ok=True)
@@ -161,14 +320,32 @@ def with_lock(lock_name: str, base_dir: Optional[str] = None, timeout_sec: float
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             break
         except FileExistsError:
-            if (time.time() - start) >= timeout_sec:
-                raise TimeoutError(f"Timed out acquiring lock: {lock_name}")
+            elapsed = time.time() - start
+            if elapsed >= timeout_sec:
+                # One last stale check before giving up — the PID may have died
+                # during our wait and the reclaim was not triggered yet.
+                if _lock_is_stale(lock_path):
+                    _reclaim_stale_lock(lock_path, lock_name)
+                    continue
+                raise TimeoutError(
+                    f"Timed out acquiring lock '{lock_name}' after {elapsed:.1f}s"
+                )
+            # Check for stale lock on every contention cycle.
+            if _lock_is_stale(lock_path):
+                _reclaim_stale_lock(lock_path, lock_name)
+                continue
             time.sleep(0.05)
 
     try:
-        # Write pid + ts for debugging
+        # Write rich ownership metadata for stale-detection on future acquisitions.
         try:
-            os.write(fd, f"pid={os.getpid()} ts={time.time():.3f}\n".encode("utf-8"))
+            meta_line = (
+                f"pid={os.getpid()} "
+                f"ts={time.time():.3f} "
+                f"deploy={_current_deployment_id()} "
+                f"host={_safe_hostname()}\n"
+            )
+            os.write(fd, meta_line.encode("utf-8"))
         except Exception:
             pass
         yield

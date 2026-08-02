@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 import requests
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from core import bot_service
 from core import outcome_service
@@ -30,9 +30,39 @@ def _base_url() -> str:
 
 POLL_INTERVAL = 1.5
 
-LAST_UPDATE_ID = None
+LAST_UPDATE_ID: Optional[int] = None
 _POLLER_LOCK = threading.Lock()
 _POLLER_STARTED = False
+
+# Heartbeat: timestamp of the last successful getUpdates call (or 0 if never).
+# Updated atomically by the poller thread; read by liveness checks.
+_POLLER_LAST_HEARTBEAT: float = 0.0
+_POLLER_HEARTBEAT_LOCK = threading.Lock()
+# If no heartbeat is recorded within this window the poller is considered stalled.
+POLLER_HEARTBEAT_TIMEOUT_SEC: float = 120.0
+
+
+def _update_poller_heartbeat() -> None:
+    global _POLLER_LAST_HEARTBEAT
+    with _POLLER_HEARTBEAT_LOCK:
+        _POLLER_LAST_HEARTBEAT = time.monotonic()
+
+
+def get_poller_heartbeat_age() -> Optional[float]:
+    """Return seconds since the last poller heartbeat, or None if never started."""
+    with _POLLER_HEARTBEAT_LOCK:
+        ts = _POLLER_LAST_HEARTBEAT
+    if ts == 0.0:
+        return None
+    return time.monotonic() - ts
+
+
+def is_poller_alive() -> bool:
+    """Return True when the poller thread has produced a recent heartbeat."""
+    age = get_poller_heartbeat_age()
+    if age is None:
+        return False
+    return age < POLLER_HEARTBEAT_TIMEOUT_SEC
 
 
 def _runtime_instance_id() -> str:
@@ -81,9 +111,7 @@ def poll_updates():
 
     while True:
         try:
-            params = {
-                "timeout": 30
-            }
+            params: Dict[str, Any] = {"timeout": 30}
 
             if LAST_UPDATE_ID:
                 params["offset"] = LAST_UPDATE_ID
@@ -91,7 +119,7 @@ def poll_updates():
             r = requests.get(
                 f"{_base_url()}/getUpdates",
                 params=params,
-                timeout=35
+                timeout=35,
             )
 
             data = r.json()
@@ -100,13 +128,31 @@ def poll_updates():
                 time.sleep(POLL_INTERVAL)
                 continue
 
+            # Record a heartbeat after every successful getUpdates response
+            # (including empty ones) so liveness checks can verify the thread
+            # is not stalled.
+            _update_poller_heartbeat()
+
             updates = data.get("result", [])
 
             for update in updates:
-
+                # Advance the offset BEFORE processing so that even a failed
+                # update does not block the next getUpdates call.  An
+                # individual update failure is contained and logged without
+                # stopping the poller loop.
                 LAST_UPDATE_ID = update["update_id"] + 1
 
-                process_update(update)
+                try:
+                    process_update(update)
+                except Exception as update_exc:
+                    safe_error = telegram_publisher._sanitize(str(update_exc))
+                    observability_logger.log_error({
+                        "event_type": "error",
+                        "module": "telegram_updates",
+                        "function": "poll_updates_per_update",
+                        "update_id": update.get("update_id"),
+                        "error": safe_error,
+                    })
 
         except Exception as e:
             # Sanitize the exception string to strip any embedded bot token
