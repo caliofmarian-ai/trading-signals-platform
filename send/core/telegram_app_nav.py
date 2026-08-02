@@ -370,12 +370,24 @@ def get_runtime_diagnostics(
         if chat_id is not None and user_id is not None:
             key = normalize_session_key(chat_id, user_id, thread_id)
             entry = _active_ui.get(key) or {}
+            in_memory_message_id = entry.get("message_id")
+            # Independently read persisted message_id — do not copy from in-memory state.
+            persisted_message_id: Optional[int] = None
+            if _persistence_enabled() and _runtime_path_ready():
+                try:
+                    persisted_message_id = state_store.read_telegram_session_message_id(
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        thread_id=thread_id,
+                    )
+                except Exception:
+                    persisted_message_id = None
             result.update(
                 {
                     "session_key": key,
                     "session_key_fingerprint": session_key_fingerprint(chat_id, user_id, thread_id),
-                    "active_message_id": entry.get("message_id"),
-                    "persisted_message_id": entry.get("message_id"),
+                    "active_message_id": in_memory_message_id,
+                    "persisted_message_id": persisted_message_id,
                 }
             )
         return result
@@ -430,7 +442,11 @@ def get_active_message(user_id: int, chat_id: int, thread_id: Optional[int] = No
             _active_ui.pop(key, None)
             if _persistence_enabled() and _runtime_path_ready():
                 try:
-                    state_store.update_telegram_ui_state(lambda payload: _merge_session_clear(payload, key))
+                    state_store.delete_telegram_ui_session(
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        thread_id=thread_id,
+                    )
                 except Exception as exc:
                     _log_ui_state_warning(
                         "TELEGRAM_UI_STATE_SAVE_FAILED",
@@ -441,23 +457,94 @@ def get_active_message(user_id: int, chat_id: int, thread_id: Optional[int] = No
         return int(entry.get("message_id"))
 
 
-def clear_active_message(user_id: int, chat_id: int, thread_id: Optional[int] = None) -> None:
-    """Forget active UI message for this chat/user/thread session."""
+def clear_active_message(user_id: int, chat_id: int, thread_id: Optional[int] = None) -> Dict[str, Any]:
+    """Forget active UI message for this chat/user/thread session.
+
+    Correctness contract:
+    1. Normalize the exact key.
+    2. Remove from memory whether or not it currently exists there.
+    3. Invoke exact persisted deletion regardless of in-memory presence.
+    4. Verify the target no longer exists in persisted state.
+    5. Preserve unrelated sessions.
+    6. Return a structured result.
+    7. Log failures safely.
+    8. Never restore the stale message ID.
+
+    A session existing only in persisted storage is still removable.
+    """
     global _last_save_result
     _ensure_initialized()
     with _active_ui_lock:
         key = normalize_session_key(chat_id, user_id, thread_id)
-        removed = _active_ui.pop(key, None)
-        if removed is None:
-            return
+        _active_ui.pop(key, None)
+
         if not _persistence_enabled() or not _runtime_path_ready():
-            return
+            return {
+                "status": "ok",
+                "in_memory_removed": True,
+                "persisted_delete_attempted": False,
+                "persisted_absent": True,
+                "reason": "persistence_disabled_or_runtime_path_unset",
+            }
+
         try:
-            state_store.update_telegram_ui_state(lambda payload: _merge_session_clear(payload, key))
+            delete_result = state_store.delete_telegram_ui_session(
+                chat_id=chat_id,
+                user_id=user_id,
+                thread_id=thread_id,
+            )
+            if delete_result.error:
+                _log_ui_state_warning(
+                    "TELEGRAM_UI_STATE_CLEAR_FAILED",
+                    "Persisted exact-session deletion failed",
+                    {
+                        "error": delete_result.error,
+                        "target_key": str(delete_result.target_key),
+                        "path": _resolved_state_path(),
+                    },
+                )
+                _last_save_result = {
+                    "status": "error",
+                    "error": delete_result.error,
+                    "path": _resolved_state_path(),
+                }
+                return {
+                    "status": "error",
+                    "in_memory_removed": True,
+                    "persisted_delete_attempted": True,
+                    "persisted_absent": None,
+                    "error": delete_result.error,
+                }
+
+            verification = state_store.verify_telegram_session_absent(
+                chat_id=chat_id,
+                user_id=user_id,
+                thread_id=thread_id,
+            )
+            persisted_absent = verification.get("absent", False)
+            if not persisted_absent:
+                _log_ui_state_warning(
+                    "TELEGRAM_UI_STATE_CLEAR_RESIDUAL",
+                    "Session still present in persisted state after delete",
+                    {
+                        "target_key": str(key),
+                        "found_message_id": verification.get("found_message_id"),
+                        "path": _resolved_state_path(),
+                    },
+                )
+
             _last_save_result = {
                 "status": "ok",
                 "path": _resolved_state_path(),
                 "session_count": len(_active_ui),
+            }
+            return {
+                "status": "ok",
+                "in_memory_removed": True,
+                "persisted_delete_attempted": True,
+                "persisted_absent": persisted_absent,
+                "session_existed_in_persistence": delete_result.session_existed,
+                "final_persisted_session_count": delete_result.final_session_count,
             }
         except Exception as exc:
             _last_save_result = {
@@ -470,6 +557,13 @@ def clear_active_message(user_id: int, chat_id: int, thread_id: Optional[int] = 
                 "Failed to persist Telegram UI active-message state",
                 _last_save_result,
             )
+            return {
+                "status": "error",
+                "in_memory_removed": True,
+                "persisted_delete_attempted": True,
+                "persisted_absent": None,
+                "error": str(exc),
+            }
 
 
 def _merge_session_update(
