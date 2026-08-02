@@ -141,6 +141,7 @@ def admin_home_markup(
     role: str = "",
     include_roles_reload: bool = False,
     home_button_callback: Optional[str] = None,
+    back_button_callback: Optional[str] = None,
 ) -> dict[str, list[list[dict[str, str]]]]:
     """
     Canonical role-scoped admin home keyboard.
@@ -169,8 +170,13 @@ def admin_home_markup(
     if include_roles_reload:
         rows.append([_btn("🔄 Reload Roles", "RELOAD_ROLES_CONFIRM")])
 
+    nav_row: list[dict[str, str]] = []
+    if back_button_callback is not None:
+        nav_row.append({"text": "⬅️ Back", "callback_data": back_button_callback})
     if home_button_callback is not None:
-        rows.append([{"text": "🏠 Home", "callback_data": home_button_callback}])
+        nav_row.append({"text": "🏠 Home", "callback_data": home_button_callback})
+    if nav_row:
+        rows.append(nav_row)
 
     return _kb(rows)
 
@@ -233,12 +239,17 @@ def symbols_toggle_markup(
 
     rows: list[list[dict[str, str]]] = []
 
+    def _symbol_action(base: str, value: str = "") -> str:
+        if parent_action == "HOME":
+            return f"{base}:{value}" if value else base
+        return f"{base}:{parent_action}:{value}" if value else f"{base}:{parent_action}"
+
     def _section_rows(symbols: list[str]) -> list[list[dict[str, str]]]:
         section_rows = []
         row: list[dict[str, str]] = []
         for sym in symbols:
             icon = "✅" if sym.upper() in active_set else "⬜"
-            row.append(_btn(f"{icon} {sym}", f"SYM_TOGGLE:{sym}"))
+            row.append(_btn(f"{icon} {sym}", _symbol_action("SYM_TOGGLE", sym)))
             if len(row) == 3:
                 section_rows.append(row)
                 row = []
@@ -257,8 +268,8 @@ def symbols_toggle_markup(
 
     # Controls row
     rows.append([
-        _btn("✅ All", "SYMBOLS_ALL"),
-        _btn("⬜ None", "SYMBOLS_NONE"),
+        _btn("✅ All", _symbol_action("SYMBOLS_ALL")),
+        _btn("⬜ None", _symbol_action("SYMBOLS_NONE")),
         _btn("🔄 Refresh", "SYMBOLS_COV" if parent_action == "HOME" else "SYMBOLS"),
     ])
     back_label = "⬅️ Admin" if parent_action == "HOME" else "⬅️ Strategy"
@@ -327,8 +338,8 @@ def standard_back_markup() -> dict[str, list[list[dict[str, str]]]]:
     return _kb([[_btn("⬅️ Admin", "HOME")]])
 
 
-def reload_confirm_markup() -> dict[str, list[list[dict[str, str]]]]:
-    return _kb([[_btn("✅ Confirm Reload", "RELOAD_ROLES_EXEC"), _btn("❌ Cancel", "HOME")]])
+def reload_confirm_markup(*, cancel_action: str = "ROLES") -> dict[str, list[list[dict[str, str]]]]:
+    return _kb([[_btn("✅ Confirm Reload", "RELOAD_ROLES_EXEC"), _btn("❌ Cancel", cancel_action)]])
 
 
 def files_home_markup() -> dict[str, list[list[dict[str, str]]]]:
@@ -384,9 +395,14 @@ def diagnose_markup(*, parent_action: str = "HOME") -> dict[str, list[list[dict[
     reached from the Operations panel (OPS_DIAGNOSE) and ``"SYSHEALTH"`` when
     reached from System Health (SH_DIAGNOSE).  Defaults to ``"HOME"``.
     """
+    audit_action = "AUDIT"
+    if parent_action == "OPERATIONS":
+        audit_action = "OPS_AUDIT"
+    elif parent_action == "SYSHEALTH":
+        audit_action = "DIAG_SH_AUDIT"
     back_label = "⬅️ Admin" if parent_action == "HOME" else f"⬅️ {_PANEL_BACK_LABELS.get(parent_action, 'Back')}"
     return _kb([
-        [_btn("🔍 Runtime Audit", "AUDIT"), _btn("🔄 Refresh", "DIAGNOSE")],
+        [_btn("🔍 Runtime Audit", audit_action), _btn("🔄 Refresh", "DIAGNOSE")],
         [_btn(back_label, parent_action)],
     ])
 

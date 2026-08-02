@@ -651,6 +651,7 @@ def _build_canonical_admin_root_page(
     user_id: int,
     *,
     owner_private: bool,
+    back_button_callback: Optional[str] = None,
 ) -> tuple[str, Optional[Dict[str, Any]]]:
     """
     Single source of truth for every admin root entry point.
@@ -670,6 +671,7 @@ def _build_canonical_admin_root_page(
         role=role,
         include_roles_reload=not owner_private,
         home_button_callback=home_cb,
+        back_button_callback=back_button_callback,
     )
     return _format_card("⚙️ Admin Control Surface", content), markup
 
@@ -795,44 +797,68 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             return {"text": "Access denied (wrong chat).", "reply_markup": None}
         return {
             "text": _format_card("🔄 Confirmation", "Confirm reloading role + permission configuration?"),
-            "reply_markup": telegram_admin_ui.reload_confirm_markup(),
+            "reply_markup": telegram_admin_ui.reload_confirm_markup(cancel_action="ROLES"),
+        }
+
+    if action == "RELOAD_ROLES_EXEC":
+        from core.admin_permissions import has_permission
+        if owner_private or not _is_admin_topic_context(message):
+            return {"text": "Access denied (wrong chat).", "reply_markup": None}
+        if not has_permission(user_id, "roles.write"):
+            return {"text": "Access denied (missing permission).", "reply_markup": None}
+        text = handle_admin_command_v2("/roles_reload", user_id)
+        return {
+            "text": _format_card("🔄 Roles Reload", text),
+            "reply_markup": telegram_admin_ui.roles_identity_markup(can_reload=True),
         }
 
     # ---- Symbol toggle callbacks ----
     if action.startswith("SYM_TOGGLE:"):
         if not _check_rate_limit(user_id, "mutation"):
             return {"text": "Rate limit exceeded. Please wait before making more changes.", "reply_markup": None}
-        sym = action[len("SYM_TOGGLE:"):]
+        sym_payload = action[len("SYM_TOGGLE:"):]
+        if ":" in sym_payload:
+            parent_action, sym = sym_payload.split(":", 1)
+        else:
+            parent_action, sym = "HOME", sym_payload
+        if parent_action not in {"HOME", "STRATEGY"}:
+            parent_action = "HOME"
         result = handle_symbols_toggle(sym, user_id)
         # Refresh toggle markup
         try:
             all_syms = get_all_known_symbols()
             active = _load_active_symbols()
-            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active)
+            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action=parent_action)
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
         return {"text": _format_card("💱 Symbols Panel", result), "reply_markup": markup}
 
-    if action == "SYMBOLS_ALL":
+    if action == "SYMBOLS_ALL" or action.startswith("SYMBOLS_ALL:"):
         if not _check_rate_limit(user_id, "mutation"):
             return {"text": "Rate limit exceeded.", "reply_markup": None}
+        parent_action = action.split(":", 1)[1] if ":" in action else "HOME"
+        if parent_action not in {"HOME", "STRATEGY"}:
+            parent_action = "HOME"
         result = handle_symbols_all(user_id)
         try:
             all_syms = get_all_known_symbols()
             active = _load_active_symbols()
-            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active)
+            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action=parent_action)
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
         return {"text": _format_card("💱 Symbols Panel", result), "reply_markup": markup}
 
-    if action == "SYMBOLS_NONE":
+    if action == "SYMBOLS_NONE" or action.startswith("SYMBOLS_NONE:"):
         if not _check_rate_limit(user_id, "mutation"):
             return {"text": "Rate limit exceeded.", "reply_markup": None}
+        parent_action = action.split(":", 1)[1] if ":" in action else "HOME"
+        if parent_action not in {"HOME", "STRATEGY"}:
+            parent_action = "HOME"
         result = handle_symbols_none(user_id)
         try:
             all_syms = get_all_known_symbols()
             active = _load_active_symbols()
-            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active)
+            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action=parent_action)
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
         return {"text": _format_card("💱 Symbols Panel", result), "reply_markup": markup}
@@ -963,12 +989,22 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             diagnose_parent = "HOME"
         return {"text": text, "reply_markup": telegram_admin_ui.diagnose_markup(parent_action=diagnose_parent)}
 
-    if action == "AUDIT" or action == "SH_AUDIT" or action == "SECAUDIT_AUDIT":
+    if action in {"AUDIT", "OPS_AUDIT", "SH_AUDIT", "DIAG_SH_AUDIT", "SECAUDIT_AUDIT"}:
         if not _check_rate_limit(user_id, "audit_runtime"):
             return {"text": "Rate limit exceeded.", "reply_markup": None}
         path, err = handle_audit_runtime(user_id)
         if err:
-            return {"text": f"Audit failed: {err}", "reply_markup": telegram_admin_ui.standard_back_markup()}
+            if action == "OPS_AUDIT":
+                markup = telegram_admin_ui.diagnose_markup(parent_action="OPERATIONS")
+            elif action == "DIAG_SH_AUDIT":
+                markup = telegram_admin_ui.diagnose_markup(parent_action="SYSHEALTH")
+            elif action == "SH_AUDIT":
+                markup = telegram_admin_ui.system_health_markup()
+            elif action == "SECAUDIT_AUDIT":
+                markup = telegram_admin_ui.security_audit_markup()
+            else:
+                markup = telegram_admin_ui.diagnose_markup(parent_action="HOME")
+            return {"text": f"Audit failed: {err}", "reply_markup": markup}
         return {"text": "", "reply_markup": None, "__file_path__": path, "__caption__": "binarybot_audit.json"}
 
     # ---- Canonical panel actions ----
@@ -1137,7 +1173,6 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         "REPORT": "/report",
         "ROLES": "/roles",
         "AFFILIATE": "/affiliate",
-        "RELOAD_ROLES_EXEC": "/roles_reload",
     }.get(action)
 
     # ---- SYMBOLS: reached from Strategy panel — Back returns to Strategy ----
@@ -1380,8 +1415,20 @@ def process_update(update: Dict[str, Any]) -> None:
                 shadow = _env_flag("SHADOW_MODE", default=False)
                 primary_role = get_primary_role(user_id)
                 first_name = (msg.get("from") or {}).get("first_name", "") or ""
+                target = reply_target_from_message(msg)
+                generation = None
+                if target is not None:
+                    generation = telegram_app_nav.begin_navigation_generation(
+                        target.chat_id,
+                        user_id,
+                        target.thread_id,
+                    )
                 page_text, page_markup = telegram_app_nav.render_welcome_page(
-                    user_id, primary_role, first_name=first_name, shadow_mode=shadow
+                    user_id,
+                    primary_role,
+                    first_name=first_name,
+                    shadow_mode=shadow,
+                    generation=generation,
                 )
                 _handle_start_hard_reset(
                     msg=msg,
@@ -1394,7 +1441,16 @@ def process_update(update: Dict[str, Any]) -> None:
 
             if cmd == "/help":
                 primary_role = get_primary_role(user_id)
-                page_text, page_markup = telegram_app_nav.render_help_page(primary_role)
+                target = reply_target_from_message(msg)
+                page_text, page_markup = telegram_app_nav.handle_app_action(
+                    action=telegram_app_nav.ACT_HELP,
+                    user_id=user_id,
+                    primary_role=primary_role,
+                    first_name=(msg.get("from") or {}).get("first_name", "") or "",
+                    shadow_mode=_env_flag("SHADOW_MODE", default=False),
+                    chat_id=target.chat_id if target is not None else chat_id,
+                    thread_id=target.thread_id if target is not None else None,
+                )
                 _send_interactive_page(
                     msg,
                     user_id,
@@ -1405,7 +1461,18 @@ def process_update(update: Dict[str, Any]) -> None:
                 return
 
             if cmd == "/status":
-                page_text, page_markup = telegram_app_nav.render_status_page(_build_status_snapshot())
+                primary_role = get_primary_role(user_id)
+                target = reply_target_from_message(msg)
+                page_text, page_markup = telegram_app_nav.handle_app_action(
+                    action=telegram_app_nav.ACT_STATUS,
+                    user_id=user_id,
+                    primary_role=primary_role,
+                    first_name=(msg.get("from") or {}).get("first_name", "") or "",
+                    shadow_mode=_env_flag("SHADOW_MODE", default=False),
+                    status_snapshot=_build_status_snapshot(),
+                    chat_id=target.chat_id if target is not None else chat_id,
+                    thread_id=target.thread_id if target is not None else None,
+                )
                 _send_interactive_page(
                     msg,
                     user_id,
@@ -1426,7 +1493,32 @@ def process_update(update: Dict[str, Any]) -> None:
                     )
                     return
                 owner_private = _is_owner_private_for_message(msg, user_id)
-                response_text, reply_markup = _render_panel_for_command(text, user_id, owner_private=owner_private)
+                if cmd == "/admin":
+                    target = reply_target_from_message(msg)
+                    if target is not None:
+                        nav_meta = telegram_app_nav.record_app_navigation(
+                            chat_id=target.chat_id,
+                            user_id=user_id,
+                            action=telegram_app_nav.ACT_ADMIN,
+                            thread_id=target.thread_id,
+                        )
+                        app_back_cb = (
+                            telegram_app_nav.make_callback(
+                                telegram_app_nav.ACT_BACK,
+                                generation=nav_meta["generation"],
+                            )
+                            if nav_meta.get("include_back")
+                            else None
+                        )
+                    else:
+                        app_back_cb = None
+                    response_text, reply_markup = _build_canonical_admin_root_page(
+                        user_id,
+                        owner_private=owner_private,
+                        back_button_callback=app_back_cb,
+                    )
+                else:
+                    response_text, reply_markup = _render_panel_for_command(text, user_id, owner_private=owner_private)
                 # Handle file-path return signals
                 if response_text.startswith("__FILE_PATH__:"):
                     file_path = response_text[len("__FILE_PATH__:"):]
@@ -1457,19 +1549,52 @@ def process_update(update: Dict[str, Any]) -> None:
             message_id = msg_obj.get("message_id")
 
             # ---- APP: navigation callbacks — handled for all roles, all contexts ----
-            app_action = telegram_app_nav.parse_app_action(data)
+            app_cb = telegram_app_nav.parse_app_callback(data)
+            app_action = None if app_cb is None else app_cb.get("action")
             if app_action is not None:
                 shadow = _env_flag("SHADOW_MODE", default=False)
                 primary_role = get_primary_role(user_id)
                 first_name = (cb.get("from") or {}).get("first_name", "") or ""
+                thread_id = reply_target_from_message(msg_obj).thread_id if reply_target_from_message(msg_obj) is not None else None
+                callback_generation = app_cb.get("generation") if isinstance(app_cb, dict) else None
 
                 # APP:ADMIN must resolve to the same canonical admin root as ADMIN_NAV:HOME.
                 # Intercept here so both entry points produce an identical page.
                 if app_action == telegram_app_nav.ACT_ADMIN:
                     owner_private = _is_owner_private_for_message(msg_obj, user_id)
-                    if is_owner(user_id) or _is_admin_topic_context(msg_obj):
+                    if not telegram_app_nav.callback_generation_is_current(
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        callback_generation=callback_generation,
+                        thread_id=thread_id,
+                    ):
+                        page_text, page_markup = telegram_app_nav.handle_app_action(
+                            action=telegram_app_nav.ACT_HOME,
+                            user_id=user_id,
+                            primary_role=primary_role,
+                            first_name=first_name,
+                            shadow_mode=shadow,
+                            chat_id=chat_id,
+                            thread_id=thread_id,
+                        )
+                    elif is_owner(user_id) or _is_admin_topic_context(msg_obj):
+                        nav_meta = telegram_app_nav.record_app_navigation(
+                            chat_id=chat_id,
+                            user_id=user_id,
+                            action=telegram_app_nav.ACT_ADMIN,
+                            thread_id=thread_id,
+                        )
                         page_text, page_markup = _build_canonical_admin_root_page(
-                            user_id, owner_private=owner_private
+                            user_id,
+                            owner_private=owner_private,
+                            back_button_callback=(
+                                telegram_app_nav.make_callback(
+                                    telegram_app_nav.ACT_BACK,
+                                    generation=nav_meta["generation"],
+                                )
+                                if nav_meta.get("include_back")
+                                else None
+                            ),
                         )
                     else:
                         # Non-owner, non-admin context: informational redirect.
@@ -1480,6 +1605,9 @@ def process_update(update: Dict[str, Any]) -> None:
                             first_name=first_name,
                             shadow_mode=shadow,
                             status_snapshot=None,
+                            chat_id=chat_id,
+                            thread_id=thread_id,
+                            callback_generation=callback_generation,
                         )
                 else:
                     page_text, page_markup = telegram_app_nav.handle_app_action(
@@ -1489,6 +1617,9 @@ def process_update(update: Dict[str, Any]) -> None:
                         first_name=first_name,
                         shadow_mode=shadow,
                         status_snapshot=_build_status_snapshot() if app_action == telegram_app_nav.ACT_STATUS else None,
+                        chat_id=chat_id,
+                        thread_id=thread_id,
+                        callback_generation=callback_generation,
                     )
                 _send_interactive_page(
                     msg_obj,

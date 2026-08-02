@@ -28,8 +28,12 @@ Coverage:
 """
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
+from typing import Optional
+from unittest.mock import patch
 
 # Ensure send/ is on the import path.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -68,6 +72,103 @@ def _texts(markup: Dict) -> list:
     ]
 
 
+def _message_update(
+    chat_id: int,
+    user_id: int,
+    text: str,
+    *,
+    chat_type: str = "private",
+    message_id: int = 1001,
+    thread_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    message: Dict[str, Any] = {
+        "chat": {"id": chat_id, "type": chat_type},
+        "from": {"id": user_id, "first_name": "Alice"},
+        "text": text,
+        "message_id": message_id,
+    }
+    if thread_id is not None:
+        message["message_thread_id"] = thread_id
+    return {"message": message}
+
+
+def _callback_update(
+    chat_id: int,
+    user_id: int,
+    data: str,
+    *,
+    chat_type: str = "private",
+    message_id: int = 2001,
+    thread_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    message: Dict[str, Any] = {
+        "chat": {"id": chat_id, "type": chat_type},
+        "message_id": message_id,
+        "text": "previous page text",
+    }
+    if thread_id is not None:
+        message["message_thread_id"] = thread_id
+    return {
+        "callback_query": {
+            "id": f"cb-{message_id}",
+            "from": {"id": user_id, "first_name": "Alice"},
+            "data": data,
+            "message": message,
+        }
+    }
+
+
+def _find_callback(markup: Dict, needle: str) -> Optional[str]:
+    for row in markup.get("inline_keyboard", []):
+        for btn in row:
+            callback = btn.get("callback_data", "")
+            if needle in callback:
+                return callback
+    return None
+
+
+class _FakePublisher:
+    def __init__(self) -> None:
+        self._next_id = 5000
+        self.sends: list[Dict[str, Any]] = []
+        self.edits: list[Dict[str, Any]] = []
+        self.acks: list[str] = []
+
+    def send_message(self, chat_id, text, reply_markup=None, thread_id=None):
+        message_id = self._next_id
+        self._next_id += 1
+        self.sends.append({
+            "chat_id": chat_id,
+            "text": text,
+            "reply_markup": reply_markup,
+            "thread_id": thread_id,
+            "message_id": message_id,
+        })
+        return {"ok": True, "result": {"message_id": message_id}}
+
+    def edit_message(self, chat_id, message_id, text=None, reply_markup=None):
+        self.edits.append({
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "reply_markup": reply_markup,
+        })
+        return {"ok": True, "result": {"message_id": message_id}}
+
+    def answer_callback_query(self, callback_query_id, text="", show_alert=False):
+        self.acks.append(callback_query_id)
+        return {"ok": True}
+
+    def delete_message(self, chat_id, message_id):
+        return {
+            "outcome": "deleted",
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "error_code": None,
+            "description": None,
+        }
+
+
 # ---------------------------------------------------------------------------
 # ACT_BACK constant
 # ---------------------------------------------------------------------------
@@ -93,6 +194,12 @@ class TestActBackConstant:
         _purge()
         from core.telegram_app_nav import parse_app_action, APP_NAV_PREFIX, ACT_BACK
         assert parse_app_action(f"{APP_NAV_PREFIX}{ACT_BACK}") == ACT_BACK
+
+    def test_parse_versioned_app_callback(self):
+        _purge()
+        from core.telegram_app_nav import parse_app_callback
+        parsed = parse_app_callback("APP:7:STATUS")
+        assert parsed == {"action": "STATUS", "generation": 7}
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +236,7 @@ class TestBoundedNavHistory:
         clear_nav_history(1004, chat_id=1004)
         assert nav_can_go_back(1004, chat_id=1004) is False
 
-    def test_history_stack_is_fifo(self):
+    def test_history_stack_is_lifo(self):
         _purge()
         from core.telegram_app_nav import push_nav_action, pop_nav_action, clear_nav_history
         clear_nav_history(1005, chat_id=1005)
@@ -404,6 +511,18 @@ class TestAdminMarkupParentAction:
         assert f"{CALLBACK_PREFIX}SYSHEALTH" in cbs
         assert f"{CALLBACK_PREFIX}HOME" not in cbs
 
+    def test_diagnose_markup_operations_audit_is_contextual(self):
+        _purge()
+        from core.telegram_admin_ui import diagnose_markup, CALLBACK_PREFIX
+        markup = diagnose_markup(parent_action="OPERATIONS")
+        assert f"{CALLBACK_PREFIX}OPS_AUDIT" in _cbs(markup)
+
+    def test_diagnose_markup_syshealth_audit_is_contextual(self):
+        _purge()
+        from core.telegram_admin_ui import diagnose_markup, CALLBACK_PREFIX
+        markup = diagnose_markup(parent_action="SYSHEALTH")
+        assert f"{CALLBACK_PREFIX}DIAG_SH_AUDIT" in _cbs(markup)
+
     def test_all_markup_functions_no_dead_end(self):
         """All markup functions must produce at least one button (no dead ends, canonical §F)."""
         _purge()
@@ -668,3 +787,175 @@ class TestAdminHomeDistinct:
             assert f"{CALLBACK_PREFIX}HOME" in cbs, (
                 f"{markup_fn.__name__} should have Admin Home Back button"
             )
+
+
+class TestRolesReloadNavigation:
+    def test_reload_confirm_cancel_returns_to_roles(self):
+        _purge()
+        from core.telegram_admin_ui import reload_confirm_markup, CALLBACK_PREFIX
+        markup = reload_confirm_markup(cancel_action="ROLES")
+        assert f"{CALLBACK_PREFIX}ROLES" in _cbs(markup)
+
+
+class TestProcessUpdateNavigationIntegration:
+    def _load_modules(self, tmp_path: Path, monkeypatch, *, owner_ids: Optional[list[int]] = None):
+        roles_file = tmp_path / "roles.json"
+        roles_file.write_text(json.dumps({
+            "owner": list(owner_ids or []),
+            "primary_admin": [],
+            "strategy_admin": [],
+            "research_admin": [],
+            "analyst": [],
+            "moderator": [],
+            "affiliate_admin": {},
+        }), encoding="utf-8")
+        status_file = tmp_path / "status.json"
+        status_file.write_text(json.dumps({"phase": "running"}), encoding="utf-8")
+        monkeypatch.setenv("ADMIN_ROLES_CONFIG", str(roles_file))
+        monkeypatch.setenv("ROLES_CONFIG_PATH", str(roles_file))
+        monkeypatch.setenv("RUNTIME_STATUS_PATH", str(status_file))
+        monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "-100555000")
+        monkeypatch.setenv("ADMIN_CONTROL_THREAD_ID", "77")
+        monkeypatch.setenv("ENABLE_TELEGRAM", "false")
+        monkeypatch.setenv("SHADOW_MODE", "false")
+        _purge()
+        bot = importlib.import_module("core.bot_service")
+        nav = importlib.import_module("core.telegram_app_nav")
+        pub = _FakePublisher()
+        monkeypatch.setattr(bot, "telegram_publisher", pub)
+        return bot, nav, pub
+
+    def test_home_status_back_round_trip_uses_real_history(self, tmp_path, monkeypatch):
+        bot, nav, pub = self._load_modules(tmp_path, monkeypatch)
+        bot.process_update(_message_update(9001, 9001, "/start"))
+        start_markup = pub.sends[-1]["reply_markup"]
+        active_id = pub.sends[-1]["message_id"]
+        status_cb = _find_callback(start_markup, "STATUS")
+        assert status_cb and status_cb.startswith("APP:")
+
+        bot.process_update(_callback_update(9001, 9001, status_cb, message_id=active_id))
+        assert len(pub.sends) == 1
+        assert len(pub.edits) == 1
+        status_markup = pub.edits[-1]["reply_markup"]
+        back_cb = _find_callback(status_markup, "BACK")
+        home_cb = _find_callback(status_markup, "HOME")
+        assert back_cb is not None
+        assert home_cb is not None
+        assert nav.get_current_nav_action(9001, 9001) == nav.ACT_STATUS
+        assert nav.nav_can_go_back(9001, chat_id=9001) is True
+
+        bot.process_update(_callback_update(9001, 9001, back_cb, message_id=active_id))
+        assert "binarybot" in pub.edits[-1]["text"].lower()
+        assert nav.get_current_nav_action(9001, 9001) == nav.ACT_HOME
+        assert nav.nav_can_go_back(9001, chat_id=9001) is False
+
+    def test_help_back_and_refresh_do_not_grow_history(self, tmp_path, monkeypatch):
+        bot, nav, pub = self._load_modules(tmp_path, monkeypatch)
+        bot.process_update(_message_update(9002, 9002, "/start"))
+        active_id = pub.sends[-1]["message_id"]
+        help_cb = _find_callback(pub.sends[-1]["reply_markup"], "HELP")
+        assert help_cb is not None
+
+        bot.process_update(_callback_update(9002, 9002, help_cb, message_id=active_id))
+        help_markup = pub.edits[-1]["reply_markup"]
+        back_cb = _find_callback(help_markup, "BACK")
+        status_cb = _find_callback(help_markup, "STATUS")
+        assert back_cb is not None
+        assert status_cb is not None
+
+        bot.process_update(_callback_update(9002, 9002, status_cb, message_id=active_id))
+        status_markup = pub.edits[-1]["reply_markup"]
+        back_from_status = _find_callback(status_markup, "BACK")
+        assert back_from_status is not None
+
+        bot.process_update(_callback_update(9002, 9002, back_from_status, message_id=active_id))
+        assert "/start" in pub.edits[-1]["text"]
+        bot.process_update(_callback_update(9002, 9002, back_cb, message_id=active_id))
+        assert "binarybot" in pub.edits[-1]["text"].lower()
+        assert nav.nav_can_go_back(9002, chat_id=9002) is False
+
+    def test_start_resets_generation_and_invalidates_stale_callbacks(self, tmp_path, monkeypatch):
+        bot, nav, pub = self._load_modules(tmp_path, monkeypatch)
+        bot.process_update(_message_update(9003, 9003, "/start"))
+        first_status_cb = _find_callback(pub.sends[-1]["reply_markup"], "STATUS")
+        first_generation = nav.get_navigation_generation(9003, 9003)
+        assert first_generation == 1
+
+        bot.process_update(_message_update(9003, 9003, "/start", message_id=1002))
+        second_generation = nav.get_navigation_generation(9003, 9003)
+        assert second_generation == 2
+        active_id = nav.get_active_message(9003, chat_id=9003)
+
+        bot.process_update(_callback_update(9003, 9003, first_status_cb, message_id=active_id))
+        latest_text = (pub.edits[-1]["text"] if pub.edits else pub.sends[-1]["text"]).lower()
+        assert "binarybot" in latest_text
+        assert nav.get_current_nav_action(9003, 9003) == nav.ACT_HOME
+
+    def test_app_callbacks_use_real_chat_and_thread_session(self, tmp_path, monkeypatch):
+        bot, nav, pub = self._load_modules(tmp_path, monkeypatch, owner_ids=[9100])
+        chat_id = -100777000
+        thread_a = 41
+        thread_b = 42
+
+        bot.process_update(_message_update(chat_id, 9100, "/start", chat_type="supergroup", thread_id=thread_a))
+        status_cb_a = _find_callback(pub.sends[-1]["reply_markup"], "STATUS")
+        active_a = pub.sends[-1]["message_id"]
+        bot.process_update(_message_update(chat_id, 9100, "/start", chat_type="supergroup", message_id=1002, thread_id=thread_b))
+        status_cb_b = _find_callback(pub.sends[-1]["reply_markup"], "STATUS")
+        active_b = pub.sends[-1]["message_id"]
+
+        bot.process_update(_callback_update(chat_id, 9100, status_cb_a, chat_type="supergroup", message_id=active_a, thread_id=thread_a))
+        bot.process_update(_callback_update(chat_id, 9100, status_cb_b, chat_type="supergroup", message_id=active_b, thread_id=thread_b))
+
+        assert nav.get_current_nav_action(chat_id, 9100, thread_a) == nav.ACT_STATUS
+        assert nav.get_current_nav_action(chat_id, 9100, thread_b) == nav.ACT_STATUS
+        assert nav.get_active_message(9100, chat_id=chat_id, thread_id=thread_a) == active_a
+        assert nav.get_active_message(9100, chat_id=chat_id, thread_id=thread_b) == active_b
+        assert all(edit["message_id"] in {active_a, active_b} for edit in pub.edits)
+
+    def test_slash_and_callback_entries_produce_equivalent_state(self, tmp_path, monkeypatch):
+        bot, nav, pub = self._load_modules(tmp_path, monkeypatch)
+        bot.process_update(_message_update(9004, 9004, "/start"))
+        active_id = pub.sends[-1]["message_id"]
+        status_cb = _find_callback(pub.sends[-1]["reply_markup"], "STATUS")
+
+        bot.process_update(_message_update(9004, 9004, "/status", message_id=1002))
+        slash_back = _find_callback(pub.edits[-1]["reply_markup"], "BACK")
+        slash_generation = nav.get_navigation_generation(9004, 9004)
+        assert slash_back is not None
+        assert nav.get_current_nav_action(9004, 9004) == nav.ACT_STATUS
+
+        bot.process_update(_message_update(9004, 9004, "/start", message_id=1003))
+        active_id = nav.get_active_message(9004, chat_id=9004)
+        current_status_cb = _find_callback(pub.sends[-1]["reply_markup"], "STATUS")
+        bot.process_update(_callback_update(9004, 9004, current_status_cb, message_id=active_id))
+        callback_back = _find_callback(pub.edits[-1]["reply_markup"], "BACK")
+        callback_generation = nav.get_navigation_generation(9004, 9004)
+        assert callback_back is not None
+        assert slash_generation != callback_generation
+        assert nav.get_current_nav_action(9004, 9004) == nav.ACT_STATUS
+
+    def test_owner_admin_entry_exposes_real_app_back_button(self, tmp_path, monkeypatch):
+        bot, nav, pub = self._load_modules(tmp_path, monkeypatch, owner_ids=[9006])
+        bot.process_update(_message_update(9006, 9006, "/start"))
+        active_id = pub.sends[-1]["message_id"]
+        admin_cb = _find_callback(pub.sends[-1]["reply_markup"], "ADMIN")
+        assert admin_cb is not None
+
+        bot.process_update(_callback_update(9006, 9006, admin_cb, message_id=active_id))
+        admin_markup = pub.edits[-1]["reply_markup"]
+        back_cb = _find_callback(admin_markup, "BACK")
+        home_cb = _find_callback(admin_markup, "HOME")
+        assert back_cb is not None
+        assert home_cb is not None
+
+        bot.process_update(_callback_update(9006, 9006, back_cb, message_id=active_id))
+        assert "binarybot" in pub.edits[-1]["text"].lower()
+        assert nav.get_current_nav_action(9006, 9006) == nav.ACT_HOME
+
+    def test_back_without_history_falls_back_safely_via_dispatcher(self, tmp_path, monkeypatch):
+        bot, nav, pub = self._load_modules(tmp_path, monkeypatch)
+        generation = nav.begin_navigation_generation(9005, 9005)
+        bot.process_update(_callback_update(9005, 9005, f"APP:{generation}:BACK", message_id=2222))
+        assert "binarybot" in pub.edits[-1]["text"].lower()
+        assert nav.get_current_nav_action(9005, 9005) == nav.ACT_HOME

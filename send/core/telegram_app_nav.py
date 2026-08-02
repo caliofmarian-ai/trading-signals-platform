@@ -69,19 +69,49 @@ ACT_HELP = "HELP"
 ACT_ADMIN = "ADMIN"
 ACT_BACK = "BACK"
 
+_SUPPORTED_APP_ACTIONS: frozenset[str] = frozenset({
+    ACT_HOME,
+    ACT_STATUS,
+    ACT_HELP,
+    ACT_ADMIN,
+})
 
-def make_callback(action: str) -> str:
+
+def make_callback(action: str, generation: Optional[int] = None) -> str:
+    if generation is not None:
+        try:
+            gen = int(generation)
+        except Exception:
+            gen = 0
+        if gen > 0:
+            return f"{APP_NAV_PREFIX}{gen}:{action}"
     return f"{APP_NAV_PREFIX}{action}"
 
 
-def parse_app_action(callback_data: str) -> Optional[str]:
-    """Return the action key if callback_data is an APP: callback, else None."""
+def parse_app_callback(callback_data: str) -> Optional[Dict[str, Any]]:
+    """Return parsed APP callback metadata or None when the payload is not APP:."""
     if not isinstance(callback_data, str):
         return None
     if not callback_data.startswith(APP_NAV_PREFIX):
         return None
-    action = callback_data[len(APP_NAV_PREFIX):].strip()
-    return action or None
+    payload = callback_data[len(APP_NAV_PREFIX):].strip()
+    if not payload:
+        return None
+    generation: Optional[int] = None
+    action = payload
+    maybe_generation, sep, remainder = payload.partition(":")
+    if sep and maybe_generation.isdigit():
+        generation = int(maybe_generation)
+        action = remainder.strip()
+    if not action:
+        return None
+    return {"action": action, "generation": generation}
+
+
+def parse_app_action(callback_data: str) -> Optional[str]:
+    """Return the action key if callback_data is an APP: callback, else None."""
+    parsed = parse_app_callback(callback_data)
+    return None if parsed is None else parsed.get("action")
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +172,10 @@ _NAV_HISTORY_MAX_DEPTH: int = 5  # Bounded to prevent loops and unbounded growth
 
 _nav_history: Dict[_SessionKey, List[str]] = {}
 _nav_history_lock = threading.Lock()
+
+# { (chat_id, user_id, thread_id): {"current_action": str, "generation": int} }
+_nav_session_state: Dict[_SessionKey, Dict[str, Any]] = {}
+_nav_session_state_lock = threading.Lock()
 
 
 def _safe_env_int(name: str, default: int) -> int:
@@ -726,6 +760,126 @@ def clear_nav_history(
         _nav_history.pop(key, None)
 
 
+def begin_navigation_generation(
+    chat_id: int,
+    user_id: int,
+    thread_id: Optional[int] = None,
+) -> int:
+    """Start a new APP navigation generation and reset page/history state."""
+    key = normalize_session_key(chat_id, user_id, thread_id)
+    with _nav_session_state_lock:
+        previous_generation = int((_nav_session_state.get(key) or {}).get("generation", 0))
+        generation = previous_generation + 1
+        _nav_session_state[key] = {
+            "generation": generation,
+            "current_action": ACT_HOME,
+        }
+    clear_nav_history(user_id, chat_id=chat_id, thread_id=thread_id)
+    return generation
+
+
+def get_navigation_generation(
+    chat_id: int,
+    user_id: int,
+    thread_id: Optional[int] = None,
+) -> int:
+    key = normalize_session_key(chat_id, user_id, thread_id)
+    with _nav_session_state_lock:
+        return int((_nav_session_state.get(key) or {}).get("generation", 0))
+
+
+def get_current_nav_action(
+    chat_id: int,
+    user_id: int,
+    thread_id: Optional[int] = None,
+) -> Optional[str]:
+    key = normalize_session_key(chat_id, user_id, thread_id)
+    with _nav_session_state_lock:
+        action = (_nav_session_state.get(key) or {}).get("current_action")
+        return action if action in _SUPPORTED_APP_ACTIONS else None
+
+
+def set_current_nav_action(
+    chat_id: int,
+    user_id: int,
+    action: str,
+    thread_id: Optional[int] = None,
+) -> None:
+    if action not in _SUPPORTED_APP_ACTIONS:
+        return
+    key = normalize_session_key(chat_id, user_id, thread_id)
+    with _nav_session_state_lock:
+        entry = dict(_nav_session_state.get(key) or {})
+        entry["generation"] = int(entry.get("generation", 0))
+        entry["current_action"] = action
+        _nav_session_state[key] = entry
+
+
+def callback_generation_is_current(
+    *,
+    chat_id: int,
+    user_id: int,
+    callback_generation: Optional[int],
+    thread_id: Optional[int] = None,
+) -> bool:
+    if callback_generation is None:
+        return True
+    return int(callback_generation) == get_navigation_generation(chat_id, user_id, thread_id)
+
+
+def record_app_navigation(
+    *,
+    chat_id: int,
+    user_id: int,
+    action: str,
+    thread_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Record a real APP page transition and return render metadata."""
+    if action not in _SUPPORTED_APP_ACTIONS:
+        action = ACT_HOME
+    current = get_current_nav_action(chat_id, user_id, thread_id)
+    if action == ACT_HOME:
+        clear_nav_history(user_id, chat_id=chat_id, thread_id=thread_id)
+        set_current_nav_action(chat_id, user_id, ACT_HOME, thread_id)
+        return {
+            "action": ACT_HOME,
+            "include_back": False,
+            "generation": get_navigation_generation(chat_id, user_id, thread_id),
+            "previous_action": current,
+        }
+    if current in _SUPPORTED_APP_ACTIONS and current != action:
+        push_nav_action(user_id, chat_id=chat_id, action=current, thread_id=thread_id)
+    set_current_nav_action(chat_id, user_id, action, thread_id)
+    return {
+        "action": action,
+        "include_back": nav_can_go_back(user_id, chat_id=chat_id, thread_id=thread_id),
+        "generation": get_navigation_generation(chat_id, user_id, thread_id),
+        "previous_action": current,
+    }
+
+
+def resolve_back_navigation(
+    *,
+    chat_id: int,
+    user_id: int,
+    thread_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Pop and validate the previous APP page for a Back action."""
+    current = get_current_nav_action(chat_id, user_id, thread_id)
+    parent = pop_nav_action(user_id, chat_id=chat_id, thread_id=thread_id)
+    if parent not in _SUPPORTED_APP_ACTIONS or parent == current:
+        parent = ACT_HOME
+    if parent == ACT_HOME:
+        clear_nav_history(user_id, chat_id=chat_id, thread_id=thread_id)
+    set_current_nav_action(chat_id, user_id, parent, thread_id)
+    return {
+        "action": parent,
+        "include_back": parent != ACT_HOME and nav_can_go_back(user_id, chat_id=chat_id, thread_id=thread_id),
+        "generation": get_navigation_generation(chat_id, user_id, thread_id),
+        "previous_action": current,
+    }
+
+
 # ---------------------------------------------------------------------------
 # /start hard-reset: read-then-clear session state
 # ---------------------------------------------------------------------------
@@ -851,8 +1005,8 @@ def _session_key_from_item(item: Dict[str, Any]) -> Optional[_SessionKey]:
 # Internal keyboard helpers
 # ---------------------------------------------------------------------------
 
-def _btn(text: str, action: str) -> Dict[str, str]:
-    return {"text": text, "callback_data": make_callback(action)}
+def _btn(text: str, action: str, generation: Optional[int] = None) -> Dict[str, str]:
+    return {"text": text, "callback_data": make_callback(action, generation=generation)}
 
 
 def _kb(rows: List[List[Dict[str, str]]]) -> Dict[str, List[List[Dict[str, str]]]]:
@@ -879,6 +1033,7 @@ def render_welcome_page(
     primary_role: str,
     first_name: str = "",
     shadow_mode: bool = False,
+    generation: Optional[int] = None,
 ) -> Tuple[str, Dict]:
     """
     Role-scoped welcome page rendered on /start.
@@ -904,8 +1059,8 @@ def render_welcome_page(
             "operational, research and audit surfaces."
         )
         markup = _kb([
-            [_btn("⚙️ Admin Control Surface", ACT_ADMIN)],
-            [_btn("📊 System Status", ACT_STATUS)],
+            [_btn("⚙️ Admin Control Surface", ACT_ADMIN, generation)],
+            [_btn("📊 System Status", ACT_STATUS, generation)],
         ])
 
     elif primary_role in ADMIN_TIER_ROLES:
@@ -918,8 +1073,8 @@ def render_welcome_page(
             "From here you can check system status."
         )
         markup = _kb([
-            [_btn("📊 System Status", ACT_STATUS)],
-            [_btn("❓ Help", ACT_HELP)],
+            [_btn("📊 System Status", ACT_STATUS, generation)],
+            [_btn("❓ Help", ACT_HELP, generation)],
         ])
 
     else:
@@ -932,14 +1087,19 @@ def render_welcome_page(
             "You can check the system status or view the command list below."
         )
         markup = _kb([
-            [_btn("📊 System Status", ACT_STATUS)],
-            [_btn("❓ Help", ACT_HELP)],
+            [_btn("📊 System Status", ACT_STATUS, generation)],
+            [_btn("❓ Help", ACT_HELP, generation)],
         ])
 
     return text, markup
 
 
-def render_status_page(snapshot: Dict) -> Tuple[str, Dict]:
+def render_status_page(
+    snapshot: Dict,
+    *,
+    include_back: bool = False,
+    generation: Optional[int] = None,
+) -> Tuple[str, Dict]:
     """
     Public system status page — consistent with the canonical render_status_text fields.
 
@@ -975,14 +1135,24 @@ def render_status_page(snapshot: Dict) -> Tuple[str, Dict]:
     if isinstance(note, str) and note.strip():
         text += f"\n\nMarket note: {note.strip()}"
 
-    markup = _kb([
-        [_btn("🔄 Refresh", ACT_STATUS)],
-        [_btn("🏠 Home", ACT_HOME)],
-    ])
+    rows: List[List[Dict[str, str]]] = [[_btn("🔄 Refresh", ACT_STATUS, generation)]]
+    if include_back:
+        rows.append([
+            _btn("⬅️ Back", ACT_BACK, generation),
+            _btn("🏠 Home", ACT_HOME, generation),
+        ])
+    else:
+        rows.append([_btn("🏠 Home", ACT_HOME, generation)])
+    markup = _kb(rows)
     return text, markup
 
 
-def render_help_page(primary_role: str) -> Tuple[str, Dict]:
+def render_help_page(
+    primary_role: str,
+    *,
+    include_back: bool = False,
+    generation: Optional[int] = None,
+) -> Tuple[str, Dict]:
     """
     Role-scoped help page — shows commands appropriate for the user's role.
 
@@ -1021,11 +1191,75 @@ def render_help_page(primary_role: str) -> Tuple[str, Dict]:
             "You will receive signals automatically when they are generated."
         )
 
-    markup = _kb([
-        [_btn("📊 System Status", ACT_STATUS)],
-        [_btn("🏠 Home", ACT_HOME)],
-    ])
+    rows: List[List[Dict[str, str]]] = [[_btn("📊 System Status", ACT_STATUS, generation)]]
+    if include_back:
+        rows.append([
+            _btn("⬅️ Back", ACT_BACK, generation),
+            _btn("🏠 Home", ACT_HOME, generation),
+        ])
+    else:
+        rows.append([_btn("🏠 Home", ACT_HOME, generation)])
+    markup = _kb(rows)
     return text, markup
+
+
+def _render_app_page(
+    action: str,
+    *,
+    user_id: int,
+    primary_role: str,
+    first_name: str = "",
+    shadow_mode: bool = False,
+    status_snapshot: Optional[Dict] = None,
+    include_back: bool = False,
+    generation: Optional[int] = None,
+) -> Tuple[str, Dict]:
+    if action == ACT_HOME:
+        return render_welcome_page(
+            user_id,
+            primary_role,
+            first_name=first_name,
+            shadow_mode=shadow_mode,
+            generation=generation,
+        )
+    if action == ACT_STATUS:
+        snap = status_snapshot if status_snapshot is not None else {}
+        return render_status_page(snap, include_back=include_back, generation=generation)
+    if action == ACT_HELP:
+        return render_help_page(primary_role, include_back=include_back, generation=generation)
+    if action == ACT_ADMIN:
+        if primary_role == ROLE_OWNER:
+            text = (
+                "⚙️ *Admin Control Surface*\n\n"
+                "Use /admin to access the full role-scoped admin tree, or "
+                "navigate directly using the admin control channel.\n\n"
+                "Quick actions are also available via slash commands:\n"
+                "/engine — Engine status\n"
+                "/debug — Decision snapshot\n"
+                "/roles — Configured roles"
+            )
+        else:
+            text = (
+                "⚙️ *Admin Control Surface*\n\n"
+                "The admin control surface is available in the configured admin control channel. "
+                "Please navigate there to access your role-scoped controls."
+            )
+        rows: List[List[Dict[str, str]]] = []
+        if include_back:
+            rows.append([
+                _btn("⬅️ Back", ACT_BACK, generation),
+                _btn("🏠 Home", ACT_HOME, generation),
+            ])
+        else:
+            rows.append([_btn("🏠 Home", ACT_HOME, generation)])
+        return text, _kb(rows)
+    return render_welcome_page(
+        user_id,
+        primary_role,
+        first_name=first_name,
+        shadow_mode=shadow_mode,
+        generation=generation,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1041,6 +1275,7 @@ def handle_app_action(
     status_snapshot: Optional[Dict] = None,
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
+    callback_generation: Optional[int] = None,
 ) -> Tuple[str, Dict]:
     """
     Dispatch an APP: callback action to the appropriate page renderer.
@@ -1052,60 +1287,61 @@ def handle_app_action(
     ACT_BACK pops the navigation history and renders the parent page.
     On empty history or restart/state-loss, Back falls back to Home safely.
     """
+    resolved_chat_id = chat_id if chat_id is not None else user_id
+    generation = get_navigation_generation(resolved_chat_id, user_id, thread_id) if chat_id is not None else None
+
+    if (
+        chat_id is not None
+        and callback_generation is not None
+        and not callback_generation_is_current(
+            chat_id=resolved_chat_id,
+            user_id=user_id,
+            callback_generation=callback_generation,
+            thread_id=thread_id,
+        )
+    ):
+        return _render_app_page(
+            ACT_HOME,
+            user_id=user_id,
+            primary_role=primary_role,
+            first_name=first_name,
+            shadow_mode=shadow_mode,
+            include_back=False,
+            generation=generation,
+        )
+
     if action == ACT_BACK:
-        resolved_chat_id = chat_id if chat_id is not None else user_id
-        parent = pop_nav_action(user_id, chat_id=resolved_chat_id, thread_id=thread_id)
-        if parent and parent not in (ACT_BACK, ACT_HOME):
-            # Recursively render the parent page (bounded by stack depth)
-            return handle_app_action(
-                parent,
-                user_id,
-                primary_role,
-                first_name=first_name,
-                shadow_mode=shadow_mode,
-                status_snapshot=status_snapshot,
-                chat_id=chat_id,
-                thread_id=thread_id,
-            )
-        # Fallback: Home is always a safe destination on empty history or state-loss
-        return render_welcome_page(user_id, primary_role, first_name=first_name, shadow_mode=shadow_mode)
+        meta = resolve_back_navigation(chat_id=resolved_chat_id, user_id=user_id, thread_id=thread_id)
+        return _render_app_page(
+            meta["action"],
+            user_id=user_id,
+            primary_role=primary_role,
+            first_name=first_name,
+            shadow_mode=shadow_mode,
+            status_snapshot=status_snapshot,
+            include_back=bool(meta["include_back"]),
+            generation=meta["generation"],
+        )
 
-    if action == ACT_HOME:
-        return render_welcome_page(user_id, primary_role, first_name=first_name, shadow_mode=shadow_mode)
+    if chat_id is not None and action in _SUPPORTED_APP_ACTIONS:
+        meta = record_app_navigation(
+            chat_id=resolved_chat_id,
+            user_id=user_id,
+            action=action,
+            thread_id=thread_id,
+        )
+        include_back = bool(meta["include_back"])
+        generation = meta["generation"]
+    else:
+        include_back = False
 
-    if action == ACT_STATUS:
-        snap = status_snapshot if status_snapshot is not None else {}
-        return render_status_page(snap)
-
-    if action == ACT_HELP:
-        return render_help_page(primary_role)
-
-    if action == ACT_ADMIN:
-        # Only OWNER can trigger admin surface from app nav (other roles use admin channel).
-        if primary_role == ROLE_OWNER:
-            # Delegate to admin home; return a pointer page.
-            text = (
-                "⚙️ *Admin Control Surface*\n\n"
-                "Use /admin to access the full role-scoped admin tree, or "
-                "navigate directly using the admin control channel.\n\n"
-                "Quick actions are also available via slash commands:\n"
-                "/engine — Engine status\n"
-                "/debug — Decision snapshot\n"
-                "/roles — Configured roles"
-            )
-            markup = _kb([
-                [_btn("🏠 Home", ACT_HOME)],
-            ])
-        else:
-            text = (
-                "⚙️ *Admin Control Surface*\n\n"
-                "The admin control surface is available in the configured admin control channel. "
-                "Please navigate there to access your role-scoped controls."
-            )
-            markup = _kb([
-                [_btn("🏠 Home", ACT_HOME)],
-            ])
-        return text, markup
-
-    # Unknown action: safe fallback to home (canonical: no dead ends)
-    return render_welcome_page(user_id, primary_role, first_name=first_name, shadow_mode=shadow_mode)
+    return _render_app_page(
+        action if action in _SUPPORTED_APP_ACTIONS else ACT_HOME,
+        user_id=user_id,
+        primary_role=primary_role,
+        first_name=first_name,
+        shadow_mode=shadow_mode,
+        status_snapshot=status_snapshot,
+        include_back=include_back,
+        generation=generation,
+    )
