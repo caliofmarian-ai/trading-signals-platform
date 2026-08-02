@@ -882,6 +882,7 @@ class TestProcessUpdateNavigationIntegration:
         monkeypatch.setenv("ROLES_CONFIG_PATH", str(roles_file))
         monkeypatch.setenv("RUNTIME_STATUS_PATH", str(status_file))
         monkeypatch.setenv("BINARYBOT_BASE_DIR", str(tmp_path))
+        monkeypatch.setenv("ANALYTICS_DIR", str(tmp_path / "analytics"))
         monkeypatch.setenv("ADMIN_CONTROL_CHAT_ID", "-100555000")
         monkeypatch.setenv("ADMIN_CONTROL_THREAD_ID", "77")
         monkeypatch.setenv("ENABLE_TELEGRAM", "false")

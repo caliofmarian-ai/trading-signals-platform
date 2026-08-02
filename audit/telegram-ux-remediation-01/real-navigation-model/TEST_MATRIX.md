@@ -14,6 +14,16 @@
 
 ## Admin navigation regressions
 - Roles reload confirm cancel returns to Roles.
+- Successful Roles reload returns to Roles and Cancel performs no mutation.
+- Profile selector → confirmation → Cancel returns to selector without mutation.
+- Profile apply returns to the selector/current-state surface.
+- Files Home → directory → Prev/Next → Files Home stays on one edited anchor.
+- Docs list/download leaves the docs listing anchor active.
+- Research report download leaves the research anchor active.
+- Operations → Engine → Refresh preserves Operations as the immediate parent.
+- System Health → Engine → Refresh preserves System Health as the immediate parent.
+- Operations → Diagnose → Refresh preserves Operations as the immediate parent.
+- System Health → Diagnose → Refresh preserves System Health as the immediate parent.
 - Strategy-context symbol mutations preserve Strategy as parent.
 - Diagnose audit callbacks preserve originating parent on error.
 - Admin root renders remain canonical while allowing optional APP Back on APP entry.
