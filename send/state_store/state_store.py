@@ -392,6 +392,35 @@ def validate_active_symbols(raw: Any) -> Dict[str, Any]:
     return normalized
 
 
+def _normalize_telegram_thread_id(chat_id: int, thread_id: Optional[int]) -> Optional[int]:
+    """Canonical thread_id normalization for Telegram sessions.
+
+    For private chats (positive chat_id) thread_id is always None.
+    For supergroups/channels (negative chat_id) thread_id must be a positive integer.
+    thread_id <= 0 and thread_id=None are both treated as absent (None).
+
+    This must produce identical results for:
+    - no message_thread_id field
+    - explicit None / JSON null
+    - thread_id=0
+    - missing key
+    """
+    if thread_id is None or thread_id <= 0:
+        return None
+    if chat_id >= 0:
+        return None
+    return thread_id
+
+
+def _normalize_telegram_session_key(
+    chat_id: int,
+    user_id: int,
+    thread_id: Optional[int],
+) -> tuple[int, int, Optional[int]]:
+    """Return the canonical (chat_id, user_id, thread_id) key for a Telegram UI session."""
+    return (int(chat_id), int(user_id), _normalize_telegram_thread_id(int(chat_id), thread_id))
+
+
 def validate_telegram_ui_state(raw: Any) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         raise StateValidationError("Telegram UI state must be an object")
@@ -426,13 +455,15 @@ def validate_telegram_ui_state(raw: Any) -> Dict[str, Any]:
         chat_id = _safe_int(item.get("chat_id"), "Telegram UI session chat_id")
         user_id = _safe_int(item.get("user_id"), "Telegram UI session user_id")
         message_id = _safe_int(item.get("message_id"), "Telegram UI session message_id")
-        thread_id = _safe_int(item.get("thread_id"), "Telegram UI session thread_id")
+        raw_thread_id = _safe_int(item.get("thread_id"), "Telegram UI session thread_id")
         updated_ts = _safe_int(item.get("updated_ts"), "Telegram UI session updated_ts") or now_ts
         if chat_id is None or user_id is None or message_id is None:
             raise StateValidationError("Telegram UI session chat_id/user_id/message_id are required integers")
         if updated_ts < cutoff_ts:
             continue
-        key = (chat_id, user_id, thread_id)
+        # Normalize the thread_id so that 0, None, and missing all resolve identically.
+        thread_id = _normalize_telegram_thread_id(chat_id, raw_thread_id)
+        key = _normalize_telegram_session_key(chat_id, user_id, raw_thread_id)
         prior = dedup.get(key)
         if prior is None or updated_ts >= int(prior["updated_ts"]):
             dedup[key] = {
@@ -791,6 +822,187 @@ def set_buffer_mode(mode: str) -> None:
     state = load_settings()
     state["buffer_mode"] = str(mode or "").upper()
     save_settings(state)
+
+
+@dataclass(frozen=True)
+class TelegramSessionDeleteResult:
+    """Structured evidence from delete_telegram_ui_session."""
+    session_existed: bool
+    session_removed: bool
+    final_session_count: int
+    canonical_state_path: str
+    target_key: tuple
+    error: Optional[str] = None
+
+
+def delete_telegram_ui_session(
+    chat_id: int,
+    user_id: int,
+    thread_id: Optional[int] = None,
+    path: Optional[str] = None,
+) -> TelegramSessionDeleteResult:
+    """Atomically delete exactly one persisted Telegram UI session.
+
+    Correctness contract:
+    1. Accepts one normalized session key (chat_id, user_id, thread_id).
+    2. Acquires the canonical Telegram UI state file lock exclusively.
+    3. Reads the latest persisted document while holding the lock.
+    4. Validates and normalizes all persisted session keys (thread_id=0
+       collapses to None for private chats; JSON null collapses to None).
+    5. Removes only the exact target session (by canonical key equality).
+    6. Preserves every unrelated USER or ADMIN session.
+    7. Writes atomically using save_json_atomic.
+    8. Returns TelegramSessionDeleteResult with structured evidence.
+    9. Callers may independently verify absence after this call.
+    10. Never uses stale whole-map overwrite semantics.
+    """
+    canonical_path = path or _telegram_ui_state_path()
+    target_key = _normalize_telegram_session_key(int(chat_id), int(user_id), thread_id)
+    artifact = _artifact(
+        name="telegram_ui_state",
+        canonical_path=canonical_path,
+        legacy_paths=() if path else (_legacy_root_path("telegram_ui_state.json"),),
+        lock_name="telegram_ui_state",
+        default_factory=default_telegram_ui_state,
+        validator=validate_telegram_ui_state,
+    )
+    os.makedirs(os.path.dirname(artifact.canonical_path), exist_ok=True)
+    try:
+        with with_lock(artifact.lock_name):
+            canonical_raw = _read_json_file(artifact.canonical_path)
+            if canonical_raw is _MISSING:
+                current = artifact.default_factory()
+            else:
+                current = artifact.validator(canonical_raw)
+
+            sessions_before: list[Dict[str, Any]] = current.get("sessions", [])
+            sessions_after: list[Dict[str, Any]] = []
+            session_existed = False
+
+            for item in sessions_before:
+                if not isinstance(item, dict):
+                    continue
+                item_chat = _safe_int(item.get("chat_id"), "chat_id")
+                item_user = _safe_int(item.get("user_id"), "user_id")
+                item_thread = _safe_int(item.get("thread_id"), "thread_id")
+                if item_chat is None or item_user is None:
+                    sessions_after.append(item)
+                    continue
+                item_key = _normalize_telegram_session_key(item_chat, item_user, item_thread)
+                if item_key == target_key:
+                    session_existed = True
+                else:
+                    sessions_after.append(item)
+
+            updated = dict(current)
+            updated["sessions"] = sessions_after
+            updated["last_updated_ts"] = _now_ts()
+            normalized = artifact.validator(updated)
+            normalized["last_updated_ts"] = _now_ts()
+            save_json_atomic(artifact.canonical_path, normalized)
+
+            return TelegramSessionDeleteResult(
+                session_existed=session_existed,
+                session_removed=session_existed,
+                final_session_count=len(normalized.get("sessions", [])),
+                canonical_state_path=canonical_path,
+                target_key=target_key,
+            )
+    except Exception as exc:
+        return TelegramSessionDeleteResult(
+            session_existed=False,
+            session_removed=False,
+            final_session_count=-1,
+            canonical_state_path=canonical_path,
+            target_key=target_key,
+            error=str(exc),
+        )
+
+
+def verify_telegram_session_absent(
+    chat_id: int,
+    user_id: int,
+    thread_id: Optional[int] = None,
+    path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Read persisted state and confirm the session is absent.
+
+    Returns a dict with:
+    - 'absent': True when the session is not found in persisted state.
+    - 'found_message_id': the persisted message_id if found, else None.
+    - 'session_count': total persisted session count.
+    - 'error': non-None when the read itself failed.
+    """
+    canonical_path = path or _telegram_ui_state_path()
+    target_key = _normalize_telegram_session_key(int(chat_id), int(user_id), thread_id)
+    try:
+        artifact = _artifact(
+            name="telegram_ui_state",
+            canonical_path=canonical_path,
+            legacy_paths=() if path else (_legacy_root_path("telegram_ui_state.json"),),
+            lock_name="telegram_ui_state",
+            default_factory=default_telegram_ui_state,
+            validator=validate_telegram_ui_state,
+        )
+        with with_lock(artifact.lock_name):
+            canonical_raw = _read_json_file(canonical_path)
+            if canonical_raw is _MISSING:
+                return {
+                    "absent": True,
+                    "found_message_id": None,
+                    "session_count": 0,
+                    "error": None,
+                }
+            current = artifact.validator(canonical_raw)
+            sessions = current.get("sessions", [])
+            for item in sessions:
+                if not isinstance(item, dict):
+                    continue
+                item_chat = _safe_int(item.get("chat_id"), "chat_id")
+                item_user = _safe_int(item.get("user_id"), "user_id")
+                item_thread = _safe_int(item.get("thread_id"), "thread_id")
+                if item_chat is None or item_user is None:
+                    continue
+                item_key = _normalize_telegram_session_key(item_chat, item_user, item_thread)
+                if item_key == target_key:
+                    return {
+                        "absent": False,
+                        "found_message_id": item.get("message_id"),
+                        "session_count": len(sessions),
+                        "error": None,
+                    }
+            return {
+                "absent": True,
+                "found_message_id": None,
+                "session_count": len(sessions),
+                "error": None,
+            }
+    except Exception as exc:
+        return {
+            "absent": False,
+            "found_message_id": None,
+            "session_count": -1,
+            "error": str(exc),
+        }
+
+
+def read_telegram_session_message_id(
+    chat_id: int,
+    user_id: int,
+    thread_id: Optional[int] = None,
+    path: Optional[str] = None,
+) -> Optional[int]:
+    """Independently read the persisted message_id for one session.
+
+    Returns None when absent, when the file does not exist, or on error.
+    This is intentionally separate from in-memory state so that diagnostics
+    can confirm persisted state without relying on the runtime cache.
+    """
+    result = verify_telegram_session_absent(chat_id, user_id, thread_id, path=path)
+    if result.get("absent"):
+        return None
+    return result.get("found_message_id")
+
 
 
 def list_symbols() -> list[str]:
