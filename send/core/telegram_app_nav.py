@@ -67,6 +67,7 @@ ACT_HOME = "HOME"
 ACT_STATUS = "STATUS"
 ACT_HELP = "HELP"
 ACT_ADMIN = "ADMIN"
+ACT_BACK = "BACK"
 
 
 def make_callback(action: str) -> str:
@@ -118,6 +119,29 @@ _last_save_result: Dict[str, Any] = {"status": "not_started"}
 _RESET_GUARDS: Dict[_SessionKey, Dict[str, Any]] = {}
 _RESET_GUARD_LOCK = threading.Lock()
 _RESET_GUARD_TTL_SEC = 30.0  # Guards expire after 30 s to prevent abandoned locks.
+
+# ---------------------------------------------------------------------------
+# Per-session bounded navigation history
+#
+# Models the "Back" contract for APP: page navigation.
+#
+# Design decisions:
+# - History is keyed by (chat_id, user_id, thread_id) — same isolation as active UI.
+# - Depth is bounded to _NAV_HISTORY_MAX_DEPTH to prevent unbounded memory growth
+#   and loops (a page cannot appear twice consecutively in the stack).
+# - History is in-memory only; on restart or state-loss, Back safely falls back to Home.
+# - clear_nav_history() is called on /start hard reset (ACT_HOME clears implicitly).
+# - Concurrency-safe via _nav_history_lock.
+#
+# APP: pages are currently one level deep (Status, Help, Admin from Home),
+# so Back always resolves to Home. The bounded history model is implemented
+# for correctness and future extension.
+# ---------------------------------------------------------------------------
+
+_NAV_HISTORY_MAX_DEPTH: int = 5  # Bounded to prevent loops and unbounded growth
+
+_nav_history: Dict[_SessionKey, List[str]] = {}
+_nav_history_lock = threading.Lock()
 
 
 def _safe_env_int(name: str, default: int) -> int:
@@ -629,6 +653,80 @@ def release_start_reset_guard(chat_id: int, user_id: int, thread_id: Optional[in
 
 
 # ---------------------------------------------------------------------------
+# Navigation history helpers — bounded Back navigation
+# ---------------------------------------------------------------------------
+
+def push_nav_action(
+    user_id: int,
+    *,
+    chat_id: int,
+    action: str,
+    thread_id: Optional[int] = None,
+) -> None:
+    """Push a page action to the bounded navigation history for this session.
+
+    Consecutive duplicate entries are ignored to prevent trivial loops.
+    History is bounded to _NAV_HISTORY_MAX_DEPTH entries.
+    """
+    key = normalize_session_key(chat_id, user_id, thread_id)
+    with _nav_history_lock:
+        stack: List[str] = list(_nav_history.get(key, []))
+        if stack and stack[-1] == action:
+            return  # Don't record same page twice in a row
+        if len(stack) >= _NAV_HISTORY_MAX_DEPTH:
+            stack = stack[-(_NAV_HISTORY_MAX_DEPTH - 1):]
+        stack.append(action)
+        _nav_history[key] = stack
+
+
+def pop_nav_action(
+    user_id: int,
+    *,
+    chat_id: int,
+    thread_id: Optional[int] = None,
+) -> Optional[str]:
+    """Pop and return the most recent page action from navigation history.
+
+    Returns None if history is empty (safe restart/state-loss fallback).
+    """
+    key = normalize_session_key(chat_id, user_id, thread_id)
+    with _nav_history_lock:
+        stack: List[str] = list(_nav_history.get(key, []))
+        if not stack:
+            return None
+        action = stack.pop()
+        _nav_history[key] = stack
+        return action
+
+
+def nav_can_go_back(
+    user_id: int,
+    *,
+    chat_id: int,
+    thread_id: Optional[int] = None,
+) -> bool:
+    """Return True if there is at least one previous page in the navigation history."""
+    key = normalize_session_key(chat_id, user_id, thread_id)
+    with _nav_history_lock:
+        return bool(_nav_history.get(key))
+
+
+def clear_nav_history(
+    user_id: int,
+    *,
+    chat_id: int,
+    thread_id: Optional[int] = None,
+) -> None:
+    """Clear navigation history for a session.
+
+    Called on /start hard reset so Back cannot navigate into stale pre-reset history.
+    """
+    key = normalize_session_key(chat_id, user_id, thread_id)
+    with _nav_history_lock:
+        _nav_history.pop(key, None)
+
+
+# ---------------------------------------------------------------------------
 # /start hard-reset: read-then-clear session state
 # ---------------------------------------------------------------------------
 
@@ -679,6 +777,12 @@ def prepare_start_hard_reset(
         clear_result = clear_active_message(user_id=user_id, chat_id=chat_id, thread_id=thread_id)
     except Exception as exc:
         clear_result = {"status": "error", "error": str(exc)}
+
+    # Clear navigation history so Back cannot navigate into stale pre-reset history.
+    try:
+        clear_nav_history(user_id=user_id, chat_id=chat_id, thread_id=thread_id)
+    except Exception:
+        pass
 
     return {
         "previous_message_id": previous_message_id,
@@ -935,6 +1039,8 @@ def handle_app_action(
     first_name: str = "",
     shadow_mode: bool = False,
     status_snapshot: Optional[Dict] = None,
+    chat_id: Optional[int] = None,
+    thread_id: Optional[int] = None,
 ) -> Tuple[str, Dict]:
     """
     Dispatch an APP: callback action to the appropriate page renderer.
@@ -942,7 +1048,28 @@ def handle_app_action(
     Returns (text, reply_markup).
 
     All actions produce a complete, navigable page. No dead ends.
+
+    ACT_BACK pops the navigation history and renders the parent page.
+    On empty history or restart/state-loss, Back falls back to Home safely.
     """
+    if action == ACT_BACK:
+        resolved_chat_id = chat_id if chat_id is not None else user_id
+        parent = pop_nav_action(user_id, chat_id=resolved_chat_id, thread_id=thread_id)
+        if parent and parent not in (ACT_BACK, ACT_HOME):
+            # Recursively render the parent page (bounded by stack depth)
+            return handle_app_action(
+                parent,
+                user_id,
+                primary_role,
+                first_name=first_name,
+                shadow_mode=shadow_mode,
+                status_snapshot=status_snapshot,
+                chat_id=chat_id,
+                thread_id=thread_id,
+            )
+        # Fallback: Home is always a safe destination on empty history or state-loss
+        return render_welcome_page(user_id, primary_role, first_name=first_name, shadow_mode=shadow_mode)
+
     if action == ACT_HOME:
         return render_welcome_page(user_id, primary_role, first_name=first_name, shadow_mode=shadow_mode)
 

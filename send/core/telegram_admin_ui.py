@@ -69,6 +69,57 @@ _PANEL_VISIBILITY: dict[str, frozenset[str]] = {
     _ROLE_AFFILIATE_ADMIN: frozenset({_PANEL_AFFILIATE}),
 }
 
+# Canonical parent map: action → human-readable Back label suffix.
+# Used by context-sensitive markup functions that need to label their Back button
+# correctly depending on how the page was reached.
+# Source: ADMIN_TREE_MAP_v2.0.0.md §6 parent hierarchy.
+_PANEL_BACK_LABELS: dict[str, str] = {
+    "HOME": "Admin",
+    "OPERATIONS": "Operations",
+    "SYSHEALTH": "System Health",
+    "STRATEGY": "Strategy",
+    "PROFILE_HOME": "Profile",
+    "FILES_HOME": "Files",
+    "SECAUDIT": "Security & Audit",
+}
+
+# Canonical static parent map for ADMIN_NAV pages.
+# Defines the immediate parent for each page action in the admin tree.
+# For pages reachable from multiple parents (OPS_ENGINE, SH_ENGINE, etc.),
+# the correct parent is passed dynamically via parent_action parameters.
+# Source: ADMIN_TREE_MAP_v2.0.0.md §6.
+CANONICAL_ADMIN_PARENT_MAP: dict[str, str] = {
+    "STATUS": "HOME",
+    "ENGINE": "HOME",
+    "STRATEGY": "OPERATIONS",
+    "SYMBOLS": "STRATEGY",
+    "SYMBOLS_COV": "HOME",
+    "PROFILE_HOME": "STRATEGY",
+    "THRESHOLDS": "STRATEGY",
+    "SR": "STRATEGY",
+    "SPIKE": "STRATEGY",
+    "OPERATIONS": "HOME",
+    "DECISION_VIS": "HOME",
+    "DISTRIBUTION": "HOME",
+    "RESEARCH": "HOME",
+    "INTELLIGENCE": "HOME",
+    "AFFILIATE": "HOME",
+    "ROLES": "HOME",
+    "SYSHEALTH": "HOME",
+    "GOVDOCS": "HOME",
+    "SECAUDIT": "HOME",
+    "OPS_ENGINE": "OPERATIONS",
+    "OPS_DIAGNOSE": "OPERATIONS",
+    "SH_ENGINE": "SYSHEALTH",
+    "SH_DIAGNOSE": "SYSHEALTH",
+    "SH_AUDIT": "SYSHEALTH",
+    "FILES_HOME": "HOME",
+    "DIAGNOSE": "HOME",
+    "AUDIT": "HOME",
+    "SECAUDIT_AUDIT": "SECAUDIT",
+    "RELOAD_ROLES_CONFIRM": "HOME",
+}
+
 
 def _btn(text: str, action: str) -> dict[str, str]:
     return {"text": text, "callback_data": f"{CALLBACK_PREFIX}{action}"}
@@ -138,7 +189,7 @@ def strategy_markup() -> dict[str, list[list[dict[str, str]]]]:
         [
             [_btn("🎯 Thresholds", "THRESHOLDS"), _btn("📐 S/R", "SR")],
             [_btn("⚡ Spike Filter", "SPIKE"), _btn("💱 Symbols", "SYMBOLS")],
-            [_btn("📋 Quick Profile", "PROFILE_HOME"), _btn("⬅️ Admin", "HOME")],
+            [_btn("📋 Quick Profile", "PROFILE_HOME"), _btn("⬅️ Operations", "OPERATIONS")],
         ]
     )
 
@@ -155,12 +206,18 @@ def symbols_markup() -> dict[str, list[list[dict[str, str]]]]:
 def symbols_toggle_markup(
     all_symbols: List[str],
     active_symbols: List[str],
+    *,
+    parent_action: str = "HOME",
 ) -> dict[str, list[list[dict[str, str]]]]:
     """
     Visual symbol-toggle keyboard with checkbox-style indicators.
 
     Symbols are grouped by category (FOREX / CRYPTO) based on name prefix
     and laid out 3 per row.  Active symbols show ✅, inactive show ⬜.
+
+    ``parent_action``: the Back-navigation target for this page.  Pass ``"STRATEGY"``
+    when the toggle is reached from the Strategy panel (SYMBOLS action) and ``"HOME"``
+    (default) when reached directly from the admin home via SYMBOLS_COV.
     """
     active_set = {s.upper() for s in active_symbols}
     forex = [s for s in all_symbols if not s.upper().startswith("BTC")
@@ -202,9 +259,10 @@ def symbols_toggle_markup(
     rows.append([
         _btn("✅ All", "SYMBOLS_ALL"),
         _btn("⬜ None", "SYMBOLS_NONE"),
-        _btn("🔄 Refresh", "SYMBOLS"),
+        _btn("🔄 Refresh", "SYMBOLS_COV" if parent_action == "HOME" else "SYMBOLS"),
     ])
-    rows.append([_btn("⬅️ Admin", "HOME")])
+    back_label = "⬅️ Admin" if parent_action == "HOME" else "⬅️ Strategy"
+    rows.append([_btn(back_label, parent_action)])
     return _kb(rows)
 
 
@@ -249,11 +307,19 @@ def strategy_profile_confirm_markup(profile: str) -> dict[str, list[list[dict[st
     ])
 
 
-def engine_markup(*, include_roles_reload: bool) -> dict[str, list[list[dict[str, str]]]]:
+def engine_markup(*, include_roles_reload: bool, parent_action: str = "HOME") -> dict[str, list[list[dict[str, str]]]]:
+    """
+    Engine panel navigation.
+
+    ``parent_action``: canonical Back destination.  Pass ``"OPERATIONS"`` when
+    reached from the Operations panel (OPS_ENGINE) and ``"SYSHEALTH"`` when
+    reached from System Health (SH_ENGINE).  Defaults to ``"HOME"``.
+    """
     rows = [[_btn("🔄 Refresh Engine", "ENGINE"), _btn("📊 Status", "STATUS")]]
     if include_roles_reload:
         rows.append([_btn("🔄 Reload Roles", "RELOAD_ROLES_CONFIRM")])
-    rows.append([_btn("⬅️ Admin", "HOME")])
+    back_label = "⬅️ Admin" if parent_action == "HOME" else f"⬅️ {_PANEL_BACK_LABELS.get(parent_action, 'Back')}"
+    rows.append([_btn(back_label, parent_action)])
     return _kb(rows)
 
 
@@ -311,11 +377,17 @@ def docs_list_markup(filenames: List[str]) -> dict[str, list[list[dict[str, str]
     return _kb(rows)
 
 
-def diagnose_markup() -> dict[str, list[list[dict[str, str]]]]:
-    """Post-diagnose action buttons."""
+def diagnose_markup(*, parent_action: str = "HOME") -> dict[str, list[list[dict[str, str]]]]:
+    """Post-diagnose action buttons.
+
+    ``parent_action``: canonical Back destination.  Pass ``"OPERATIONS"`` when
+    reached from the Operations panel (OPS_DIAGNOSE) and ``"SYSHEALTH"`` when
+    reached from System Health (SH_DIAGNOSE).  Defaults to ``"HOME"``.
+    """
+    back_label = "⬅️ Admin" if parent_action == "HOME" else f"⬅️ {_PANEL_BACK_LABELS.get(parent_action, 'Back')}"
     return _kb([
         [_btn("🔍 Runtime Audit", "AUDIT"), _btn("🔄 Refresh", "DIAGNOSE")],
-        [_btn("⬅️ Admin", "HOME")],
+        [_btn(back_label, parent_action)],
     ])
 
 

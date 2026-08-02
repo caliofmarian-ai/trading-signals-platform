@@ -688,15 +688,16 @@ def _admin_reply_markup(cmd: str, user_id: int, *, owner_private: bool) -> Optio
     if cmd in {"/thresholds", "/sr", "/spike"}:
         return telegram_admin_ui.strategy_markup()
     if cmd == "/symbols" or cmd == "/symbols list":
-        # Use toggle markup if possible; fall back to simple markup
+        # Use toggle markup if possible; fall back to simple markup.
+        # Default to parent_action="HOME" (matches /symbols command entry from admin root).
         try:
             all_syms = get_all_known_symbols()
             active = _load_active_symbols()
-            return telegram_admin_ui.symbols_toggle_markup(all_syms, active)
+            return telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action="HOME")
         except Exception:
             return telegram_admin_ui.symbols_markup()
     if cmd == "/engine":
-        return telegram_admin_ui.engine_markup(include_roles_reload=not owner_private)
+        return telegram_admin_ui.engine_markup(include_roles_reload=not owner_private, parent_action="HOME")
     if cmd == "/report":
         # Check if a report file is available for the download button
         try:
@@ -717,7 +718,7 @@ def _admin_reply_markup(cmd: str, user_id: int, *, owner_private: bool) -> Optio
         except Exception:
             return telegram_admin_ui.standard_back_markup()
     if cmd == "/diagnose":
-        return telegram_admin_ui.diagnose_markup()
+        return telegram_admin_ui.diagnose_markup(parent_action="HOME")
     if cmd in {"/debug", "/roles", "/affiliate", "/log", "/audit_runtime"}:
         return telegram_admin_ui.standard_back_markup()
     return None
@@ -780,6 +781,13 @@ def _send_document_reply(message: Dict[str, Any], file_path: str, caption: Optio
 
 def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str, Any]) -> Dict[str, Any]:
     owner_private = _is_owner_private_for_message(message, user_id)
+
+    # ---- BACK: navigate to canonical immediate parent ----
+    # Uses the static CANONICAL_ADMIN_PARENT_MAP for deterministic, loop-free navigation.
+    # For context-sensitive pages (OPS_ENGINE→OPERATIONS, SH_ENGINE→SYSHEALTH) the
+    # correct parent is encoded in the originating Back button rather than this fallback.
+    if action == "BACK":
+        return _handle_admin_navigation_action("HOME", user_id, message)
 
     # ---- RELOAD_ROLES flow (admin-topic only) ----
     if action == "RELOAD_ROLES_CONFIRM":
@@ -946,7 +954,14 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         if not _check_rate_limit(user_id, "diagnose"):
             return {"text": "Rate limit exceeded.", "reply_markup": None}
         text = handle_diagnose(user_id)
-        return {"text": text, "reply_markup": telegram_admin_ui.diagnose_markup()}
+        # Preserve caller context in the Back button.
+        if action == "OPS_DIAGNOSE":
+            diagnose_parent = "OPERATIONS"
+        elif action == "SH_DIAGNOSE":
+            diagnose_parent = "SYSHEALTH"
+        else:
+            diagnose_parent = "HOME"
+        return {"text": text, "reply_markup": telegram_admin_ui.diagnose_markup(parent_action=diagnose_parent)}
 
     if action == "AUDIT" or action == "SH_AUDIT" or action == "SECAUDIT_AUDIT":
         if not _check_rate_limit(user_id, "audit_runtime"):
@@ -969,7 +984,13 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         }
 
     if action == "OPS_ENGINE":
-        text, markup = _render_panel_for_command("/engine", user_id, owner_private=owner_private)
+        # Engine panel from Operations context — Back returns to Operations.
+        include_reload = not owner_private
+        markup = telegram_admin_ui.engine_markup(
+            include_roles_reload=include_reload,
+            parent_action="OPERATIONS",
+        )
+        text, _ = _render_panel_for_command("/engine", user_id, owner_private=owner_private)
         return {"text": text, "reply_markup": markup}
 
     if action == "SYMBOLS_COV":
@@ -978,7 +999,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         try:
             all_syms = get_all_known_symbols()
             active = _load_active_symbols()
-            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active)
+            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action="HOME")
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
         text, _ = _render_panel_for_command("/symbols list", user_id, owner_private=owner_private)
@@ -1053,7 +1074,13 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         }
 
     if action == "SH_ENGINE":
-        text, markup = _render_panel_for_command("/engine", user_id, owner_private=owner_private)
+        # Engine panel from System Health context — Back returns to System Health.
+        include_reload = not owner_private
+        markup = telegram_admin_ui.engine_markup(
+            include_roles_reload=include_reload,
+            parent_action="SYSHEALTH",
+        )
+        text, _ = _render_panel_for_command("/engine", user_id, owner_private=owner_private)
         return {"text": text, "reply_markup": markup}
 
     if action == "ROLES":
@@ -1097,14 +1124,14 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
 
     # ---- Standard navigation ----
     # HOME is handled below as the canonical admin root entry point.
+    # SYMBOLS is handled explicitly below so the toggle markup gets the correct
+    # parent_action="STRATEGY" (Symbols is a sub-page of Strategy, not Admin Home).
     command_for_action = {
         "STATUS": "/status",
         "STRATEGY": "/strategy",
         "THRESHOLDS": "/thresholds",
         "SR": "/sr",
         "SPIKE": "/spike",
-        "SYMBOLS": "/symbols list",
-        "SYMBOLS_COV": "/symbols list",
         "ENGINE": "/engine",
         "DEBUG": "/debug",
         "REPORT": "/report",
@@ -1112,6 +1139,17 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         "AFFILIATE": "/affiliate",
         "RELOAD_ROLES_EXEC": "/roles_reload",
     }.get(action)
+
+    # ---- SYMBOLS: reached from Strategy panel — Back returns to Strategy ----
+    if action == "SYMBOLS":
+        try:
+            all_syms = get_all_known_symbols()
+            active = _load_active_symbols()
+            markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action="STRATEGY")
+        except Exception:
+            markup = telegram_admin_ui.symbols_markup()
+        text, _ = _render_panel_for_command("/symbols list", user_id, owner_private=owner_private)
+        return {"text": _format_card("💱 Symbols Panel", text.split("\n\n", 1)[-1] if "\n\n" in text else text), "reply_markup": markup}
 
     # ---- HOME: canonical admin root — single source of truth ----
     if action == "HOME":

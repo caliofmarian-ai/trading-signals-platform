@@ -332,10 +332,14 @@ class TestAdminHomeMarkup:
     def test_back_navigation_buttons_present(self):
         _purge()
         from core.telegram_admin_ui import strategy_markup, standard_back_markup, CALLBACK_PREFIX
+        # strategy_markup Back navigates to Operations (immediate parent, canonical §6.2)
         markup = strategy_markup()
         flat_data = [btn["callback_data"] for row in markup["inline_keyboard"] for btn in row]
-        assert f"{CALLBACK_PREFIX}HOME" in flat_data
+        assert f"{CALLBACK_PREFIX}OPERATIONS" in flat_data, (
+            "strategy_markup Back should return to Operations (immediate parent), not Admin Home"
+        )
 
+        # standard_back_markup retains the ADMIN_NAV:HOME shortcut for generic use
         markup2 = standard_back_markup()
         flat_data2 = [btn["callback_data"] for row in markup2["inline_keyboard"] for btn in row]
         assert f"{CALLBACK_PREFIX}HOME" in flat_data2
@@ -359,11 +363,18 @@ class TestSymbolToggleMarkup:
     def test_symbols_toggle_has_all_none_refresh(self):
         _purge()
         from core.telegram_admin_ui import symbols_toggle_markup, CALLBACK_PREFIX
+        # Default parent_action="HOME" → refresh targets SYMBOLS_COV (admin-home panel entry)
         markup = symbols_toggle_markup(["EURUSD"], [])
         flat_data = [btn["callback_data"] for row in markup["inline_keyboard"] for btn in row]
         assert f"{CALLBACK_PREFIX}SYMBOLS_ALL" in flat_data
         assert f"{CALLBACK_PREFIX}SYMBOLS_NONE" in flat_data
-        assert f"{CALLBACK_PREFIX}SYMBOLS" in flat_data
+        # Refresh action present (SYMBOLS_COV for admin-home context)
+        assert f"{CALLBACK_PREFIX}SYMBOLS_COV" in flat_data
+
+        # When parent_action="STRATEGY" → refresh targets SYMBOLS (strategy sub-page)
+        markup2 = symbols_toggle_markup(["EURUSD"], [], parent_action="STRATEGY")
+        flat_data2 = [btn["callback_data"] for row in markup2["inline_keyboard"] for btn in row]
+        assert f"{CALLBACK_PREFIX}SYMBOLS" in flat_data2
 
     def test_symbols_toggle_3_per_row_max(self):
         _purge()
