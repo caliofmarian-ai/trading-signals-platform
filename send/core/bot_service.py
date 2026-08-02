@@ -18,6 +18,7 @@ import uuid
 from typing import Optional, Dict, Any
 
 from core import telegram_publisher
+from core.telegram_publisher import TelegramAPIError as _TelegramAPIError
 from core.admin_commands import (
     handle_admin_command as handle_admin_command_v2,
     handle_symbols_toggle,
@@ -206,6 +207,12 @@ def _edit_interactive_message(
     """Try to edit a candidate interactive page message.
 
     Returns True when edit is successful or idempotent no-op, else False.
+
+    When the edit fails because the message is stale (deleted/unavailable),
+    the session clear is attempted best-effort.  A failure during the clear
+    (e.g. a stale filesystem lock causing TimeoutError) is captured and
+    logged but does NOT propagate.  The caller then falls through to
+    send_message(), preserving the transport-first contract.
     """
     try:
         telegram_publisher.edit_message(chat_id, message_id, text, reply_markup)
@@ -227,11 +234,29 @@ def _edit_interactive_message(
             )
             return True, "no_op"
         if failure_category == "stale":
-            telegram_app_nav.clear_active_message(
-                user_id=user_id,
-                chat_id=chat_id,
-                thread_id=thread_id,
-            )
+            # Transport-first: clear state best-effort.  A lock timeout or
+            # any other persistence failure must NOT suppress the replacement
+            # send that follows.
+            try:
+                telegram_app_nav.clear_active_message(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    thread_id=thread_id,
+                )
+            except Exception as clear_exc:
+                observability_logger.log_error({
+                    "event_type": "error",
+                    "data": {
+                        "severity": "WARNING",
+                        "error_type": "telegram_app_nav_clear_failed_on_stale",
+                        "message": str(clear_exc),
+                        "context": {
+                            "chat_id": chat_id,
+                            "user_id": user_id,
+                            "message_id": message_id,
+                        },
+                    },
+                })
             return False, "stale"
         _log_app_nav_edit_failure(
             category=failure_category,
@@ -365,13 +390,27 @@ def _send_interactive_page(
 
 def _classify_edit_message_failure(exc: Exception) -> str:
     """
-    Classify Telegram edit failure outcomes.
+    Classify Telegram edit failure outcomes using structured error data first.
+
+    When ``exc`` is a ``TelegramAPIError``, classification uses structured
+    ``error_code`` and ``http_status`` fields.  String matching on the
+    normalized description is kept as a fallback for legacy ``RuntimeError``
+    instances.
 
     Returns:
-    - "no_op": requested content already active (`message is not modified`)
-    - "stale": message is deleted/not found/inaccessible for editing
+    - "no_op":    requested content already active (``message is not modified``)
+    - "stale":    message deleted/unavailable/bot blocked
     - "unexpected": any other failure
     """
+    # Structured path: use TelegramAPIError fields when available.
+    if isinstance(exc, _TelegramAPIError):
+        if exc.is_not_modified():
+            return "no_op"
+        if exc.is_stale_message() or exc.is_chat_not_found():
+            return "stale"
+        return "unexpected"
+
+    # Legacy fallback: string matching.
     detail = str(exc).lower()
     if "message is not modified" in detail:
         return "no_op"
@@ -384,6 +423,7 @@ def _classify_edit_message_failure(exc: Exception) -> str:
         "chat not found",
         "bot was blocked by the user",
         "message identifier is not specified",
+        "peer_id_invalid",
     )
     if any(marker in detail for marker in stale_markers):
         return "stale"

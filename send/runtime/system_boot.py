@@ -164,7 +164,31 @@ def _register_shutdown_hooks() -> None:
 def start_system() -> None:
     _register_shutdown_hooks()
 
-    start_info = record_start()
+    # Guard against stale restart_guard.lock (or any other startup state error)
+    # preventing the bot from starting.  A TimeoutError from a stale lock file
+    # is treated as a degraded-but-safe startup: the restart counter is unknown
+    # but we must not leave Telegram polling permanently blocked.
+    try:
+        start_info = record_start()
+    except Exception as start_exc:
+        log_event({
+            "event_type": "error",
+            "severity": "WARNING",
+            "error_type": "RESTART_GUARD_LOAD_FAILED",
+            "message": "record_start() failed; treating as degraded-safe start",
+            "context": {"error": str(start_exc)},
+            "source": {"module": "system_boot", "function": "start_system"},
+        })
+        start_info = {
+            "crash_loop": False,
+            "counted_restart": True,
+            "recovery_required": True,
+            "restart_count": 0,
+            "window_seconds": 60,
+            "max_restarts": 3,
+            "previous_shutdown_kind": "unknown",
+        }
+
     runtime_status.write_status(
         "starting",
         "BinaryBot runtime bootstrap starting",
@@ -327,9 +351,31 @@ def start_system() -> None:
     if _env_flag("RAILWAY_READINESS_EVALUATED", default=False):
         send_control_notification("BOT LIVE", "BinaryBot runtime is live.")
 
-    # keep main thread alive
+    # keep main thread alive; emit periodic poller liveness diagnostics
+    _heartbeat_check_interval = 60
+    _heartbeat_warn_logged = False
     while True:
-        time.sleep(60)
+        time.sleep(_heartbeat_check_interval)
+        if telegram_enabled:
+            from runtime.telegram_updates import is_poller_alive, get_poller_heartbeat_age
+            alive = is_poller_alive()
+            age = get_poller_heartbeat_age()
+            if not alive:
+                if not _heartbeat_warn_logged:
+                    log_warning(
+                        warn_type="poller_heartbeat_stalled",
+                        message="Telegram poller heartbeat is stale or missing",
+                        context={
+                            "heartbeat_age_sec": age,
+                            "heartbeat_timeout_sec": 120.0,
+                            "pid": os.getpid(),
+                        },
+                        source={"module": "system_boot", "function": "start_system"},
+                    )
+                    _heartbeat_warn_logged = True
+            else:
+                _heartbeat_warn_logged = False
+
 
 
 if __name__ == "__main__":
