@@ -1,16 +1,16 @@
 # ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0
 
-**Canonical Name:** ADMIN_SURFACE_AND_CONTROL_PLANE_CANON  
-**Version:** 2.0.0  
-**Status:** Active Canonical Root Document  
-**Owner:** BinaryBot / DROPi Signals  
-**Canonical Path:** `send/docs/canonical/active/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md`  
-**Governance Record:** canonical-reconciliation-01 (OWNER-007 = A)  
-**Promoted:** 2026-07-12  
+**Canonical Name:** ADMIN_SURFACE_AND_CONTROL_PLANE_CANON
+**Version:** 2.0.0
+**Status:** Active Canonical Root Document
+**Owner:** BinaryBot / DROPi Signals
+**Canonical Path:** `send/docs/canonical/active/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md`
+**Governance Record:** canonical-reconciliation-01 (OWNER-007 = A)
+**Promoted:** 2026-07-12
 **Scope:** Canonical root manifest for the admin/control-plane specification cluster. Defines the human/operator control plane: Owner authority, hierarchical admin layers, Telegram admin interface relation, observability consumption, affiliate/admin segmentation, and separation between truth, control, and execution surfaces.
 
-**Predecessor / Superseded Documents:**  
-- `send/docs/canonical/proposed/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v1.0.0.md` — proposed source; retained as historical record.  
+**Predecessor / Superseded Documents:**
+- `send/docs/canonical/proposed/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v1.0.0.md` — proposed source; retained as historical record.
 
 ---
 
@@ -430,3 +430,14 @@ This is the canonical root document for the Admin Surface and Human Control Plan
 ---
 
 *End of ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md*
+
+## Human Comprehension and Operational Memory
+
+All stable human-facing control surfaces governed by this canon MUST comply with
+`HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md`.
+
+The control plane MUST NOT depend on remembered chat history, operator folklore,
+developer memory, or unexplained technical terminology for correct human interpretation.
+
+Presentation MUST remain traceable to active canonical ownership and MUST NOT become
+an alternate source of strategy, execution, analytics, permission, or governance truth.

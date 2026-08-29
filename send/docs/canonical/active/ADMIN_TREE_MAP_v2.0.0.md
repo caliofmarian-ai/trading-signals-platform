@@ -1,8 +1,8 @@
 # ADMIN_TREE_MAP_v2.0.0.md
 
-BinaryBot — Admin Tree Map  
-Version: 2.0.0  
-Status: CANONICAL  
+BinaryBot — Admin Tree Map
+Version: 2.0.0
+Status: CANONICAL
 Path: /opt/binarybot/docs/canonical/active/ADMIN_TREE_MAP_v2.0.0.md
 
 Linked Documents:
@@ -23,7 +23,7 @@ Linked Documents:
 
 This document defines the canonical structural map of the BinaryBot admin tree.
 
-The admin tree map is the navigation and surface-organization reference for the operator control environment.  
+The admin tree map is the navigation and surface-organization reference for the operator control environment.
 It describes:
 
 - top-level admin entry points
@@ -516,3 +516,14 @@ If implemented correctly, this admin tree map provides:
 ---
 
 End of ADMIN_TREE_MAP_v2.0.0.md
+
+## Self-Explaining Tree Requirement
+
+Every stable visible branch in the canonical admin tree MUST have a human-readable
+purpose and contextual explanation consistent with
+`HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md`.
+
+The tree MUST NOT degrade into an unexplained technical command dump.
+
+Compact Telegram presentation is permitted, but deeper canonical explanation MUST
+remain discoverable.

@@ -1,8 +1,8 @@
 # ADMIN_CONTROL_SPEC_v2.0.0.md
 
-BinaryBot — Admin Control Surface Specification  
-Version: 2.0.0  
-Status: CANONICAL  
+BinaryBot — Admin Control Surface Specification
+Version: 2.0.0
+Status: CANONICAL
 Path: /opt/binarybot/docs/canonical/active/ADMIN_CONTROL_SPEC_v2.0.0.md
 
 Linked Documents:
@@ -40,7 +40,7 @@ The admin control surface is the operator-facing control plane through which aut
 - access canonical documentation and proof artifacts
 - supervise affiliate / distribution / admin activity according to role
 
-This document does **not** define raw permission policy in full detail.  
+This document does **not** define raw permission policy in full detail.
 Detailed permission authority belongs to:
 
 - `ADMIN_OPERATIONS_SPEC_v2.0.0.md`
@@ -59,22 +59,22 @@ It is a governed operator interface placed above the operational system.
 
 Its role is to expose safe, auditable, role-scoped visibility and control over the following truth domains:
 
-- **Operational Truth**  
+- **Operational Truth**
   Service health, engine status, queue state, routing state, cooldowns, incidents, freezes, failover and recovery state.
 
-- **Decision Truth**  
+- **Decision Truth**
   Decision objects, gate outcomes, rejection reasons, readiness state, PRE / CONFIRM / OPEN_NOW transitions, score explanations, feasibility state, SR state, spike state and focus state.
 
-- **Market / Timing Truth**  
+- **Market / Timing Truth**
   Time windows, corridor state, temporal gating state, session context, timing eligibility and lifecycle timing telemetry.
 
-- **Outcome Truth**  
+- **Outcome Truth**
   Outcome capture status, verdict readiness, win / lose / missed classification state, source confidence and settlement completeness.
 
-- **Research / Learning Truth**  
+- **Research / Learning Truth**
   Performance analytics, pattern learning, rejection analytics, experiment history, intelligence summaries and evolution recommendations.
 
-- **Distribution Truth**  
+- **Distribution Truth**
   Channel routing, publication permissions, audience tiering, affiliate routing, message formatting state, distribution health and publishing audit state.
 
 The admin surface must expose those truth domains **without collapsing them into one ambiguous dashboard**.
@@ -123,7 +123,7 @@ The admin surface may be reached through one or more delivery interfaces, such a
 - **Documentation & Governance**
 - **System Health & Recovery**
 
-The Telegram presentation details belong to `TELEGRAM_UX_v2.0.0.md`.  
+The Telegram presentation details belong to `TELEGRAM_UX_v2.0.0.md`.
 The hierarchy and role structure belong to `CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.0.md` and `ADMIN_TREE_MAP_v2.0.0.md`.
 
 ---
@@ -145,7 +145,7 @@ It must show a concise, role-appropriate overview of:
 - recent distribution events
 - quick links into subordinate panels
 
-The admin home must not attempt to replace specialized panels.  
+The admin home must not attempt to replace specialized panels.
 It is a launch surface and summary layer, not the full operating environment.
 
 ---
@@ -248,7 +248,7 @@ It may expose:
 - message dispatch audit status
 - fallback routing status
 
-This panel does not decide whether a signal is valid.  
+This panel does not decide whether a signal is valid.
 It governs where eligible outputs may be sent and under what operational conditions.
 
 This panel must align with:
@@ -504,3 +504,14 @@ Admin surfaces may aggregate control, observability, analytics, and execution-ad
 
 ### 32.3 No shadow admin truth
 Any older admin UX planning material is informative only. Canonical admin truth remains defined by the active admin/control-plane document set.
+
+## Self-Explaining Admin Surface Requirement
+
+Canonical-document-driven control includes canonical-document-driven comprehension.
+
+Stable admin surfaces MUST comply with
+`HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md`.
+
+Subsystem names, states, parameters, thresholds, metrics, controls, and technical
+acronyms MUST NOT be treated as self-evident when their interpretation is material
+to safe operation or governance.

@@ -1,8 +1,8 @@
 # SYSTEM_INVARIANTS_v2.0.0.md
 
-BinaryBot — Non-Negotiable System Invariants  
-Version: 2.0.0  
-Status: CANONICAL  
+BinaryBot — Non-Negotiable System Invariants
+Version: 2.0.0
+Status: CANONICAL
 Path: /opt/binarybot/docs/canonical/active/SYSTEM_INVARIANTS_v2.0.0.md
 
 Linked Documents:
@@ -416,3 +416,37 @@ This extends the legacy guarantee to the modern canonical stack. filecitet
 ---
 
 End of SYSTEM_INVARIANTS_v2.0.0.md
+
+## Human Comprehension Invariants
+
+The invariants in this section are governed by
+`HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md` and are mandatory for stable human-facing control surfaces.
+
+
+### INV-HC-001 — No Naked Operational Concepts
+
+Stable human-facing control surfaces MUST NOT depend on unexplained operational
+concepts, states, parameters, acronyms, metrics, or controls when correct
+interpretation is material to operation or governance.
+
+### INV-HC-002 — Interface as Operational Memory
+
+The governed human interface MUST provide sufficient contextual knowledge for an
+authorized returning user to reconstruct the meaning, purpose, consequences,
+limitations, and canonical ownership of major control-plane capabilities without
+depending on historical chat memory or operator folklore.
+
+### INV-HC-003 — Explanation Preserves Canonical Ownership
+
+Human-facing explanatory text MUST NOT create alternate strategy, execution,
+distribution, analytics, permission, research, or governance truth.
+
+### INV-HC-004 — Unknown Must Mean Unknown
+
+A human-facing status MUST NOT report `UNKNOWN` when sufficient canonical runtime
+evidence exists to determine the state.
+
+### INV-HC-005 — Comprehension Does Not Grant Authority
+
+Access to definitions or contextual help MUST NOT implicitly grant mutation,
+execution, permission, or governance authority.

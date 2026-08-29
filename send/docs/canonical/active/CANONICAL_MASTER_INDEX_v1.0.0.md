@@ -1,18 +1,18 @@
 # CANONICAL_MASTER_INDEX_v1.0.0.md
 
-**Canonical Name:** CANONICAL_MASTER_INDEX  
-**Version:** 1.0.0  
-**Status:** Active Canonical — Authoritative Master Documentation Index  
-**Owner:** BinaryBot / DROPi Signals  
-**Canonical Path:** `send/docs/canonical/active/CANONICAL_MASTER_INDEX_v1.0.0.md`  
-**Governance Record:** canonical-reconciliation-01 (OWNER-005 = C)  
-**Created:** 2026-07-12  
+**Canonical Name:** CANONICAL_MASTER_INDEX
+**Version:** 1.0.0
+**Status:** Active Canonical — Authoritative Master Documentation Index
+**Owner:** BinaryBot / DROPi Signals
+**Canonical Path:** `send/docs/canonical/active/CANONICAL_MASTER_INDEX_v1.0.0.md`
+**Governance Record:** canonical-reconciliation-01 (OWNER-005 = C)
+**Created:** 2026-07-12
 
 **Authority:** This document is the single authoritative canonical master index for BinaryBot / DROPi Signals. It supersedes and replaces both `send/docs/MASTER_DOCUMENT_INDEX.md` and `send/docs/BINARYBOT_MASTER_INDEX.md` as the canonical documentation entry point. Both historical indexes are preserved and classified as superseded after this index was created and validated.
 
-**Superseded Documents (post-validation):**  
-- `send/docs/MASTER_DOCUMENT_INDEX.md` — superseded; retained as historical record.  
-- `send/docs/BINARYBOT_MASTER_INDEX.md` — superseded; retained as historical record.  
+**Superseded Documents (post-validation):**
+- `send/docs/MASTER_DOCUMENT_INDEX.md` — superseded; retained as historical record.
+- `send/docs/BINARYBOT_MASTER_INDEX.md` — superseded; retained as historical record.
 
 ---
 
@@ -285,3 +285,9 @@ The following document classes exist in the repository but are not part of the a
 ---
 
 *End of CANONICAL_MASTER_INDEX_v1.0.0.md*
+
+
+## Human Comprehension and Operational Memory
+
+- `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md` — ACTIVE — defines the mandatory self-explaining human control-surface,
+  contextual operational manual, and persistent operational-memory contract.

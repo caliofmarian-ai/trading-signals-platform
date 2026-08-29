@@ -1,8 +1,8 @@
 # CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.0.md
 
-BinaryBot — Control Panel Hierarchy and Intelligence Specification  
-Version: 2.0.0  
-Status: CANONICAL  
+BinaryBot — Control Panel Hierarchy and Intelligence Specification
+Version: 2.0.0
+Status: CANONICAL
 Path: /opt/binarybot/docs/canonical/active/CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.0.md
 
 Linked Documents:
@@ -654,3 +654,16 @@ Panels, tabs, dashboards, and grouping concepts are presentation aids; they do n
 
 ### 18.3 Merge rule
 Any useful concepts extracted from ADMIN_UX_V2_SPEC.md are now subordinate to this active canonical control-panel hierarchy.
+
+## Human Comprehension Layer
+
+The control-panel hierarchy MUST expose its operational meaning according to
+`HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md`.
+
+The panel MUST function as persistent operational memory for authorized users.
+
+A returning authorized user MUST NOT require historical chat conversations or
+developer memory to understand a stable branch, its important states, or the
+consequences of permitted controls.
+
+Explanation visibility does not imply mutation or governance authority.
