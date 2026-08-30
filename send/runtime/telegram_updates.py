@@ -167,12 +167,18 @@ def poll_updates():
             time.sleep(3)
 
 
-def _ack_callback(callback_id: Any) -> None:
-    """Send an empty answerCallbackQuery to dismiss the Telegram loading spinner."""
+def _ack_callback(callback_id: Any, text: str = "") -> None:
+    """Acknowledge a callback, optionally with a bounded Telegram toast."""
     if not callback_id:
         return
+    ack_text = str(text or "").strip()
+    if len(ack_text) > 200:
+        ack_text = f"{ack_text[:197]}..."
     try:
-        telegram_publisher.answer_callback_query(str(callback_id))
+        if ack_text:
+            telegram_publisher.answer_callback_query(str(callback_id), text=ack_text)
+        else:
+            telegram_publisher.answer_callback_query(str(callback_id))
     except Exception as e:
         safe_error = telegram_publisher._sanitize(str(e))
         observability_logger.log_warning(
@@ -214,11 +220,17 @@ def process_update(update: Dict[str, Any]):
             _answer_callback_query(callback_id, result)
             return
 
-        bot_service.process_update(update)
+        result = bot_service.process_update(update)
         # Acknowledge APP: and ADMIN_NAV: callbacks so Telegram dismisses the
-        # loading spinner.  VOTE_ callbacks are already acknowledged above via
-        # _answer_callback_query which encodes the outcome text.
-        _ack_callback(callback_id)
+        # loading spinner. Recovery paths may add a short user-visible toast;
+        # all normal callbacks retain the empty acknowledgement. VOTE_
+        # callbacks are already acknowledged above by _answer_callback_query.
+        ack_text = (
+            str(result.get("callback_ack_text") or "")
+            if isinstance(result, dict)
+            else ""
+        )
+        _ack_callback(callback_id, ack_text)
 
 
 def _answer_callback_query(callback_id: Any, result: Dict[str, Any]) -> None:

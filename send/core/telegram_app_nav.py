@@ -96,6 +96,11 @@ def _is_supported_app_action(action: str) -> bool:
     return False
 
 
+def is_dispatchable_app_action(action: str) -> bool:
+    """Return whether an APP callback action has a canonical dispatcher path."""
+    return action == ACT_BACK or _is_supported_app_action(action)
+
+
 def make_callback(action: str, generation: Optional[int] = None) -> str:
     if generation is not None:
         try:
