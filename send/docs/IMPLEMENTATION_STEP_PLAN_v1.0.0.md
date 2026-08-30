@@ -118,6 +118,15 @@ Structură:
 
 MarketContext price_speed buffer_distance trend_context volatility_state
 
+Implementation status (2026-08-30):
+
+- implemented as a deterministic shadow module in `core/market_model.py`
+- uses only real newest-first M1/M5 candles and versioned `algo_params.json` values
+- preserves the established strategy mathematics for EMA, RSI, ATR, price speed, buffer and spike evidence
+- also exposes `noise_context`; `target_distance` remains unavailable until the SR Corridor layer supplies real structure evidence
+- rejects incomplete history, invalid OHLC evidence, invalid ordering and missing configuration instead of fabricating values
+- does not score, emit signals, select expiry, mutate the live strategy or execute trades
+
 ---
 
 ## 6. STEP 109 — SR CORRIDOR ENGINE
