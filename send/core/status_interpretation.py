@@ -17,6 +17,7 @@ def human_status_summary(snapshot: Mapping[str, object]) -> Tuple[str, ...]:
     broker = _value(snapshot, "broker_state")
     history_ready = snapshot.get("market_data_history_ready")
     persistence = _value(snapshot, "market_data_persistence_state")
+    integrity = _value(snapshot, "market_data_integrity_state")
 
     if phase == "RUNNING":
         bot = "Bot: online and running."
@@ -63,7 +64,18 @@ def human_status_summary(snapshot: Mapping[str, object]) -> Tuple[str, ...]:
     else:
         storage = "History storage: persistence has not been confirmed by runtime evidence."
 
-    if persistence == "ERROR":
+    if integrity == "VALID":
+        quality = "Candle quality: timestamps and prices passed integrity checks."
+    elif integrity == "COLLECTING":
+        quality = "Candle quality: too little history exists for a complete integrity verdict."
+    elif integrity == "INVALID":
+        quality = "Candle quality: invalid history was detected; decisions are blocked."
+    else:
+        quality = "Candle quality: no integrity verdict is available."
+
+    if integrity == "INVALID":
+        action = "Required action: inspect invalid candle evidence before strategy evaluation."
+    elif persistence == "ERROR":
         action = "Required action: inspect persistent storage before relying on collected history."
     elif broker.startswith("ENABLED") or shadow == "OFF":
         action = "Required action: inspect execution safety settings before continuing."
@@ -76,4 +88,4 @@ def human_status_summary(snapshot: Mapping[str, object]) -> Tuple[str, ...]:
     else:
         action = "Required action: inspect the detailed evidence below; normal operation is not confirmed."
 
-    return bot, market_meaning, decisions, trading, storage, action
+    return bot, market_meaning, decisions, trading, storage, quality, action

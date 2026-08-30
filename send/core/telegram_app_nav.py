@@ -1171,6 +1171,8 @@ def render_status_page(
     store_load_state = snapshot.get("market_data_store_load_state")
     store_write_state = snapshot.get("market_data_store_write_state")
     restored_counts = snapshot.get("market_data_restored_candle_counts")
+    integrity_state = snapshot.get("market_data_integrity_state")
+    integrity_report = snapshot.get("market_data_integrity_report")
 
     plain_summary = "\n".join(human_status_summary(snapshot))
 
@@ -1220,6 +1222,16 @@ def render_status_page(
         if isinstance(restored_m1, int) and isinstance(restored_m5, int):
             current_state += (
                 f"\nRestored at startup: M1 {restored_m1}; M5 {restored_m5}"
+            )
+    if isinstance(integrity_state, str) and integrity_state.strip():
+        current_state += f"\nCandle integrity: {integrity_state.strip()}"
+    if isinstance(integrity_report, dict):
+        hard_errors = integrity_report.get("hard_error_count")
+        gaps = integrity_report.get("gap_count")
+        if isinstance(hard_errors, int) and isinstance(gaps, int):
+            current_state += (
+                f"\nCandle integrity evidence: hard errors {hard_errors}; "
+                f"observed gaps {gaps}"
             )
     note = snapshot.get("market_data_note")
     if isinstance(note, str) and note.strip():
