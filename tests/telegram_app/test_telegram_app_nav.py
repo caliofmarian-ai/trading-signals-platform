@@ -298,6 +298,10 @@ class TestRenderStatusPage:
             recovery_state="DEGRADED_SAFE",
             shadow_mode="ON",
             broker_state="DISABLED (configured)",
+            market_data_persistence_state="ACTIVE",
+            market_data_store_load_state="LOADED",
+            market_data_store_write_state="OK",
+            market_data_restored_candle_counts={"M1": 5, "M5": 2},
         )
         text, _markup = render_status_page(snap)
         assert "Real history: M1 7/201; M5 2/201" in text
@@ -305,6 +309,9 @@ class TestRenderStatusPage:
         assert "Market information: real history is still being prepared; decisions are blocked." in text
         assert "Real trading: impossible; the bot can observe and calculate only." in text
         assert "Required action: none; the bot is protecting itself" in text
+        assert "Persistent history: ACTIVE" in text
+        assert "History file: startup read LOADED; latest save OK" in text
+        assert "Restored at startup: M1 5; M5 2" in text
 
     def test_status_warns_plainly_when_execution_is_enabled(self):
         from core.telegram_app_nav import render_status_page

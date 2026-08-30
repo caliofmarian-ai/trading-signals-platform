@@ -294,6 +294,15 @@ def build_status_snapshot(
         "market_data_candle_counts": evidence.get("market_data_candle_counts"),
         "market_data_minimum_candles": evidence.get("market_data_minimum_candles"),
         "market_data_history_ready": evidence.get("market_data_history_ready"),
+        "market_data_persistence_state": evidence.get("market_data_persistence_state"),
+        "market_data_store_load_state": evidence.get("market_data_store_load_state"),
+        "market_data_store_write_state": evidence.get("market_data_store_write_state"),
+        "market_data_restored_candle_counts": evidence.get(
+            "market_data_restored_candle_counts"
+        ),
+        "market_data_last_persisted_ts": evidence.get(
+            "market_data_last_persisted_ts"
+        ),
         "telegram_state": telegram_state,
         "fsm_state": _fsm_projection(),
         "shadow_mode": shadow_state,

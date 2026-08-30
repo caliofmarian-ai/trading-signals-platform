@@ -106,6 +106,10 @@ class FinnhubForexFeed:
         self._candles: Dict[str, List[Dict[str, Any]]] = {"M1": [], "M5": []}
         self._last_price_ts: Optional[int] = None
         self._last_tick_ms: Optional[int] = None
+        self._store_load_state = "NOT_ATTEMPTED"
+        self._store_write_state = "NOT_ATTEMPTED"
+        self._restored_candle_counts: Dict[str, int] = {"M1": 0, "M5": 0}
+        self._last_persisted_ts: Optional[int] = None
         self._stream_started = False
         self._stream_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -125,10 +129,13 @@ class FinnhubForexFeed:
         try:
             payload = json.loads(self.store_path.read_text(encoding="utf-8"))
         except FileNotFoundError:
+            self._store_load_state = "EMPTY"
             return
         except (OSError, ValueError, TypeError):
+            self._store_load_state = "ERROR"
             return
         if not isinstance(payload, dict) or payload.get("provider") != "FINNHUB":
+            self._store_load_state = "ERROR"
             return
         loaded: Dict[str, List[Dict[str, Any]]] = {"M1": [], "M5": []}
         for code in loaded:
@@ -159,6 +166,10 @@ class FinnhubForexFeed:
             del loaded[code][MAX_CANDLES:]
         with self._lock:
             self._candles = loaded
+            self._restored_candle_counts = {
+                code: len(rows) for code, rows in loaded.items()
+            }
+            self._store_load_state = "LOADED"
 
     def _persist_store(self) -> None:
         with self._lock:
@@ -168,11 +179,17 @@ class FinnhubForexFeed:
                 "symbol": self.symbol,
                 "candles": self._candles,
             }
-        self.store_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.store_path.with_suffix(self.store_path.suffix + ".tmp")
-        temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-        os.chmod(temporary, 0o600)
-        temporary.replace(self.store_path)
+        try:
+            self.store_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.store_path.with_suffix(self.store_path.suffix + ".tmp")
+            temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+            os.chmod(temporary, 0o600)
+            temporary.replace(self.store_path)
+        except OSError:
+            self._store_write_state = "ERROR"
+            raise
+        self._store_write_state = "OK"
+        self._last_persisted_ts = int(self.clock())
 
     def ingest_message(self, message: Any) -> None:
         if isinstance(message, bytes):
@@ -300,6 +317,18 @@ class FinnhubForexFeed:
         with self._lock:
             last_price_ts = self._last_price_ts
             counts = {code: len(rows) for code, rows in self._candles.items()}
+            restored_counts = dict(self._restored_candle_counts)
+            load_state = self._store_load_state
+            write_state = self._store_write_state
+            last_persisted_ts = self._last_persisted_ts
+        if load_state == "ERROR" or write_state == "ERROR":
+            persistence_state = "ERROR"
+        elif load_state == "LOADED" or write_state == "OK":
+            persistence_state = "ACTIVE"
+        elif load_state == "EMPTY":
+            persistence_state = "EMPTY_READY"
+        else:
+            persistence_state = "UNKNOWN"
         age = None if last_price_ts is None else int(self.clock()) - int(last_price_ts)
         return {
             "provider": "FINNHUB",
@@ -312,4 +341,9 @@ class FinnhubForexFeed:
             "candle_counts": counts,
             "minimum_candles": self.minimum_candles,
             "history_ready": all(value >= self.minimum_candles for value in counts.values()),
+            "persistence_state": persistence_state,
+            "store_load_state": load_state,
+            "store_write_state": write_state,
+            "restored_candle_counts": restored_counts,
+            "last_persisted_ts": last_persisted_ts,
         }
