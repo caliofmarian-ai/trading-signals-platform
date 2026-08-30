@@ -64,6 +64,21 @@ ADMIN_CONTROL_CHAT_ID = env_chat_id("ADMIN_CONTROL_CHAT_ID") or 0
 ADMIN_CONTROL_THREAD_ID = env_thread_id("ADMIN_CONTROL_THREAD_ID") or 0
 UNKNOWN_COMMAND_TEXT = "Unknown command. Use /help to view available commands."
 
+_CALLBACK_RECOVERY_KEY = "__callback_recovery__"
+_RECOVERY_STALE = "stale"
+_RECOVERY_UNKNOWN_APP = "unknown_app"
+_RECOVERY_UNKNOWN = "unknown"
+_RECOVERY_RETIRED = "retired"
+_RECOVERY_UNAUTHORIZED = "unauthorized"
+
+_CALLBACK_RECOVERY_ACK = {
+    _RECOVERY_STALE: "Button expired — returned to Home.",
+    _RECOVERY_UNKNOWN_APP: "Unknown action — returned to Home.",
+    _RECOVERY_UNKNOWN: "Unknown action — returned to Admin Home.",
+    _RECOVERY_RETIRED: "This button was retired — returned to Admin Home.",
+    _RECOVERY_UNAUTHORIZED: "Access denied.",
+}
+
 # All admin commands accessible from owner private DM
 _OWNER_PRIVATE_COMMANDS: frozenset[str] = frozenset({
     "/admin",
@@ -878,7 +893,11 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
     # ---- RELOAD_ROLES flow (admin-topic only) ----
     if action == "RELOAD_ROLES_CONFIRM":
         if owner_private:
-            return {"text": "Access denied (wrong chat).", "reply_markup": None}
+            return {
+                "text": "Access denied (wrong chat).",
+                "reply_markup": None,
+                _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
+            }
         return {
             "text": _format_card("🔄 Confirmation", "Confirm reloading role + permission configuration?"),
             "reply_markup": telegram_admin_ui.reload_confirm_markup(cancel_action="ROLES"),
@@ -887,9 +906,17 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
     if action == "RELOAD_ROLES_EXEC":
         from core.admin_permissions import has_permission
         if owner_private or not _is_admin_topic_context(message):
-            return {"text": "Access denied (wrong chat).", "reply_markup": None}
+            return {
+                "text": "Access denied (wrong chat).",
+                "reply_markup": None,
+                _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
+            }
         if not has_permission(user_id, "roles.write"):
-            return {"text": "Access denied (missing permission).", "reply_markup": None}
+            return {
+                "text": "Access denied (missing permission).",
+                "reply_markup": None,
+                _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
+            }
         text = handle_admin_command_v2("/roles_reload", user_id)
         return {
             "text": _format_card("🔄 Roles Reload", text),
@@ -1311,14 +1338,26 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         return {"text": text, "reply_markup": markup}
 
     if command_for_action is None:
-        return {"text": "Unknown action.", "reply_markup": None}
+        return {
+            "text": "Unknown action.",
+            "reply_markup": None,
+            _CALLBACK_RECOVERY_KEY: _RECOVERY_UNKNOWN,
+        }
 
     cmd = command_for_action.split()[0].lower()
     if cmd in admin_command_names():
         if owner_private and cmd not in _OWNER_PRIVATE_COMMANDS:
-            return {"text": "Access denied (wrong chat).", "reply_markup": None}
+            return {
+                "text": "Access denied (wrong chat).",
+                "reply_markup": None,
+                _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
+            }
         if not owner_private and not _is_admin_topic_context(message):
-            return {"text": "Access denied (wrong chat).", "reply_markup": None}
+            return {
+                "text": "Access denied (wrong chat).",
+                "reply_markup": None,
+                _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
+            }
     text, reply_markup = _render_panel_for_command(command_for_action, user_id, owner_private=owner_private)
     return {"text": text, "reply_markup": reply_markup}
 
@@ -1349,6 +1388,82 @@ _RETIRED_MSG = (
     "Admin panel buttons are retired. Use canonical slash commands "
     "(/admin, /strategy, /engine, etc.)."
 )
+
+
+def _recovery_preferred_message_id(
+    message: Dict[str, Any],
+    user_id: int,
+    callback_message_id: Optional[int],
+) -> Optional[int]:
+    """Choose a recovery edit target without reviving an obsolete panel.
+
+    Normal callbacks prefer their originating message. Recovery callbacks are
+    different: the originating message may be from an older navigation
+    generation. When a different active message is tracked, leave the old
+    message untouched and let the canonical delivery path edit the active one.
+    If no active message is known, the callback message remains the safest
+    available edit target and avoids creating an unnecessary second panel.
+    """
+    target = reply_target_from_message(message)
+    if target is None:
+        return callback_message_id
+    active_message_id = telegram_app_nav.get_active_message(
+        user_id=user_id,
+        chat_id=target.chat_id,
+        thread_id=target.thread_id,
+    )
+    if active_message_id is None or active_message_id == callback_message_id:
+        return callback_message_id
+    return None
+
+
+def _callback_ack_result(recovery_kind: str) -> Dict[str, str]:
+    return {
+        "callback_ack_text": _CALLBACK_RECOVERY_ACK.get(
+            recovery_kind,
+            _CALLBACK_RECOVERY_ACK[_RECOVERY_UNKNOWN],
+        )
+    }
+
+
+def _recover_application_home(
+    message: Dict[str, Any],
+    user_id: int,
+    callback_message_id: Optional[int],
+    *,
+    primary_role: str,
+    first_name: str,
+    shadow_mode: Optional[bool],
+    update_id: Any,
+    recovery_kind: str,
+) -> None:
+    target = reply_target_from_message(message)
+    if target is None:
+        return
+    page_text, page_markup = telegram_app_nav.handle_app_action(
+        action=telegram_app_nav.ACT_HOME,
+        user_id=user_id,
+        primary_role=primary_role,
+        first_name=first_name,
+        shadow_mode=shadow_mode,
+        chat_id=target.chat_id,
+        thread_id=target.thread_id,
+    )
+    _send_interactive_page(
+        message,
+        user_id,
+        page_text,
+        page_markup,
+        preferred_message_id=_recovery_preferred_message_id(
+            message,
+            user_id,
+            callback_message_id,
+        ),
+        trace_context={
+            "update_id": update_id,
+            "command_family": f"APP_RECOVERY:{recovery_kind}",
+        },
+    )
 
 
 def handle_callback(
@@ -1429,22 +1544,40 @@ def handle_callback(
         }
         if message_thread_id is not None:
             message["message_thread_id"] = message_thread_id
+        if not _can_use_admin_callback(message, user_id):
+            return {
+                "text": "Access denied (wrong chat).",
+                "reply_markup": None,
+                _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
+            }
         return _handle_admin_navigation_action(admin_action, user_id, message)
 
     # ---- Admin panel callbacks: require authorised admin chat context (BATCH-05: fail-closed) ----
     context_message: Dict[str, Any] = {"chat": {"id": chat_id, "type": "private" if chat_id > 0 else "supergroup"}}
     if message_thread_id is not None:
         context_message["message_thread_id"] = message_thread_id
-    if not _is_admin_topic_context(context_message):
-        return {"text": "Access denied (wrong chat).", "reply_markup": None}
+    if not _can_use_admin_callback(context_message, user_id):
+        return {
+            "text": "Access denied (wrong chat).",
+            "reply_markup": None,
+            _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
+        }
 
     if data in _RETIRED_ADMIN_CALLBACKS or any(data.startswith(p) for p in _RETIRED_ADMIN_PREFIXES):
-        return {"text": _RETIRED_MSG, "reply_markup": None}
+        return {
+            "text": _RETIRED_MSG,
+            "reply_markup": None,
+            _CALLBACK_RECOVERY_KEY: _RECOVERY_RETIRED,
+        }
 
-    return {"text": "Unknown action.", "reply_markup": None}
+    return {
+        "text": "Unknown action.",
+        "reply_markup": None,
+        _CALLBACK_RECOVERY_KEY: _RECOVERY_UNKNOWN,
+    }
 
 
-def process_update(update: Dict[str, Any]) -> None:
+def process_update(update: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Telegram update dispatcher.
 
@@ -1624,6 +1757,22 @@ def process_update(update: Dict[str, Any]) -> None:
 
             # ---- APP: navigation callbacks — handled for all roles, all contexts ----
             app_cb = telegram_app_nav.parse_app_callback(data)
+            if (
+                app_cb is None
+                and isinstance(data, str)
+                and data.startswith(telegram_app_nav.APP_NAV_PREFIX)
+            ):
+                _recover_application_home(
+                    msg_obj,
+                    user_id,
+                    message_id,
+                    primary_role=get_primary_role(user_id),
+                    first_name=(cb.get("from") or {}).get("first_name", "") or "",
+                    shadow_mode=observed_shadow_mode(),
+                    update_id=update_id,
+                    recovery_kind=_RECOVERY_UNKNOWN_APP,
+                )
+                return _callback_ack_result(_RECOVERY_UNKNOWN_APP)
             app_action = None if app_cb is None else app_cb.get("action")
             if app_action is not None:
                 shadow = observed_shadow_mode()
@@ -1632,26 +1781,46 @@ def process_update(update: Dict[str, Any]) -> None:
                 thread_id = reply_target_from_message(msg_obj).thread_id if reply_target_from_message(msg_obj) is not None else None
                 callback_generation = app_cb.get("generation") if isinstance(app_cb, dict) else None
 
-                # APP:ADMIN must resolve to the same canonical admin root as ADMIN_NAV:HOME.
-                # Intercept here so both entry points produce an identical page.
-                if app_action == telegram_app_nav.ACT_ADMIN:
-                    owner_private = _is_owner_private_for_message(msg_obj, user_id)
-                    if not telegram_app_nav.callback_generation_is_current(
+                callback_is_stale = (
+                    callback_generation is not None
+                    and not telegram_app_nav.callback_generation_is_current(
                         chat_id=chat_id,
                         user_id=user_id,
                         callback_generation=callback_generation,
                         thread_id=thread_id,
-                    ):
-                        page_text, page_markup = telegram_app_nav.handle_app_action(
-                            action=telegram_app_nav.ACT_HOME,
-                            user_id=user_id,
-                            primary_role=primary_role,
-                            first_name=first_name,
-                            shadow_mode=shadow,
-                            chat_id=chat_id,
-                            thread_id=thread_id,
-                        )
-                    elif is_owner(user_id) or _is_admin_topic_context(msg_obj):
+                    )
+                )
+                if callback_is_stale:
+                    _recover_application_home(
+                        msg_obj,
+                        user_id,
+                        message_id,
+                        primary_role=primary_role,
+                        first_name=first_name,
+                        shadow_mode=shadow,
+                        update_id=update_id,
+                        recovery_kind=_RECOVERY_STALE,
+                    )
+                    return _callback_ack_result(_RECOVERY_STALE)
+
+                if not telegram_app_nav.is_dispatchable_app_action(app_action):
+                    _recover_application_home(
+                        msg_obj,
+                        user_id,
+                        message_id,
+                        primary_role=primary_role,
+                        first_name=first_name,
+                        shadow_mode=shadow,
+                        update_id=update_id,
+                        recovery_kind=_RECOVERY_UNKNOWN_APP,
+                    )
+                    return _callback_ack_result(_RECOVERY_UNKNOWN_APP)
+
+                # APP:ADMIN must resolve to the same canonical admin root as ADMIN_NAV:HOME.
+                # Intercept here so both entry points produce an identical page.
+                if app_action == telegram_app_nav.ACT_ADMIN:
+                    owner_private = _is_owner_private_for_message(msg_obj, user_id)
+                    if is_owner(user_id) or _is_admin_topic_context(msg_obj):
                         nav_meta = telegram_app_nav.record_app_navigation(
                             chat_id=chat_id,
                             user_id=user_id,
@@ -1707,20 +1876,12 @@ def process_update(update: Dict[str, Any]) -> None:
                     preferred_message_id=message_id,
                     trace_context={"update_id": update_id, "command_family": f"APP:{app_action}"},
                 )
-                return
+                return None
 
             # ---- ADMIN_NAV: callbacks — require admin context ----
             admin_action = telegram_admin_ui.parse_action(data)
             if admin_action is not None and not _can_use_admin_callback(msg_obj, user_id):
-                _send_interactive_page(
-                    msg_obj,
-                    user_id,
-                    "Access denied (wrong chat).",
-                    None,
-                    preferred_message_id=message_id,
-                    trace_context={"update_id": update_id, "command_family": f"ADMIN_NAV:{admin_action}"},
-                )
-                return
+                return _callback_ack_result(_RECOVERY_UNAUTHORIZED)
 
             if admin_action is not None:
                 res = _handle_admin_navigation_action(admin_action, user_id, msg_obj)
@@ -1738,7 +1899,33 @@ def process_update(update: Dict[str, Any]) -> None:
                 file_path = res["__file_path__"]
                 caption = res.get("__caption__", "")
                 _send_document_reply(msg_obj, file_path, caption=caption)
-                return
+                return None
+
+            recovery_kind = res.get(_CALLBACK_RECOVERY_KEY)
+            if recovery_kind == _RECOVERY_UNAUTHORIZED:
+                return _callback_ack_result(_RECOVERY_UNAUTHORIZED)
+            if recovery_kind in {_RECOVERY_UNKNOWN, _RECOVERY_RETIRED}:
+                owner_private = _is_owner_private_for_message(msg_obj, user_id)
+                page_text, page_markup = _build_canonical_admin_root_page(
+                    user_id,
+                    owner_private=owner_private,
+                )
+                _send_interactive_page(
+                    msg_obj,
+                    user_id,
+                    page_text,
+                    page_markup,
+                    preferred_message_id=_recovery_preferred_message_id(
+                        msg_obj,
+                        user_id,
+                        message_id,
+                    ),
+                    trace_context={
+                        "update_id": update_id,
+                        "command_family": f"CALLBACK_RECOVERY:{recovery_kind}",
+                    },
+                )
+                return _callback_ack_result(recovery_kind)
 
             original_text = msg_obj.get("text", "") or ""
 
@@ -1757,6 +1944,7 @@ def process_update(update: Dict[str, Any]) -> None:
                     preferred_message_id=message_id,
                     trace_context={"update_id": update_id, "command_family": data.split(":", 1)[0] if isinstance(data, str) and ":" in data else data},
                 )
+            return None
 
     except Exception as e:
         observability_logger.log_error({

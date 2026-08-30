@@ -520,16 +520,19 @@ def test_unauthorized_and_rate_limited_callbacks_do_not_accumulate_messages(
     sends = _capture_send_with_message_ids(monkeypatch, bot)
     edits = _capture_edit(monkeypatch, bot)
 
-    bot.process_update(_callback_update(chat_id=-1001, user_id=2002, data="ADMIN_NAV:HOME", message_id=55, chat_type="supergroup"))
-    bot.process_update(_callback_update(chat_id=-1001, user_id=2002, data="ADMIN_NAV:HOME", message_id=55, chat_type="supergroup"))
+    result1 = bot.process_update(_callback_update(chat_id=-1001, user_id=2002, data="ADMIN_NAV:HOME", message_id=55, chat_type="supergroup"))
+    result2 = bot.process_update(_callback_update(chat_id=-1001, user_id=2002, data="ADMIN_NAV:HOME", message_id=55, chat_type="supergroup"))
+
+    assert result1 is not None and "callback_ack_text" in result1
+    assert result2 is not None and "callback_ack_text" in result2
+    assert "denied" in result1["callback_ack_text"].lower()
 
     monkeypatch.setattr(bot, "_check_rate_limit", lambda _user_id, _operation: False)
     bot.process_update(_callback_update(chat_id=1001, user_id=1001, data="ADMIN_NAV:FILES_HOME", message_id=88))
 
     assert sends == []
-    assert len(edits) == 3
-    assert all("Access denied" in edits[i]["text"] for i in (0, 1))
-    assert "Rate limit exceeded" in edits[2]["text"]
+    assert len(edits) == 1
+    assert "Rate limit exceeded" in edits[0]["text"]
 
 
 def test_representative_navigation_journey_finishes_with_single_interactive_message(
@@ -743,7 +746,7 @@ def test_owner_private_callback_navigation_restores_admin_panels(
         ),
     )
 
-    bot.process_update(
+    result = bot.process_update(
         {
             "callback_query": {
                 "id": "cb-1",
@@ -774,7 +777,7 @@ def test_non_owner_callback_navigation_requires_admin_topic_thread(
     bot = fresh_imports("core.bot_service")
     sends = _capture_send(monkeypatch, bot)
 
-    bot.process_update(
+    result = bot.process_update(
         {
             "callback_query": {
                 "id": "cb-1",
@@ -790,8 +793,10 @@ def test_non_owner_callback_navigation_requires_admin_topic_thread(
         }
     )
 
-    assert sends
-    assert "Access denied" in sends[0]["text"]
+    assert sends == []
+    assert result is not None
+    assert "callback_ack_text" in result
+    assert "denied" in result["callback_ack_text"].lower()
 
 
 def test_admin_topic_reload_confirmation_dialog_uses_callback_navigation(
