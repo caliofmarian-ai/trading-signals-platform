@@ -91,6 +91,14 @@ Acest obiect nu este încă folosit de strategie.
 
 Este doar definit.
 
+Implementation status (2026-08-30):
+
+- the contract is defined in `core/decision_object.py`
+- synchronized Market Model, SR/Corridor, Time Model and Scoring Model outputs are assembled by `core/decision_assembly.py`
+- reject semantics, strategic flags, explanations and immutable FSM-ready inputs are materialized explicitly
+- the assembled object is deterministic and JSON-serializable for later observability
+- it remains shadow-only and is not yet consumed by FSM or Signal Engine
+
 ---
 
 ## 5. STEP 108 — MARKET MODEL MODULE

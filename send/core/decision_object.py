@@ -30,6 +30,15 @@ def _optional_finite(value: Optional[float], name: str) -> None:
         raise ValueError(f"{name} must be finite when available")
 
 
+def _plain(value: Any) -> Any:
+    """Convert semantic mapping/tuple values into JSON-ready primitives."""
+    if isinstance(value, Mapping):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_plain(item) for item in value]
+    return value
+
+
 @dataclass(frozen=True)
 class SetupContext:
     symbol: str
@@ -182,4 +191,4 @@ class DecisionObject:
             raise ValueError("at least one decision explanation is required")
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        return _plain(asdict(self))
