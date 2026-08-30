@@ -150,6 +150,15 @@ Structură:
 
 CorridorContext corridor_width corridor_direction corridor_structure
 
+Implementation status (2026-08-30):
+
+- implemented as a deterministic shadow module in `core/sr_corridor_engine.py`
+- consumes the completed Market Model output and real newest-first M5 candles
+- preserves the established support/resistance clustering and configured required-room mathematics
+- exposes boundaries, directional room, proximity distances, feasibility, conflicts and an audit explanation
+- missing boundaries remain `UNAVAILABLE`; they are never converted into infinite usable room
+- does not calculate time, score, FSM state, signal stage or execution
+
 ---
 
 ## 7. STEP 110 — TIME MODEL
