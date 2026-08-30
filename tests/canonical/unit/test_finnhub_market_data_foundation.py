@@ -217,3 +217,27 @@ def test_finnhub_foundation_rejects_other_symbols():
     module = importlib.import_module("runtime.finnhub_market_data")
     with pytest.raises(module.FinnhubConfigurationError, match="restricted"):
         module.normalize_symbol("GBP/USD")
+
+
+def test_finnhub_personal_use_never_publishes_signals(
+    canonical_runtime_root, fresh_imports, monkeypatch
+):
+    monkeypatch.setenv("MARKET_DATA_PROVIDER", "FINNHUB")
+    router = fresh_imports("core.distribution_router")
+    published = []
+    warnings = []
+    monkeypatch.setattr(
+        router.telegram_publisher,
+        "send_message",
+        lambda **kwargs: published.append(kwargs),
+    )
+    monkeypatch.setattr(
+        router.observability_logger,
+        "log_warning",
+        lambda **kwargs: warnings.append(kwargs),
+    )
+
+    router.route({"signal_id": "private-test", "stage": "OPEN_NOW"}, now_ts=1)
+
+    assert published == []
+    assert warnings[0]["warn_type"] == "FINNHUB_PERSONAL_USE_DISTRIBUTION_BLOCKED"
