@@ -60,6 +60,7 @@ from core.owner_knowledge import (
     render_operational_page,
 )
 from core.telegram_targets import valid_thread_id
+from core.status_interpretation import human_status_summary
 from state_store import state_store
 
 # ---------------------------------------------------------------------------
@@ -1167,7 +1168,10 @@ def render_status_page(
     minimum_candles = snapshot.get("market_data_minimum_candles")
     history_ready = snapshot.get("market_data_history_ready")
 
+    plain_summary = "\n".join(human_status_summary(snapshot))
+
     current_state = (
+        f"Plain-language meaning\n{plain_summary}\n\nDetailed evidence\n"
         f"Overall: {overall}\n"
         f"Runtime phase: {phase}\n"
         f"Health: {health}\n"
