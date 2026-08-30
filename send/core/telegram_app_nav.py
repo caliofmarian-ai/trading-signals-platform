@@ -1163,6 +1163,9 @@ def render_status_page(
     market_symbol = snapshot.get("market_data_symbol", unavailable)
     market_age = snapshot.get("market_data_age_seconds")
     freshness_limit = snapshot.get("market_data_freshness_limit_seconds")
+    candle_counts = snapshot.get("market_data_candle_counts")
+    minimum_candles = snapshot.get("market_data_minimum_candles")
+    history_ready = snapshot.get("market_data_history_ready")
 
     current_state = (
         f"Overall: {overall}\n"
@@ -1181,6 +1184,20 @@ def render_status_page(
         current_state += (
             f"\nLatest price age: {market_age} seconds "
             f"(maximum accepted: {freshness_limit})"
+        )
+    if isinstance(candle_counts, dict) and isinstance(minimum_candles, int):
+        m1_count = candle_counts.get("M1")
+        m5_count = candle_counts.get("M5")
+        if isinstance(m1_count, int) and isinstance(m5_count, int):
+            current_state += (
+                f"\nReal history: M1 {m1_count}/{minimum_candles}; "
+                f"M5 {m5_count}/{minimum_candles}"
+            )
+    if isinstance(history_ready, bool):
+        current_state += (
+            "\nStrategy history: READY"
+            if history_ready
+            else "\nStrategy history: COLLECTING — decisions remain blocked"
         )
     note = snapshot.get("market_data_note")
     if isinstance(note, str) and note.strip():

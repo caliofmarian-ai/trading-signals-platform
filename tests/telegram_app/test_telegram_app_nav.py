@@ -283,6 +283,40 @@ class TestRenderStatusPage:
         text, markup = render_status_page(snap)
         assert "429" in text
 
+    def test_status_explains_finnhub_collection_progress(self):
+        from core.telegram_app_nav import render_status_page
+        snap = _make_snapshot(
+            overall_state="MARKET_DATA_COLLECTING",
+            market_data_state="MARKET_DATA_COLLECTING",
+            market_data_provider="FINNHUB",
+            market_data_symbol="EUR/USD",
+            market_data_age_seconds=12,
+            market_data_freshness_limit_seconds=10,
+            market_data_candle_counts={"M1": 7, "M5": 2},
+            market_data_minimum_candles=201,
+            market_data_history_ready=False,
+        )
+        text, _markup = render_status_page(snap)
+        assert "Real history: M1 7/201; M5 2/201" in text
+        assert "Strategy history: COLLECTING — decisions remain blocked" in text
+
+
+def test_operational_snapshot_preserves_market_collection_evidence():
+    from core.operational_snapshot import build_status_snapshot
+
+    snapshot = build_status_snapshot({
+        "phase": "RUNNING",
+        "market_data_state": "MARKET_DATA_COLLECTING",
+        "market_data_candle_counts": {"M1": 7, "M5": 2},
+        "market_data_minimum_candles": 201,
+        "market_data_history_ready": False,
+    })
+
+    assert snapshot["overall_state"].startswith("MARKET_DATA_COLLECTING")
+    assert snapshot["market_data_candle_counts"] == {"M1": 7, "M5": 2}
+    assert snapshot["market_data_minimum_candles"] == 201
+    assert snapshot["market_data_history_ready"] is False
+
     def test_status_has_refresh_button(self):
         from core.telegram_app_nav import render_status_page, ACT_STATUS
         snap = _make_snapshot()

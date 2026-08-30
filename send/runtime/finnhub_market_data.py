@@ -284,15 +284,15 @@ class FinnhubForexFeed:
             candles = [dict(row) for row in self._candles[code]]
         if last_price_ts is None:
             raise FinnhubMarketDataUnavailable("Finnhub live price has not been received yet")
-        age_seconds = int(self.clock()) - int(last_price_ts)
-        if age_seconds < 0 or age_seconds > self.freshness_seconds:
-            raise FinnhubStaleMarketData(
-                f"Finnhub live price is stale: age={age_seconds}s, limit={self.freshness_seconds}s"
-            )
         if len(candles) < self.minimum_candles:
             raise FinnhubInsufficientHistory(
                 f"Finnhub {code} history is still collecting: "
                 f"{len(candles)}/{self.minimum_candles} real candles"
+            )
+        age_seconds = int(self.clock()) - int(last_price_ts)
+        if age_seconds < 0 or age_seconds > self.freshness_seconds:
+            raise FinnhubStaleMarketData(
+                f"Finnhub live price is stale: age={age_seconds}s, limit={self.freshness_seconds}s"
             )
         return candles
 
