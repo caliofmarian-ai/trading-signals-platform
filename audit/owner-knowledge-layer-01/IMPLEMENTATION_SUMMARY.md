@@ -129,6 +129,12 @@ projection to Status, System Health, and Diagnose surfaces.
 - absent runtime tick evidence and absent engine-event, active-symbol, or
   report artifacts remain explicit evidence gaps rather than becoming interval
   `2`, count `0`, or an empty operational state;
+- malformed runtime scalar values and invalid active-symbol members remain
+  `UNAVAILABLE` rather than being stringified into fabricated state;
+- incomplete persisted FSM payloads are rejected as evidence instead of being
+  normalized into an observed default state;
+- missing decision/intelligence logs and missing strategy configuration remain
+  distinguishable from valid empty logs and a valid custom strategy profile;
 - derived overall `READY` requires reported runtime phase, recovery, and
   market-data readiness evidence;
 - derived states are labeled as derived;
@@ -163,11 +169,14 @@ This implementation does not change:
 New focused coverage verifies:
 
 - declarative registry loading and schema versioning;
+- rejection of unversioned or operational fields outside the registry schema;
 - absence of canonical explanatory prose from the Python loader;
 - missing runtime evidence cannot be presented as healthy or ready;
 - partial runtime evidence cannot be presented as overall ready;
 - missing persisted artifacts remain distinguishable from explicit empty or
   zero-valued artifacts;
+- malformed runtime scalars, invalid symbol members, incomplete FSM artifacts,
+  missing decision logs, and missing strategy configuration fail closed;
 - missing shadow-mode evidence remains explicit;
 - complete registry materialization;
 - all required comprehension fields;
@@ -183,9 +192,13 @@ New focused coverage verifies:
 - single-message information callbacks;
 - removal of the flat Admin Home command dump.
 
+Focused Owner Knowledge Layer and Telegram application result:
+
+`78 passed`
+
 Full repository result:
 
-`766 passed`
+`772 passed`
 
 ## Remaining live acceptance
 

@@ -20,10 +20,48 @@ REGISTRY_SCHEMA_VERSION = "1.0.0"
 REGISTRY_PATH_ENV = "OWNER_KNOWLEDGE_REGISTRY_PATH"
 _SEND_DIR = Path(__file__).resolve().parents[1]
 _DEFAULT_REGISTRY_PATH = _SEND_DIR / "config" / "owner_knowledge_registry.json"
+_REGISTRY_FIELDS = frozenset(
+    {
+        "schema_version",
+        "registry_id",
+        "human_comprehension_canon",
+        "aliases",
+        "entries",
+    }
+)
+_ENTRY_FIELDS = frozenset(
+    {
+        "key",
+        "title",
+        "identity",
+        "purpose",
+        "pipeline_position",
+        "controls",
+        "consequences",
+        "limitations",
+        "canonical_sources",
+        "glossary",
+        "public",
+        "panel_actions",
+    }
+)
 
 
 class KnowledgeRegistryError(ValueError):
     """Raised when the declarative knowledge registry is missing or invalid."""
+
+
+def _reject_unknown_fields(
+    payload: Mapping[object, Any],
+    *,
+    allowed: frozenset[str],
+    context: str,
+) -> None:
+    unknown = sorted(str(key) for key in payload if key not in allowed)
+    if unknown:
+        raise KnowledgeRegistryError(
+            f"{context} contains unsupported fields: {', '.join(unknown)}"
+        )
 
 
 @dataclass(frozen=True)
@@ -115,6 +153,7 @@ def _entry(raw: Any, *, human_canon: str, index: int) -> KnowledgeEntry:
     context = f"entries[{index}]"
     if not isinstance(raw, dict):
         raise KnowledgeRegistryError(f"{context} must be an object")
+    _reject_unknown_fields(raw, allowed=_ENTRY_FIELDS, context=context)
     key = _required_text(raw.get("key"), field="key", context=context)
     sources = _text_tuple(
         raw.get("canonical_sources"), field="canonical_sources", context=context
@@ -153,6 +192,7 @@ def _entry(raw: Any, *, human_canon: str, index: int) -> KnowledgeEntry:
 def _build_registry(
     payload: Mapping[str, Any],
 ) -> tuple[str, str, Mapping[str, KnowledgeEntry], Mapping[str, str]]:
+    _reject_unknown_fields(payload, allowed=_REGISTRY_FIELDS, context="registry")
     schema_version = _required_text(
         payload.get("schema_version"), field="schema_version", context="registry"
     )

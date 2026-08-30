@@ -179,6 +179,19 @@ def _load_algo_params() -> Dict[str, Any]:
         return {}
 
 
+def _load_algo_params_observation() -> Optional[Dict[str, Any]]:
+    """Return validated effective parameters, or None for missing/invalid evidence."""
+    try:
+        return _params_loader.load_algo_params(_algo_params_path())
+    except (
+        _params_loader.ParamsValidationError,
+        _params_loader.ParamsMigrationError,
+        FileNotFoundError,
+        OSError,
+    ):
+        return None
+
+
 def _save_algo_params_validated(params: Dict[str, Any]) -> None:
     """
     Validate params against the canonical contract, then write atomically.
@@ -215,12 +228,27 @@ def _load_active_symbols() -> List[str]:
 def _load_active_symbols_observation() -> Optional[List[str]]:
     """Return persisted symbol evidence, or None when it is absent/invalid."""
     data = _read_json_observation(ACTIVE_SYMBOLS_PATH)
+
+    def strict_values(values: List[Any]) -> Optional[List[str]]:
+        normalized: List[str] = []
+        for value in values:
+            if not isinstance(value, str) or not value.strip():
+                return None
+            normalized.append(value.strip().upper())
+        return sorted(set(normalized))
+
     if isinstance(data, list):
-        return _flatten_active_symbols(data)
+        return strict_values(data)
     if isinstance(data, dict):
-        if any(not isinstance(values, list) for values in data.values()):
-            return None
-        return _flatten_active_symbols(data)
+        observed: List[str] = []
+        for values in data.values():
+            if not isinstance(values, list):
+                return None
+            normalized = strict_values(values)
+            if normalized is None:
+                return None
+            observed.extend(normalized)
+        return sorted(set(observed))
     return None
 
 
@@ -260,14 +288,6 @@ def _iter_jsonl(path: str):
         return
 
 
-def _last_decision_event() -> Optional[Dict[str, Any]]:
-    events = list(_iter_jsonl(ENGINE_EVENTS_PATH) or [])
-    for event in reversed(events):
-        if isinstance(event, dict) and event.get("event_type") == "decision":
-            return event
-    return None
-
-
 def _read_engine_events_observation() -> Optional[List[Dict[str, Any]]]:
     """Read the event log strictly so absence/corruption is not reported as zero."""
     if not os.path.isfile(ENGINE_EVENTS_PATH):
@@ -286,6 +306,25 @@ def _read_engine_events_observation() -> Optional[List[Dict[str, Any]]]:
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
     return events
+
+
+def _decision_debug_observation() -> Dict[str, Any]:
+    events = _read_engine_events_observation()
+    if events is None:
+        return {
+            "availability": "UNAVAILABLE (engine event log absent or invalid)",
+            "event": None,
+        }
+    decisions = [event for event in events if event.get("event_type") == "decision"]
+    if not decisions:
+        return {
+            "availability": "AVAILABLE (no decision recorded in event log)",
+            "event": None,
+        }
+    return {
+        "availability": "AVAILABLE (persisted engine event log)",
+        "event": decisions[-1],
+    }
 
 
 def _engine_status() -> Dict[str, Any]:
@@ -526,6 +565,10 @@ def get_current_strategy_profile() -> Optional[str]:
     Returns the profile name if an exact match is found, otherwise None.
     """
     params = _load_algo_params()
+    return _detect_strategy_profile(params)
+
+
+def _detect_strategy_profile(params: Dict[str, Any]) -> Optional[str]:
     thresholds = params.get("score_thresholds", {})
     sr = params.get("sr_required_multiplier")
     for name, profile in STRATEGY_PROFILES.items():
@@ -536,6 +579,16 @@ def get_current_strategy_profile() -> Optional[str]:
                 and sr == profile["sr_required_multiplier"]):
             return name
     return None
+
+
+def get_current_strategy_profile_observation() -> str:
+    params = _load_algo_params_observation()
+    if params is None:
+        return "UNAVAILABLE (strategy configuration absent or invalid)"
+    profile = _detect_strategy_profile(params)
+    if profile is not None:
+        return f"{profile} (matched valid effective configuration)"
+    return "CUSTOM (valid effective configuration does not match a named profile)"
 
 
 def handle_strategy_profile(profile: str, user_id: int) -> str:
@@ -921,7 +974,7 @@ def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
         params = _load_algo_params()
         config_summary["score_thresholds"] = params.get("score_thresholds")
         config_summary["sr_required_multiplier"] = params.get("sr_required_multiplier")
-        config_summary["strategy_profile"] = get_current_strategy_profile()
+        config_summary["strategy_profile"] = get_current_strategy_profile_observation()
         observed_symbols = _load_active_symbols_observation()
         config_summary["active_symbols_count"] = (
             "UNAVAILABLE (active-symbol configuration absent or invalid)"
@@ -1116,7 +1169,11 @@ def handle_admin_command(text: str, user_id: int) -> str:
             ok, reason = require_permission(user_id, "debug.view")
             if not ok:
                 return render_error(reason)
-            return render_debug_last(_last_decision_event())
+            observation = _decision_debug_observation()
+            return render_debug_last(
+                observation["event"],
+                availability=observation["availability"],
+            )
 
         if cmd == "/report":
             ok, reason = require_permission(user_id, "reports.view")

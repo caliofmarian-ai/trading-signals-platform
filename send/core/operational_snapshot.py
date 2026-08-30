@@ -7,6 +7,7 @@ values or maintain its own fallback state model.
 
 from __future__ import annotations
 
+import json
 import math
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from runtime import runtime_status
 
 
 UNKNOWN_NOT_REPORTED = "UNKNOWN (not reported)"
+UNAVAILABLE_INVALID = "UNAVAILABLE (reported evidence invalid)"
 
 
 def optional_bool(value: Any) -> Optional[bool]:
@@ -73,23 +75,55 @@ def observed_shadow_mode(
 
 
 def _reported_upper(status: Mapping[str, Any], key: str) -> str:
-    raw = status.get(key)
-    if raw is None or not str(raw).strip():
+    if key not in status or status.get(key) is None:
         return UNKNOWN_NOT_REPORTED
-    return str(raw).strip().upper()
+    raw = status.get(key)
+    if not isinstance(raw, str):
+        return UNAVAILABLE_INVALID
+    value = raw.strip()
+    return value.upper() if value else UNKNOWN_NOT_REPORTED
+
+
+def _reported_optional_upper(
+    status: Mapping[str, Any],
+    key: str,
+) -> Optional[str]:
+    if key not in status or status.get(key) is None:
+        return None
+    raw = status.get(key)
+    if not isinstance(raw, str):
+        return UNAVAILABLE_INVALID
+    value = raw.strip()
+    return value.upper() if value else None
 
 
 def _reported_text(status: Mapping[str, Any], key: str, absent: str) -> str:
-    raw = status.get(key)
-    if raw is None or not str(raw).strip():
+    if key not in status or status.get(key) is None:
         return absent
-    return str(raw).strip()
+    raw = status.get(key)
+    if not isinstance(raw, str):
+        return UNAVAILABLE_INVALID
+    value = raw.strip()
+    return value if value else absent
 
 
 def _fsm_projection() -> str:
     state_path = Path(str(fsm_runtime.STATE_PATH))
     if not state_path.is_file():
         return "UNAVAILABLE (persisted FSM state absent)"
+    try:
+        raw_text = state_path.read_text(encoding="utf-8")
+        raw_state = json.loads(raw_text)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return "UNAVAILABLE (persisted FSM state invalid or unreadable)"
+    if not isinstance(raw_state, dict):
+        return "UNAVAILABLE (persisted FSM state payload invalid)"
+    if not isinstance(raw_state.get("mode"), str) or not str(
+        raw_state.get("mode")
+    ).strip():
+        return "UNAVAILABLE (persisted FSM mode not reported)"
+    if not isinstance(raw_state.get("watchlist"), list):
+        return "UNAVAILABLE (persisted FSM watchlist not reported)"
     try:
         state = fsm_runtime.load_state()
     except Exception:
@@ -99,6 +133,11 @@ def _fsm_projection() -> str:
     # WIDE_SCAN state is not persisted operational evidence.
     if not state_path.is_file():
         return "UNAVAILABLE (persisted FSM state absent)"
+    try:
+        if state_path.read_text(encoding="utf-8") != raw_text:
+            return "UNAVAILABLE (persisted FSM state changed during observation)"
+    except (OSError, UnicodeError):
+        return "UNAVAILABLE (persisted FSM state unreadable after validation)"
     if not isinstance(state, dict):
         return "UNAVAILABLE (state payload invalid)"
 
@@ -116,13 +155,17 @@ def _fsm_projection() -> str:
 
 
 def _reported_positive_seconds(status: Mapping[str, Any], key: str) -> str:
-    raw = status.get(key)
-    if isinstance(raw, bool):
+    if key not in status or status.get(key) is None:
         return UNKNOWN_NOT_REPORTED
+    raw = status.get(key)
+    if isinstance(raw, str) and not raw.strip():
+        return UNKNOWN_NOT_REPORTED
+    if isinstance(raw, bool):
+        return UNAVAILABLE_INVALID
     try:
         seconds = float(raw)
     except (TypeError, ValueError):
-        return UNKNOWN_NOT_REPORTED
+        return UNAVAILABLE_INVALID
     if not math.isfinite(seconds) or seconds <= 0:
         return "UNAVAILABLE (reported interval invalid)"
     rendered = str(int(seconds)) if seconds.is_integer() else str(seconds)
@@ -143,9 +186,9 @@ def build_status_snapshot(
         if "recovery_required" in evidence
         else None
     )
-    raw_recovery_state = evidence.get("recovery_state")
-    if raw_recovery_state is not None and str(raw_recovery_state).strip():
-        recovery_state = str(raw_recovery_state).strip().upper()
+    reported_recovery_state = _reported_optional_upper(evidence, "recovery_state")
+    if reported_recovery_state is not None:
+        recovery_state = reported_recovery_state
     elif recovery_required is True:
         recovery_state = (
             "DEGRADED_SAFE (derived from reported recovery requirement)"
@@ -176,9 +219,9 @@ def build_status_snapshot(
     else:
         telegram_state = UNKNOWN_NOT_REPORTED
 
-    raw_broker_state = evidence.get("broker_state")
-    if raw_broker_state is not None and str(raw_broker_state).strip():
-        broker_state = str(raw_broker_state).strip().upper()
+    reported_broker_state = _reported_optional_upper(evidence, "broker_state")
+    if reported_broker_state is not None:
+        broker_state = reported_broker_state
     else:
         broker_enabled = status_flag_observation(
             evidence,
@@ -197,9 +240,9 @@ def build_status_snapshot(
                 "DISABLED (effective fail-closed default; configuration absent)"
             )
 
-    raw_overall_state = evidence.get("overall_state")
-    if raw_overall_state is not None and str(raw_overall_state).strip():
-        overall_state = str(raw_overall_state).strip().upper()
+    reported_overall_state = _reported_optional_upper(evidence, "overall_state")
+    if reported_overall_state is not None:
+        overall_state = reported_overall_state
     elif runtime_phase == "BLOCKED":
         overall_state = "BLOCKED (derived from runtime phase)"
     elif market_data_state == "MARKET_DATA_LIMITED":

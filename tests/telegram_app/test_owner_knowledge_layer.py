@@ -81,6 +81,20 @@ def test_explanatory_content_is_declarative_not_embedded_in_python():
             assert entry[field] not in module_source
 
 
+def test_registry_schema_rejects_unversioned_operational_fields():
+    from core.owner_knowledge import KnowledgeRegistryError, _build_registry
+
+    root_payload = json.loads(KNOWLEDGE_REGISTRY_PATH.read_text(encoding="utf-8"))
+    root_payload["live_runtime_state"] = "READY"
+    with pytest.raises(KnowledgeRegistryError, match="unsupported fields"):
+        _build_registry(root_payload)
+
+    entry_payload = json.loads(KNOWLEDGE_REGISTRY_PATH.read_text(encoding="utf-8"))
+    entry_payload["entries"][0]["current_value"] = "HEALTHY"
+    with pytest.raises(KnowledgeRegistryError, match="unsupported fields"):
+        _build_registry(entry_payload)
+
+
 def test_every_entry_fulfils_the_common_comprehension_contract():
     for key, entry in KNOWLEDGE_REGISTRY.items():
         assert entry.key == key
@@ -209,6 +223,27 @@ def test_missing_fsm_artifact_is_not_presented_as_default_state(
     assert "watchlist=0" not in projected
 
 
+def test_incomplete_fsm_artifact_is_not_normalized_into_observed_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    from core import operational_snapshot
+
+    state_path = tmp_path / "focus_state.json"
+    state_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        operational_snapshot.fsm_runtime,
+        "STATE_PATH",
+        str(state_path),
+    )
+
+    projected = operational_snapshot._fsm_projection()
+
+    assert projected.startswith("UNAVAILABLE")
+    assert "WIDE_SCAN" not in projected
+    assert "watchlist=0" not in projected
+
+
 def test_engine_tick_interval_requires_reported_runtime_evidence(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -234,6 +269,40 @@ def test_engine_tick_interval_requires_reported_runtime_evidence(
         "2 seconds (reported runtime evidence)"
     )
     assert invalid["engine_tick_seconds"].startswith("UNAVAILABLE")
+
+
+def test_invalid_runtime_scalar_types_remain_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    from core import operational_snapshot
+
+    monkeypatch.setattr(
+        operational_snapshot.fsm_runtime,
+        "STATE_PATH",
+        str(tmp_path / "missing_focus_state.json"),
+    )
+    snapshot = operational_snapshot.build_status_snapshot(
+        {
+            "phase": [],
+            "market_data_state": {},
+            "overall_state": ["READY"],
+            "recovery_state": 123,
+            "broker_state": True,
+            "engine_tick_seconds": "not-a-number",
+        }
+    )
+
+    for key in (
+        "overall_state",
+        "runtime_phase",
+        "market_data_state",
+        "recovery_state",
+        "broker_state",
+        "engine_tick_seconds",
+    ):
+        assert snapshot[key].startswith("UNAVAILABLE"), (key, snapshot[key])
+    assert "READY" not in snapshot["overall_state"]
 
 
 def test_missing_operational_artifacts_do_not_become_zero_or_empty_state(
@@ -322,6 +391,77 @@ def test_explicit_empty_artifacts_remain_distinct_from_missing_artifacts(
     assert admin_commands._load_active_symbols_observation() == []
     assert report["availability"].startswith("AVAILABLE")
     assert report["decisions"] == 0
+
+
+def test_invalid_symbol_members_do_not_become_fabricated_symbols(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    from core import admin_commands
+
+    path = tmp_path / "active_symbols.json"
+    monkeypatch.setattr(admin_commands, "ACTIVE_SYMBOLS_PATH", str(path))
+
+    path.write_text(json.dumps([None, 42, {"bad": True}]), encoding="utf-8")
+    assert admin_commands._load_active_symbols_observation() is None
+
+    path.write_text(json.dumps({"forex": ["EUR/USD"], "crypto": [7]}), encoding="utf-8")
+    assert admin_commands._load_active_symbols_observation() is None
+
+    path.write_text(json.dumps({"forex": ["EUR/USD"], "crypto": []}), encoding="utf-8")
+    assert admin_commands._load_active_symbols_observation() == ["EUR/USD"]
+
+
+def test_decision_and_intelligence_views_distinguish_missing_from_empty_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    from core import admin_commands, admin_views, bot_service
+
+    path = tmp_path / "engine_events.jsonl"
+    monkeypatch.setattr(admin_commands, "ENGINE_EVENTS_PATH", str(path))
+
+    missing = admin_commands._decision_debug_observation()
+    assert missing["availability"].startswith("UNAVAILABLE")
+    assert "UNAVAILABLE" in admin_views.render_debug_last(
+        missing["event"], availability=missing["availability"]
+    )
+    assert bot_service._iter_recent_engine_events() is None
+    assert "UNAVAILABLE" in admin_views.render_intelligence_panel(None)
+
+    path.write_text("", encoding="utf-8")
+    empty = admin_commands._decision_debug_observation()
+    assert empty["availability"].startswith("AVAILABLE")
+    assert "available event log" in admin_views.render_debug_last(
+        empty["event"], availability=empty["availability"]
+    )
+    assert bot_service._iter_recent_engine_events() == []
+    assert "available event log" in admin_views.render_intelligence_panel([])
+
+
+def test_strategy_profile_does_not_call_missing_configuration_custom(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    from core import admin_commands
+
+    monkeypatch.setattr(
+        admin_commands,
+        "_algo_params_path",
+        lambda: str(tmp_path / "missing_algo_params.json"),
+    )
+    assert admin_commands.get_current_strategy_profile_observation().startswith(
+        "UNAVAILABLE"
+    )
+
+    monkeypatch.setattr(
+        admin_commands,
+        "_algo_params_path",
+        lambda: str(SEND_DIR / "config" / "algo_params.json"),
+    )
+    assert admin_commands.get_current_strategy_profile_observation().startswith(
+        "CUSTOM"
+    )
 
 
 def test_welcome_page_does_not_invent_a_shadow_mode_default():

@@ -88,8 +88,23 @@ def render_engine_status(status: Dict[str, Any]) -> str:
     return _lines(lines)
 
 
-def render_debug_last(decision_event: Optional[Dict[str, Any]]) -> str:
+def render_debug_last(
+    decision_event: Optional[Dict[str, Any]],
+    *,
+    availability: Optional[str] = None,
+) -> str:
+    if availability and availability.startswith("UNAVAILABLE"):
+        return _lines(["Signal Debug", "", availability])
     if not decision_event:
+        if availability:
+            return _lines(
+                [
+                    "Signal Debug",
+                    "",
+                    f"Evidence: {availability}",
+                    "No decision is recorded in the available event log.",
+                ]
+            )
         return "Signal Debug\n\nNo recent decision found."
 
     data = decision_event.get("data", {}) if isinstance(decision_event, dict) else {}
@@ -107,6 +122,7 @@ def render_debug_last(decision_event: Optional[Dict[str, Any]]) -> str:
     lines: List[str] = [
         "Signal Debug",
         "",
+        *([f"Evidence: {availability}", ""] if availability else []),
         f"PAIR: {_clean(data.get('symbol'))}",
         f"TIMEFRAME: {_clean(debug.get('tf'))}",
         f"SCORE: {_clean(data.get('score_total'))}",
@@ -257,9 +273,13 @@ def render_intelligence_panel(recent_events: Optional[List[Dict[str, Any]]] = No
         "",
     ]
 
-    events = recent_events or []
+    if recent_events is None:
+        lines.append("UNAVAILABLE (engine event log absent or invalid).")
+        return _lines(lines)
+
+    events = recent_events
     if not events:
-        lines.append("No recent decision events available.")
+        lines.append("No decision events are recorded in the available event log.")
         lines.extend([
             "",
             "Intelligence views become available once the engine has processed signals.",

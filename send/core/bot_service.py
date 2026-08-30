@@ -33,7 +33,9 @@ from core.admin_commands import (
     handle_audit_runtime,
     handle_docs_list,
     get_all_known_symbols,
+    get_current_strategy_profile_observation,
     _load_active_symbols_observation,
+    _read_engine_events_observation,
     _find_latest_report_json,
     _iter_jsonl,
     ENGINE_EVENTS_PATH,
@@ -948,8 +950,13 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
     # ---- Strategy profile callbacks ----
     if action == "PROFILE_HOME":
         current = get_current_strategy_profile()
+        current_observation = get_current_strategy_profile_observation()
         return {
-            "text": _format_surface("strategy", "⚙️ Strategy Profile", f"Current profile: {current or 'custom'}"),
+            "text": _format_surface(
+                "strategy",
+                "⚙️ Strategy Profile",
+                f"Current profile: {current_observation}",
+            ),
             "reply_markup": telegram_admin_ui.strategy_quick_markup(current),
         }
 
@@ -1196,12 +1203,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         # Intelligence panel: decision intelligence, drift signals, anomaly summaries.
         # Source: ADMIN_TREE_MAP_v2.0.0.md §6.7; ADMIN_CONTROL_SPEC_v2.0.0.md §11
         from core.admin_views import render_intelligence_panel
-        try:
-            recent_events: list = []
-            for ev in _iter_recent_engine_events(limit=50):
-                recent_events.append(ev)
-        except Exception:
-            recent_events = []
+        recent_events = _iter_recent_engine_events(limit=50)
         content = render_intelligence_panel(recent_events)
         return {
             "text": _format_surface("intelligence", "🧠 Intelligence", content),
@@ -1324,13 +1326,12 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
 def _build_status_snapshot() -> Dict[str, Any]:
     return build_status_snapshot()
 
-def _iter_recent_engine_events(limit: int = 50) -> list:
+def _iter_recent_engine_events(limit: int = 50) -> Optional[list]:
     """Return the most recent engine events (up to limit) from engine_events.jsonl."""
-    try:
-        events = list(_iter_jsonl(ENGINE_EVENTS_PATH))
-        return events[-limit:] if len(events) > limit else events
-    except Exception:
-        return []
+    events = _read_engine_events_observation()
+    if events is None:
+        return None
+    return events[-limit:] if len(events) > limit else events
 
 
 _RETIRED_ADMIN_CALLBACKS: frozenset = frozenset({
