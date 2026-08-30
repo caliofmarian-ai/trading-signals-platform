@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence
 
+from core.status_interpretation import human_status_summary
+
 
 @dataclass(frozen=True)
 class CommandSpec:
@@ -105,6 +107,10 @@ def render_status_text(snapshot: dict[str, object]) -> str:
     lines = [
         "BinaryBot Status",
         "",
+        "Plain-language meaning",
+        *human_status_summary(snapshot),
+        "",
+        "Detailed evidence",
         f"Overall: {snapshot.get('overall_state', unavailable)}",
         f"Runtime phase: {snapshot.get('runtime_phase', unavailable)}",
         f"Health: {snapshot.get('runtime_message', unavailable)}",

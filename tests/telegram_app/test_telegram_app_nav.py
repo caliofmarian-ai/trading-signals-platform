@@ -295,10 +295,41 @@ class TestRenderStatusPage:
             market_data_candle_counts={"M1": 7, "M5": 2},
             market_data_minimum_candles=201,
             market_data_history_ready=False,
+            recovery_state="DEGRADED_SAFE",
+            shadow_mode="ON",
+            broker_state="DISABLED (configured)",
         )
         text, _markup = render_status_page(snap)
         assert "Real history: M1 7/201; M5 2/201" in text
         assert "Strategy history: COLLECTING — decisions remain blocked" in text
+        assert "Market information: real history is still being prepared; decisions are blocked." in text
+        assert "Real trading: impossible; the bot can observe and calculate only." in text
+        assert "Required action: none; the bot is protecting itself" in text
+
+    def test_status_warns_plainly_when_execution_is_enabled(self):
+        from core.telegram_app_nav import render_status_page
+        snap = _make_snapshot(shadow_mode="OFF", broker_state="ENABLED")
+
+        text, _markup = render_status_page(snap)
+
+        assert "Real trading: broker execution is enabled; owner attention is required." in text
+        assert "Required action: inspect execution safety settings before continuing." in text
+
+    def test_status_never_calls_unknown_evidence_healthy(self):
+        from core.telegram_app_nav import render_status_page
+        snap = _make_snapshot(
+            runtime_phase=None,
+            market_data_state=None,
+            market_data_history_ready=None,
+            shadow_mode=None,
+            broker_state=None,
+        )
+
+        text, _markup = render_status_page(snap)
+
+        assert "current operating state is not reported" in text
+        assert "has not reported enough evidence" in text
+        assert "safety state cannot be fully confirmed" in text
 
 
 def test_operational_snapshot_preserves_market_collection_evidence():
