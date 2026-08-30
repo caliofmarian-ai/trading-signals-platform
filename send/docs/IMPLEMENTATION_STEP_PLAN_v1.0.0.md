@@ -159,11 +159,13 @@ model_expiry = t_needed × expiry_tolerance
 
 și:
 
-model_time_reach_ratio = (price_speed × model_expiry) / buffer_distance
+model_time_reach_ratio = t_needed_adjusted / model_expiry
 
 și:
 
-corridor_time_pressure = t_needed / model_expiry
+corridor_time_pressure is derived from the canonical time metrics together
+with corridor geometry; an exact formula requires an explicit, versioned
+calibration rule.
 
 Output:
 
