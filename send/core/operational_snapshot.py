@@ -303,6 +303,8 @@ def build_status_snapshot(
         "market_data_last_persisted_ts": evidence.get(
             "market_data_last_persisted_ts"
         ),
+        "market_data_integrity_state": evidence.get("market_data_integrity_state"),
+        "market_data_integrity_report": evidence.get("market_data_integrity_report"),
         "telegram_state": telegram_state,
         "fsm_state": _fsm_projection(),
         "shadow_mode": shadow_state,

@@ -10,6 +10,7 @@ def test_ready_evidence_is_explained_without_promising_profit() -> None:
         "shadow_mode": "ON",
         "broker_state": "DISABLED (configured)",
         "market_data_persistence_state": "ACTIVE",
+        "market_data_integrity_state": "VALID",
     })
     text = "\n".join(lines)
 
@@ -17,6 +18,7 @@ def test_ready_evidence_is_explained_without_promising_profit() -> None:
     assert "Real trading: impossible" in text
     assert "Required action: none" in text
     assert "candle file was read or saved successfully" in text
+    assert "timestamps and prices passed integrity checks" in text
     assert "profit" not in text.lower()
     assert "guarante" not in text.lower()
 
@@ -49,3 +51,19 @@ def test_persistence_error_overrides_no_action_message() -> None:
 
     assert "collected history may be lost" in text
     assert "Required action: inspect persistent storage" in text
+
+
+def test_invalid_candles_require_attention() -> None:
+    text = "\n".join(human_status_summary({
+        "runtime_phase": "RUNNING",
+        "market_data_state": "MARKET_DATA_UNAVAILABLE",
+        "market_data_history_ready": True,
+        "recovery_state": "DEGRADED_SAFE",
+        "shadow_mode": "ON",
+        "broker_state": "DISABLED",
+        "market_data_persistence_state": "ACTIVE",
+        "market_data_integrity_state": "INVALID",
+    }))
+
+    assert "invalid history was detected" in text
+    assert "Required action: inspect invalid candle evidence" in text

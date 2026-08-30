@@ -90,6 +90,29 @@ def test_invalid_store_reports_persistence_error(tmp_path):
     assert feed.health()["persistence_state"] == "ERROR"
 
 
+def test_invalid_loaded_ohlc_is_blocked_before_strategy(tmp_path):
+    module = importlib.import_module("runtime.finnhub_market_data")
+    store = tmp_path / "candles.json"
+    rows = [
+        {"ts": 600, "open": 1.3, "high": 1.2, "low": 1.0, "close": 1.1},
+        {"ts": 540, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.1},
+    ]
+    store.write_text(json.dumps({
+        "provider": "FINNHUB",
+        "candles": {"M1": rows, "M5": rows},
+    }), encoding="utf-8")
+    feed = module.FinnhubForexFeed(
+        token="secret", store_path=store, minimum_candles=2, clock=lambda: 601
+    )
+    feed._last_price_ts = 600
+    feed._stream_started = True
+
+    with pytest.raises(module.FinnhubInvalidHistory, match="integrity"):
+        feed.get_candles("EUR/USD", "M1")
+
+    assert feed.health()["integrity_state"] == "INVALID"
+
+
 def test_no_decision_data_until_live_price_and_real_history_are_ready(tmp_path):
     module = importlib.import_module("runtime.finnhub_market_data")
     feed = module.FinnhubForexFeed(

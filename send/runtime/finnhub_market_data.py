@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from runtime.market_history_integrity import inspect_history
+
 
 FINNHUB_WS_URL = "wss://ws.finnhub.io"
 SUPPORTED_SYMBOL = "EUR/USD"
@@ -28,6 +30,10 @@ class FinnhubStaleMarketData(FinnhubMarketDataUnavailable):
 
 
 class FinnhubInsufficientHistory(FinnhubMarketDataUnavailable):
+    pass
+
+
+class FinnhubInvalidHistory(FinnhubMarketDataUnavailable):
     pass
 
 
@@ -299,8 +305,14 @@ class FinnhubForexFeed:
         with self._lock:
             last_price_ts = self._last_price_ts
             candles = [dict(row) for row in self._candles[code]]
+            integrity = inspect_history(self._candles)
         if last_price_ts is None:
             raise FinnhubMarketDataUnavailable("Finnhub live price has not been received yet")
+        if integrity["state"] == "INVALID":
+            raise FinnhubInvalidHistory(
+                "Finnhub candle history failed integrity checks: "
+                f"hard_errors={integrity['hard_error_count']}"
+            )
         if len(candles) < self.minimum_candles:
             raise FinnhubInsufficientHistory(
                 f"Finnhub {code} history is still collecting: "
@@ -321,6 +333,7 @@ class FinnhubForexFeed:
             load_state = self._store_load_state
             write_state = self._store_write_state
             last_persisted_ts = self._last_persisted_ts
+            integrity = inspect_history(self._candles)
         if load_state == "ERROR" or write_state == "ERROR":
             persistence_state = "ERROR"
         elif load_state == "LOADED" or write_state == "OK":
@@ -346,4 +359,6 @@ class FinnhubForexFeed:
             "store_write_state": write_state,
             "restored_candle_counts": restored_counts,
             "last_persisted_ts": last_persisted_ts,
+            "integrity_state": integrity["state"],
+            "integrity_report": integrity,
         }

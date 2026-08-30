@@ -302,6 +302,8 @@ class TestRenderStatusPage:
             market_data_store_load_state="LOADED",
             market_data_store_write_state="OK",
             market_data_restored_candle_counts={"M1": 5, "M5": 2},
+            market_data_integrity_state="VALID",
+            market_data_integrity_report={"hard_error_count": 0, "gap_count": 1},
         )
         text, _markup = render_status_page(snap)
         assert "Real history: M1 7/201; M5 2/201" in text
@@ -312,6 +314,8 @@ class TestRenderStatusPage:
         assert "Persistent history: ACTIVE" in text
         assert "History file: startup read LOADED; latest save OK" in text
         assert "Restored at startup: M1 5; M5 2" in text
+        assert "Candle integrity: VALID" in text
+        assert "Candle integrity evidence: hard errors 0; observed gaps 1" in text
 
     def test_status_warns_plainly_when_execution_is_enabled(self):
         from core.telegram_app_nav import render_status_page
