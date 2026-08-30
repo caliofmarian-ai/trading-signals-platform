@@ -88,12 +88,29 @@ def test_stale_or_future_price_is_fail_closed(tmp_path):
     )
     feed._stream_started = True
     feed.ingest_message(_trade(1788120124000, 1.1020))
+    feed.ingest_message(_trade(1788120184000, 1.1021))
 
     with pytest.raises(module.FinnhubStaleMarketData, match="stale"):
         feed.get_candles("EUR/USD", "M1")
 
     feed._last_price_ts = 1788120201
     with pytest.raises(module.FinnhubStaleMarketData, match="stale"):
+        feed.get_candles("EUR/USD", "M1")
+
+
+def test_collection_progress_takes_priority_until_history_is_ready(tmp_path):
+    module = importlib.import_module("runtime.finnhub_market_data")
+    feed = module.FinnhubForexFeed(
+        token="secret",
+        store_path=tmp_path / "candles.json",
+        minimum_candles=2,
+        freshness_seconds=10,
+        clock=lambda: 1788120200,
+    )
+    feed._stream_started = True
+    feed.ingest_message(_trade(1788120124000, 1.1020))
+
+    with pytest.raises(module.FinnhubInsufficientHistory, match="1/2 real candles"):
         feed.get_candles("EUR/USD", "M1")
 
 

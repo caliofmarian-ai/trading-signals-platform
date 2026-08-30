@@ -245,7 +245,11 @@ def build_status_snapshot(
         overall_state = reported_overall_state
     elif runtime_phase == "BLOCKED":
         overall_state = "BLOCKED (derived from runtime phase)"
-    elif market_data_state in {"MARKET_DATA_LIMITED", "MARKET_DATA_UNAVAILABLE"}:
+    elif market_data_state in {
+        "MARKET_DATA_COLLECTING",
+        "MARKET_DATA_LIMITED",
+        "MARKET_DATA_UNAVAILABLE",
+    }:
         overall_state = (
             f"{market_data_state} (derived from market-data state)"
         )
@@ -287,6 +291,9 @@ def build_status_snapshot(
         "market_data_freshness_limit_seconds": evidence.get(
             "market_data_freshness_limit_seconds"
         ),
+        "market_data_candle_counts": evidence.get("market_data_candle_counts"),
+        "market_data_minimum_candles": evidence.get("market_data_minimum_candles"),
+        "market_data_history_ready": evidence.get("market_data_history_ready"),
         "telegram_state": telegram_state,
         "fsm_state": _fsm_projection(),
         "shadow_mode": shadow_state,
