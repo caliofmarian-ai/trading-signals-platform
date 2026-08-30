@@ -16,6 +16,7 @@ def human_status_summary(snapshot: Mapping[str, object]) -> Tuple[str, ...]:
     shadow = _value(snapshot, "shadow_mode")
     broker = _value(snapshot, "broker_state")
     history_ready = snapshot.get("market_data_history_ready")
+    persistence = _value(snapshot, "market_data_persistence_state")
 
     if phase == "RUNNING":
         bot = "Bot: online and running."
@@ -53,7 +54,18 @@ def human_status_summary(snapshot: Mapping[str, object]) -> Tuple[str, ...]:
     else:
         trading = "Real trading: safety state cannot be fully confirmed from the available evidence."
 
-    if broker.startswith("ENABLED") or shadow == "OFF":
+    if persistence == "ACTIVE":
+        storage = "History storage: the candle file was read or saved successfully."
+    elif persistence == "EMPTY_READY":
+        storage = "History storage: the new storage is empty and ready for its first save."
+    elif persistence == "ERROR":
+        storage = "History storage: reading or saving failed; collected history may be lost."
+    else:
+        storage = "History storage: persistence has not been confirmed by runtime evidence."
+
+    if persistence == "ERROR":
+        action = "Required action: inspect persistent storage before relying on collected history."
+    elif broker.startswith("ENABLED") or shadow == "OFF":
         action = "Required action: inspect execution safety settings before continuing."
     elif recovery == "DEGRADED_SAFE":
         action = "Required action: none; the bot is protecting itself and blocking unsafe decisions."
@@ -64,4 +76,4 @@ def human_status_summary(snapshot: Mapping[str, object]) -> Tuple[str, ...]:
     else:
         action = "Required action: inspect the detailed evidence below; normal operation is not confirmed."
 
-    return bot, market_meaning, decisions, trading, action
+    return bot, market_meaning, decisions, trading, storage, action

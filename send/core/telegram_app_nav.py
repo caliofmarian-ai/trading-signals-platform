@@ -1167,6 +1167,10 @@ def render_status_page(
     candle_counts = snapshot.get("market_data_candle_counts")
     minimum_candles = snapshot.get("market_data_minimum_candles")
     history_ready = snapshot.get("market_data_history_ready")
+    persistence_state = snapshot.get("market_data_persistence_state")
+    store_load_state = snapshot.get("market_data_store_load_state")
+    store_write_state = snapshot.get("market_data_store_write_state")
+    restored_counts = snapshot.get("market_data_restored_candle_counts")
 
     plain_summary = "\n".join(human_status_summary(snapshot))
 
@@ -1203,6 +1207,20 @@ def render_status_page(
             if history_ready
             else "\nStrategy history: COLLECTING — decisions remain blocked"
         )
+    if isinstance(persistence_state, str) and persistence_state.strip():
+        current_state += f"\nPersistent history: {persistence_state.strip()}"
+    if isinstance(store_load_state, str) and isinstance(store_write_state, str):
+        current_state += (
+            f"\nHistory file: startup read {store_load_state.strip()}; "
+            f"latest save {store_write_state.strip()}"
+        )
+    if isinstance(restored_counts, dict):
+        restored_m1 = restored_counts.get("M1")
+        restored_m5 = restored_counts.get("M5")
+        if isinstance(restored_m1, int) and isinstance(restored_m5, int):
+            current_state += (
+                f"\nRestored at startup: M1 {restored_m1}; M5 {restored_m5}"
+            )
     note = snapshot.get("market_data_note")
     if isinstance(note, str) and note.strip():
         current_state += f"\n\nMarket note: {note.strip()}"

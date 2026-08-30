@@ -43,6 +43,11 @@ def test_live_ticks_build_real_m1_and_m5_and_persist(tmp_path):
     assert m1["provider"] == "FINNHUB"
     assert store.exists()
     assert "secret" not in store.read_text(encoding="utf-8")
+    health = feed.health()
+    assert health["persistence_state"] == "ACTIVE"
+    assert health["store_load_state"] == "EMPTY"
+    assert health["store_write_state"] == "OK"
+    assert health["last_persisted_ts"] == 1788120066
 
 
 def test_persisted_real_candles_survive_restart(tmp_path):
@@ -57,6 +62,32 @@ def test_persisted_real_candles_survive_restart(tmp_path):
     assert len(restored._candles["M1"]) == 2
     assert restored._candles["M1"][0]["close"] == pytest.approx(1.1020)
     assert restored._candles["M1"][1]["complete"] is True
+    health = restored.health()
+    assert health["persistence_state"] == "ACTIVE"
+    assert health["store_load_state"] == "LOADED"
+    assert health["restored_candle_counts"] == {"M1": 2, "M5": 1}
+
+
+def test_empty_store_reports_ready_without_claiming_restore(tmp_path):
+    module = importlib.import_module("runtime.finnhub_market_data")
+    feed = module.FinnhubForexFeed(
+        token="secret", store_path=tmp_path / "candles.json", minimum_candles=2
+    )
+
+    health = feed.health()
+
+    assert health["persistence_state"] == "EMPTY_READY"
+    assert health["restored_candle_counts"] == {"M1": 0, "M5": 0}
+
+
+def test_invalid_store_reports_persistence_error(tmp_path):
+    module = importlib.import_module("runtime.finnhub_market_data")
+    store = tmp_path / "candles.json"
+    store.write_text("not-json", encoding="utf-8")
+
+    feed = module.FinnhubForexFeed(token="secret", store_path=store, minimum_candles=2)
+
+    assert feed.health()["persistence_state"] == "ERROR"
 
 
 def test_no_decision_data_until_live_price_and_real_history_are_ready(tmp_path):

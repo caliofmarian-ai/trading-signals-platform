@@ -182,6 +182,11 @@ def get_candles(symbol: str, timeframe: str):
                 market_data_candle_counts=health["candle_counts"],
                 market_data_minimum_candles=health["minimum_candles"],
                 market_data_history_ready=health["history_ready"],
+                market_data_persistence_state=health.get("persistence_state"),
+                market_data_store_load_state=health.get("store_load_state"),
+                market_data_store_write_state=health.get("store_write_state"),
+                market_data_restored_candle_counts=health.get("restored_candle_counts"),
+                market_data_last_persisted_ts=health.get("last_persisted_ts"),
             )
             raise MarketDataUnavailableError(str(exc)) from exc
 
@@ -201,6 +206,11 @@ def get_candles(symbol: str, timeframe: str):
             market_data_candle_counts=health["candle_counts"],
             market_data_minimum_candles=health["minimum_candles"],
             market_data_history_ready=health["history_ready"],
+            market_data_persistence_state=health.get("persistence_state"),
+            market_data_store_load_state=health.get("store_load_state"),
+            market_data_store_write_state=health.get("store_write_state"),
+            market_data_restored_candle_counts=health.get("restored_candle_counts"),
+            market_data_last_persisted_ts=health.get("last_persisted_ts"),
         )
         return candles
 
