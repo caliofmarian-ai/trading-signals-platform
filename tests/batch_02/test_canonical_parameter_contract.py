@@ -192,8 +192,14 @@ def test_score_thresholds_end_to_end_representation():
 
     # strategy_v2.decide() reads exactly these uppercase keys.
     strat = _import_strategy()
-    candles_1m = [{"open": 1.1, "high": 1.12, "low": 1.09, "close": 1.11, "ts": 1000 + i} for i in range(30)]
-    candles_5m = [{"open": 1.1, "high": 1.12, "low": 1.09, "close": 1.11, "ts": 5000 + i * 5} for i in range(60)]
+    candles_1m = [
+        {"open": 1.1, "high": 1.12, "low": 1.09, "close": 1.11, "ts": 1000 + i}
+        for i in reversed(range(30))
+    ]
+    candles_5m = [
+        {"open": 1.1, "high": 1.12, "low": 1.09, "close": 1.11, "ts": 5000 + i * 5}
+        for i in reversed(range(60))
+    ]
     result = strat.decide(candles_1m, candles_5m, params, buffer_mode="MEDIUM", want_open_now=False)
     # Strategy ran successfully — thresholds were consumed from canonical shape.
     assert "kind" in result
@@ -798,11 +804,11 @@ def test_strategy_uses_canonical_score_thresholds(tmp_path):
         {"open": 1.10 + 0.0001 * i, "high": 1.11 + 0.0001 * i,
          "low": 1.09 + 0.0001 * i, "close": 1.105 + 0.0001 * i,
          "ts": 1000 + i, "symbol": "EURUSD"}
-        for i in range(30)
+        for i in reversed(range(30))
     ]
     candles_5m = [
         {"open": 1.10, "high": 1.12, "low": 1.09, "close": 1.11, "ts": 5000 + i * 5}
-        for i in range(60)
+        for i in reversed(range(60))
     ]
 
     # With very low thresholds, most setups should reach CONFIRM or above.
@@ -891,12 +897,12 @@ def test_strategy_v2_decide_produces_deterministic_output():
     candles_1m = [
         {"open": 1.1000, "high": 1.1020, "low": 1.0980, "close": 1.1010,
          "ts": 1000 + i, "symbol": "EURUSD"}
-        for i in range(30)
+        for i in reversed(range(30))
     ]
     candles_5m = [
         {"open": 1.1000, "high": 1.1030, "low": 1.0970, "close": 1.1010,
          "ts": 5000 + i * 5}
-        for i in range(60)
+        for i in reversed(range(60))
     ]
     params = _canonical_params()
 
