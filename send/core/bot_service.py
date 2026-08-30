@@ -33,7 +33,9 @@ from core.admin_commands import (
     handle_audit_runtime,
     handle_docs_list,
     get_all_known_symbols,
-    _load_active_symbols,
+    get_current_strategy_profile_observation,
+    _load_active_symbols_observation,
+    _read_engine_events_observation,
     _find_latest_report_json,
     _iter_jsonl,
     ENGINE_EVENTS_PATH,
@@ -42,13 +44,17 @@ from core.admin_commands import (
 from core.admin_permissions import is_owner, get_primary_role
 from core import observability_logger
 from core import outcome_service
-from core import fsm_runtime
+from core.owner_knowledge import (
+    get_knowledge,
+    render_contextual_knowledge,
+    render_operational_page,
+)
+from core.operational_snapshot import build_status_snapshot, observed_shadow_mode
 from core.telegram_runtime import admin_command_names, render_help_text, render_start_text, render_status_text
 from core.telegram_targets import env_chat_id, env_thread_id, reply_target_from_message, valid_thread_id
 from core import telegram_admin_ui
 from core import telegram_app_nav
 from monitoring import restart_guard
-from runtime import runtime_status
 
 # ---- Paths ----
 OUTCOMES_PATH = "/opt/binarybot/state/outcomes.json"
@@ -647,6 +653,23 @@ def _format_card(title: str, body: str) -> str:
     return f"{title}\n\n{clean_body}"
 
 
+def _format_surface(knowledge_key: str, title: str, body: str) -> str:
+    return render_operational_page(knowledge_key, body, title=title)
+
+
+def _surface_current_state(rendered_surface: str) -> str:
+    marker = "\nCurrent state\n"
+    text = str(rendered_surface or "")
+    return text.rsplit(marker, 1)[-1] if marker in text else text
+
+
+def _active_symbols_for_markup() -> list[str]:
+    observed = _load_active_symbols_observation()
+    if observed is None:
+        raise RuntimeError("active-symbol configuration evidence unavailable")
+    return observed
+
+
 def _build_canonical_admin_root_page(
     user_id: int,
     *,
@@ -666,6 +689,15 @@ def _build_canonical_admin_root_page(
     """
     role = get_primary_role(user_id)
     content = handle_admin_command_v2("/admin", user_id)
+    command_dump_marker = "\nAvailable commands:"
+    if command_dump_marker in content:
+        content = content.split(command_dump_marker, 1)[0].rstrip()
+    content = (
+        f"{content}\n\n"
+        "The buttons below are filtered to the current role. "
+        "Opening a panel is read-only unless that panel presents a separately "
+        "authorized and auditable control."
+    )
     home_cb = telegram_app_nav.make_callback(telegram_app_nav.ACT_HOME)
     markup = telegram_admin_ui.admin_home_markup(
         role=role,
@@ -673,7 +705,7 @@ def _build_canonical_admin_root_page(
         home_button_callback=home_cb,
         back_button_callback=back_button_callback,
     )
-    return _format_card("⚙️ Admin Control Surface", content), markup
+    return _format_surface("admin_home", "⚙️ Admin Control Surface", content), markup
 
 
 def _admin_reply_markup(cmd: str, user_id: int, *, owner_private: bool) -> Optional[Dict[str, Any]]:
@@ -687,14 +719,18 @@ def _admin_reply_markup(cmd: str, user_id: int, *, owner_private: bool) -> Optio
         )
     if cmd == "/strategy":
         return telegram_admin_ui.strategy_markup()
-    if cmd in {"/thresholds", "/sr", "/spike"}:
-        return telegram_admin_ui.strategy_markup()
+    if cmd == "/thresholds":
+        return telegram_admin_ui.strategy_parameter_markup("thresholds", "THRESHOLDS")
+    if cmd == "/sr":
+        return telegram_admin_ui.strategy_parameter_markup("sr_corridor", "SR")
+    if cmd == "/spike":
+        return telegram_admin_ui.strategy_parameter_markup("spike_filter", "SPIKE")
     if cmd == "/symbols" or cmd == "/symbols list":
         # Use toggle markup if possible; fall back to simple markup.
         # Default to parent_action="HOME" (matches /symbols command entry from admin root).
         try:
             all_syms = get_all_known_symbols()
-            active = _load_active_symbols()
+            active = _active_symbols_for_markup()
             return telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action="HOME")
         except Exception:
             return telegram_admin_ui.symbols_markup()
@@ -721,14 +757,20 @@ def _admin_reply_markup(cmd: str, user_id: int, *, owner_private: bool) -> Optio
             return telegram_admin_ui.standard_back_markup()
     if cmd == "/diagnose":
         return telegram_admin_ui.diagnose_markup(parent_action="HOME")
-    if cmd in {"/debug", "/roles", "/affiliate", "/log", "/audit_runtime"}:
-        return telegram_admin_ui.standard_back_markup()
+    if cmd == "/debug":
+        return telegram_admin_ui.decision_visibility_markup()
+    if cmd == "/roles":
+        return telegram_admin_ui.roles_identity_markup(can_reload=False)
+    if cmd == "/affiliate":
+        return telegram_admin_ui.affiliate_markup()
+    if cmd in {"/log", "/audit_runtime"}:
+        return telegram_admin_ui.standard_back_markup(knowledge_key="security_audit")
     return None
 
 
 def _render_panel_for_command(cmd: str, user_id: int, *, owner_private: bool) -> tuple[str, Optional[Dict[str, Any]]]:
     if cmd == "/status":
-        return _format_card("📊 Status Panel", render_status_text(_build_status_snapshot())), telegram_admin_ui.status_markup()
+        return _format_surface("status", "📊 Status Panel", render_status_text(_build_status_snapshot())), telegram_admin_ui.status_markup()
 
     response_text = handle_admin_command_v2(cmd, user_id)
     title_map = {
@@ -755,7 +797,28 @@ def _render_panel_for_command(cmd: str, user_id: int, *, owner_private: bool) ->
     # Extract base command (without arguments)
     base_cmd = cmd.split()[0].lower()
     title = title_map.get(cmd) or title_map.get(base_cmd, "🛠️ Admin Panel")
+    knowledge_map = {
+        "/admin": "admin_home",
+        "/strategy": "strategy",
+        "/thresholds": "thresholds",
+        "/sr": "sr_corridor",
+        "/spike": "spike_filter",
+        "/symbols": "symbols_coverage",
+        "/engine": "engine",
+        "/debug": "decision_visibility",
+        "/report": "research_analytics",
+        "/roles": "roles_identity",
+        "/affiliate": "affiliate",
+        "/files": "files_reports",
+        "/docs": "governance_docs",
+        "/log": "security_audit",
+        "/diagnose": "diagnostics",
+        "/audit_runtime": "security_audit",
+    }
+    knowledge_key = knowledge_map.get(base_cmd)
     markup = _admin_reply_markup(base_cmd, user_id, owner_private=owner_private)
+    if knowledge_key:
+        return _format_surface(knowledge_key, title, response_text), markup
     return _format_card(title, response_text), markup
 
 
@@ -790,6 +853,27 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
     # correct parent is encoded in the originating Back button rather than this fallback.
     if action == "BACK":
         return _handle_admin_navigation_action("HOME", user_id, message)
+
+    # ---- Contextual Owner/operator knowledge ----
+    # Payload: INFO:<knowledge_key>:<safe_return_action>
+    if action.startswith(telegram_admin_ui.KNOWLEDGE_ACTION_PREFIX):
+        payload = action[len(telegram_admin_ui.KNOWLEDGE_ACTION_PREFIX):]
+        knowledge_key, separator, return_action = payload.partition(":")
+        entry = get_knowledge(knowledge_key)
+        role = get_primary_role(user_id)
+        if (
+            not separator
+            or entry is None
+            or not telegram_admin_ui.knowledge_visible_for_role(role, entry.key)
+        ):
+            return {
+                "text": "Knowledge unavailable for this role or surface.",
+                "reply_markup": telegram_admin_ui.standard_back_markup(),
+            }
+        return {
+            "text": render_contextual_knowledge(entry.key),
+            "reply_markup": telegram_admin_ui.knowledge_detail_markup(return_action),
+        }
 
     # ---- RELOAD_ROLES flow (admin-topic only) ----
     if action == "RELOAD_ROLES_CONFIRM":
@@ -827,11 +911,11 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         # Refresh toggle markup
         try:
             all_syms = get_all_known_symbols()
-            active = _load_active_symbols()
+            active = _active_symbols_for_markup()
             markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action=parent_action)
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
-        return {"text": _format_card("💱 Symbols Panel", result), "reply_markup": markup}
+        return {"text": _format_surface("symbols_coverage", "💱 Symbols Panel", result), "reply_markup": markup}
 
     if action == "SYMBOLS_ALL" or action.startswith("SYMBOLS_ALL:"):
         if not _check_rate_limit(user_id, "mutation"):
@@ -842,11 +926,11 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         result = handle_symbols_all(user_id)
         try:
             all_syms = get_all_known_symbols()
-            active = _load_active_symbols()
+            active = _active_symbols_for_markup()
             markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action=parent_action)
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
-        return {"text": _format_card("💱 Symbols Panel", result), "reply_markup": markup}
+        return {"text": _format_surface("symbols_coverage", "💱 Symbols Panel", result), "reply_markup": markup}
 
     if action == "SYMBOLS_NONE" or action.startswith("SYMBOLS_NONE:"):
         if not _check_rate_limit(user_id, "mutation"):
@@ -857,17 +941,22 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         result = handle_symbols_none(user_id)
         try:
             all_syms = get_all_known_symbols()
-            active = _load_active_symbols()
+            active = _active_symbols_for_markup()
             markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action=parent_action)
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
-        return {"text": _format_card("💱 Symbols Panel", result), "reply_markup": markup}
+        return {"text": _format_surface("symbols_coverage", "💱 Symbols Panel", result), "reply_markup": markup}
 
     # ---- Strategy profile callbacks ----
     if action == "PROFILE_HOME":
         current = get_current_strategy_profile()
+        current_observation = get_current_strategy_profile_observation()
         return {
-            "text": _format_card("⚙️ Strategy Profile", f"Current profile: {current or 'custom'}"),
+            "text": _format_surface(
+                "strategy",
+                "⚙️ Strategy Profile",
+                f"Current profile: {current_observation}",
+            ),
             "reply_markup": telegram_admin_ui.strategy_quick_markup(current),
         }
 
@@ -887,7 +976,11 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         return {
             "text": _format_card(
                 f"⚙️ Apply {profile_upper}?",
-                f"This will set:\n{desc}\n\nConfirm?"
+                "This will update future-facing strategy parameters to:\n"
+                f"{desc}\n\n"
+                "The change can alter which future candidates pass a gate. "
+                "It does not guarantee more signals, a higher win rate, or profit.\n\n"
+                "Confirm?"
             ),
             "reply_markup": telegram_admin_ui.strategy_profile_confirm_markup(profile_upper),
         }
@@ -899,7 +992,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         result = handle_strategy_profile(profile, user_id)
         current = get_current_strategy_profile()
         return {
-            "text": _format_card("⚙️ Strategy Profile", result),
+            "text": _format_surface("strategy", "⚙️ Strategy Profile", result),
             "reply_markup": telegram_admin_ui.strategy_quick_markup(current),
         }
 
@@ -908,7 +1001,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         if not _check_rate_limit(user_id, "files_list"):
             return {"text": "Rate limit exceeded.", "reply_markup": None}
         return {
-            "text": "📁 File Browser\n\nSelect a directory:",
+            "text": _format_surface("files_reports", "📁 File Browser", "Select an allowed artifact directory."),
             "reply_markup": telegram_admin_ui.files_home_markup(),
         }
 
@@ -930,11 +1023,11 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         title = info.get("title", "📁 Files")
         if not fnames:
             return {
-                "text": _format_card(title, "No files found."),
+                "text": _format_surface("files_reports", title, "No files found."),
                 "reply_markup": telegram_admin_ui.files_home_markup(),
             }
         return {
-            "text": _format_card(title, f"Page {info['page'] + 1}/{info['total_pages']}"),
+            "text": _format_surface("files_reports", title, f"Page {info['page'] + 1}/{info['total_pages']}"),
             "reply_markup": telegram_admin_ui.files_list_markup(
                 fnames, info["page"], info["total_pages"], dir_key
             ),
@@ -948,9 +1041,15 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             return {"text": _format_card("📄 Documents", f"Error: {info['error']}"), "reply_markup": telegram_admin_ui.standard_back_markup()}
         fnames = info.get("filenames", [])
         if not fnames:
-            return {"text": "📄 Documents\n\nNo documents found.", "reply_markup": telegram_admin_ui.standard_back_markup()}
+            return {
+                "text": _format_surface("governance_docs", "📄 Documents", "No active documents found."),
+                "reply_markup": telegram_admin_ui.standard_back_markup(
+                    knowledge_key="governance_docs",
+                    return_action="DOCS",
+                ),
+            }
         return {
-            "text": _format_card("📄 Documents", f"{len(fnames)} file(s) available"),
+            "text": _format_surface("governance_docs", "📄 Documents", f"{len(fnames)} file(s) available"),
             "reply_markup": telegram_admin_ui.docs_list_markup(fnames),
         }
 
@@ -987,7 +1086,10 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             diagnose_parent = "SYSHEALTH"
         else:
             diagnose_parent = "HOME"
-        return {"text": text, "reply_markup": telegram_admin_ui.diagnose_markup(parent_action=diagnose_parent)}
+        return {
+            "text": _format_surface("diagnostics", "🩺 Diagnostics", text),
+            "reply_markup": telegram_admin_ui.diagnose_markup(parent_action=diagnose_parent),
+        }
 
     if action in {"AUDIT", "OPS_AUDIT", "SH_AUDIT", "DIAG_SH_AUDIT", "SECAUDIT_AUDIT"}:
         if not _check_rate_limit(user_id, "audit_runtime"):
@@ -1015,7 +1117,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         # Source: ADMIN_TREE_MAP_v2.0.0.md §6.2; ADMIN_CONTROL_SPEC_v2.0.0.md §6
         text, _ = _render_panel_for_command("/engine", user_id, owner_private=owner_private)
         return {
-            "text": _format_card("⚙️ Operations", text.split("\n\n", 1)[-1] if "\n\n" in text else text),
+            "text": _format_surface("operations", "⚙️ Operations", _surface_current_state(text)),
             "reply_markup": telegram_admin_ui.operations_markup(),
         }
 
@@ -1034,19 +1136,30 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         # Source: ADMIN_TREE_MAP_v2.0.0.md §6.3; ADMIN_CONTROL_SPEC_v2.0.0.md §7
         try:
             all_syms = get_all_known_symbols()
-            active = _load_active_symbols()
+            active = _active_symbols_for_markup()
             markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action="HOME")
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
         text, _ = _render_panel_for_command("/symbols list", user_id, owner_private=owner_private)
-        return {"text": _format_card("💱 Symbols & Coverage", text.split("\n\n", 1)[-1] if "\n\n" in text else text), "reply_markup": markup}
+        return {
+            "text": _format_surface(
+                "symbols_coverage",
+                "💱 Symbols & Coverage",
+                _surface_current_state(text),
+            ),
+            "reply_markup": markup,
+        }
 
     if action == "DECISION_VIS":
         # Decision Visibility panel: last decision, gate results, rejection reasons.
         # Source: ADMIN_TREE_MAP_v2.0.0.md §6.4; ADMIN_CONTROL_SPEC_v2.0.0.md §8
         text, _ = _render_panel_for_command("/debug", user_id, owner_private=owner_private)
         return {
-            "text": _format_card("🔍 Decision Visibility", text.split("\n\n", 1)[-1] if "\n\n" in text else text),
+            "text": _format_surface(
+                "decision_visibility",
+                "🔍 Decision Visibility",
+                _surface_current_state(text),
+            ),
             "reply_markup": telegram_admin_ui.decision_visibility_markup(),
         }
 
@@ -1059,7 +1172,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             routes.append(f"Admin control chat: {ADMIN_CONTROL_CHAT_ID}")
         content = render_distribution_panel(ADMIN_CONTROL_CHAT_ID, ADMIN_CONTROL_THREAD_ID, routes)
         return {
-            "text": _format_card("📡 Distribution Control", content),
+            "text": _format_surface("distribution", "📡 Distribution Control", content),
             "reply_markup": telegram_admin_ui.distribution_markup(),
         }
 
@@ -1078,7 +1191,11 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         except Exception:
             markup = telegram_admin_ui.research_markup()
         return {
-            "text": _format_card("📊 Research & Analytics", text.split("\n\n", 1)[-1] if "\n\n" in text else text),
+            "text": _format_surface(
+                "research_analytics",
+                "📊 Research & Analytics",
+                _surface_current_state(text),
+            ),
             "reply_markup": markup,
         }
 
@@ -1086,15 +1203,10 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         # Intelligence panel: decision intelligence, drift signals, anomaly summaries.
         # Source: ADMIN_TREE_MAP_v2.0.0.md §6.7; ADMIN_CONTROL_SPEC_v2.0.0.md §11
         from core.admin_views import render_intelligence_panel
-        try:
-            recent_events: list = []
-            for ev in _iter_recent_engine_events(limit=50):
-                recent_events.append(ev)
-        except Exception:
-            recent_events = []
+        recent_events = _iter_recent_engine_events(limit=50)
         content = render_intelligence_panel(recent_events)
         return {
-            "text": _format_card("🧠 Intelligence", content),
+            "text": _format_surface("intelligence", "🧠 Intelligence", content),
             "reply_markup": telegram_admin_ui.intelligence_markup(),
         }
 
@@ -1105,7 +1217,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         snapshot = _build_status_snapshot()
         content = render_system_health_summary(snapshot)
         return {
-            "text": _format_card("🩺 System Health", content),
+            "text": _format_surface("system_health", "🩺 System Health", content),
             "reply_markup": telegram_admin_ui.system_health_markup(),
         }
 
@@ -1122,7 +1234,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
     if action == "ROLES":
         # Roles & Identity panel: role info, scope summary, reload option for authorized roles.
         # Source: ADMIN_TREE_MAP_v2.0.0.md §6.9
-        from core.admin_permissions import get_primary_role, has_permission
+        from core.admin_permissions import has_permission
         can_reload = has_permission(user_id, "roles.write") and not owner_private
         text, _ = _render_panel_for_command("/roles", user_id, owner_private=owner_private)
         return {
@@ -1144,7 +1256,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         fnames = info.get("filenames", [])
         summary = f"{len(fnames)} canonical document(s) available." if fnames else "No documents found."
         return {
-            "text": _format_card("📖 Governance & Docs", summary),
+            "text": _format_surface("governance_docs", "📖 Governance & Docs", summary),
             "reply_markup": telegram_admin_ui.governance_docs_markup(fnames),
         }
 
@@ -1154,7 +1266,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         from core.admin_views import render_security_audit_panel
         content = render_security_audit_panel()
         return {
-            "text": _format_card("🔒 Security & Audit", content),
+            "text": _format_surface("security_audit", "🔒 Security & Audit", content),
             "reply_markup": telegram_admin_ui.security_audit_markup(),
         }
 
@@ -1179,12 +1291,19 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
     if action == "SYMBOLS":
         try:
             all_syms = get_all_known_symbols()
-            active = _load_active_symbols()
+            active = _active_symbols_for_markup()
             markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action="STRATEGY")
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
         text, _ = _render_panel_for_command("/symbols list", user_id, owner_private=owner_private)
-        return {"text": _format_card("💱 Symbols Panel", text.split("\n\n", 1)[-1] if "\n\n" in text else text), "reply_markup": markup}
+        return {
+            "text": _format_surface(
+                "symbols_coverage",
+                "💱 Symbols Panel",
+                _surface_current_state(text),
+            ),
+            "reply_markup": markup,
+        }
 
     # ---- HOME: canonical admin root — single source of truth ----
     if action == "HOME":
@@ -1205,59 +1324,14 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
 
 
 def _build_status_snapshot() -> Dict[str, Any]:
-    status = runtime_status.read_status()
-    runtime_phase = str(status.get("phase") or "unknown").lower()
-    market_data_state = str(status.get("market_data_state") or "UNKNOWN").upper()
-    recovery_required = bool(status.get("recovery_required"))
-    recovery_state = str(status.get("recovery_state") or ("DEGRADED_SAFE" if recovery_required else "HEALTHY"))
-    telegram_enabled = bool(status.get("telegram_enabled", _env_flag("ENABLE_TELEGRAM", default=False)))
-    telegram_polling_started = bool(status.get("telegram_polling_started"))
-    telegram_state = "DISABLED"
-    if telegram_enabled:
-        telegram_state = "ENABLED (polling started)" if telegram_polling_started else "ENABLED (polling pending)"
+    return build_status_snapshot()
 
-    fsm_state = "UNAVAILABLE"
-    try:
-        state = fsm_runtime.load_state()
-        watchlist = state.get("watchlist", []) if isinstance(state, dict) else []
-        mode = str(state.get("mode") or "UNKNOWN") if isinstance(state, dict) else "UNKNOWN"
-        fsm_state = f"{mode} watchlist={len(watchlist)}"
-    except Exception:
-        pass
-
-    broker_state = "DISABLED"
-    if _env_flag("ENABLE_BROKER_EXECUTION", default=False):
-        broker_state = "NOT REPORTED AS AVAILABLE"
-
-    overall_state = "DEGRADED"
-    if runtime_phase == "blocked":
-        overall_state = "BLOCKED"
-    elif market_data_state == "MARKET_DATA_LIMITED":
-        overall_state = "MARKET_DATA_LIMITED"
-    elif runtime_phase == "running" and not recovery_required:
-        overall_state = "READY"
-
-    return {
-        "overall_state": overall_state,
-        "runtime_phase": runtime_phase.upper(),
-        "runtime_message": str(status.get("message") or "unknown"),
-        "recovery_state": recovery_state,
-        "market_data_state": market_data_state,
-        "market_data_note": str(status.get("market_data_note") or "").strip(),
-        "telegram_state": telegram_state,
-        "fsm_state": fsm_state,
-        "shadow_mode": "ON" if bool(status.get("shadow_mode", _env_flag("SHADOW_MODE", default=False))) else "OFF",
-        "broker_state": broker_state,
-    }
-
-
-def _iter_recent_engine_events(limit: int = 50) -> list:
+def _iter_recent_engine_events(limit: int = 50) -> Optional[list]:
     """Return the most recent engine events (up to limit) from engine_events.jsonl."""
-    try:
-        events = list(_iter_jsonl(ENGINE_EVENTS_PATH))
-        return events[-limit:] if len(events) > limit else events
-    except Exception:
-        return []
+    events = _read_engine_events_observation()
+    if events is None:
+        return None
+    return events[-limit:] if len(events) > limit else events
 
 
 _RETIRED_ADMIN_CALLBACKS: frozenset = frozenset({
@@ -1412,7 +1486,7 @@ def process_update(update: Dict[str, Any]) -> None:
             cmd = text.split()[0].split("@", 1)[0].lower()
 
             if cmd == "/start":
-                shadow = _env_flag("SHADOW_MODE", default=False)
+                shadow = observed_shadow_mode()
                 primary_role = get_primary_role(user_id)
                 first_name = (msg.get("from") or {}).get("first_name", "") or ""
                 target = reply_target_from_message(msg)
@@ -1447,7 +1521,7 @@ def process_update(update: Dict[str, Any]) -> None:
                     user_id=user_id,
                     primary_role=primary_role,
                     first_name=(msg.get("from") or {}).get("first_name", "") or "",
-                    shadow_mode=_env_flag("SHADOW_MODE", default=False),
+                    shadow_mode=observed_shadow_mode(),
                     chat_id=target.chat_id if target is not None else chat_id,
                     thread_id=target.thread_id if target is not None else None,
                 )
@@ -1468,7 +1542,7 @@ def process_update(update: Dict[str, Any]) -> None:
                     user_id=user_id,
                     primary_role=primary_role,
                     first_name=(msg.get("from") or {}).get("first_name", "") or "",
-                    shadow_mode=_env_flag("SHADOW_MODE", default=False),
+                    shadow_mode=observed_shadow_mode(),
                     status_snapshot=_build_status_snapshot(),
                     chat_id=target.chat_id if target is not None else chat_id,
                     thread_id=target.thread_id if target is not None else None,
@@ -1552,7 +1626,7 @@ def process_update(update: Dict[str, Any]) -> None:
             app_cb = telegram_app_nav.parse_app_callback(data)
             app_action = None if app_cb is None else app_cb.get("action")
             if app_action is not None:
-                shadow = _env_flag("SHADOW_MODE", default=False)
+                shadow = observed_shadow_mode()
                 primary_role = get_primary_role(user_id)
                 first_name = (cb.get("from") or {}).get("first_name", "") or ""
                 thread_id = reply_target_from_message(msg_obj).thread_id if reply_target_from_message(msg_obj) is not None else None
@@ -1616,7 +1690,11 @@ def process_update(update: Dict[str, Any]) -> None:
                         primary_role=primary_role,
                         first_name=first_name,
                         shadow_mode=shadow,
-                        status_snapshot=_build_status_snapshot() if app_action == telegram_app_nav.ACT_STATUS else None,
+                        status_snapshot=(
+                            _build_status_snapshot()
+                            if app_action in {telegram_app_nav.ACT_STATUS, telegram_app_nav.ACT_BACK}
+                            else None
+                        ),
                         chat_id=chat_id,
                         thread_id=thread_id,
                         callback_generation=callback_generation,

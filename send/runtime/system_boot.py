@@ -57,7 +57,7 @@ def _load_env_file() -> None:
 # Load env BEFORE importing modules that read os.getenv() at import time.
 _load_env_file()
 
-from runtime.engine_loop import start_engine
+from runtime.engine_loop import ENGINE_TICK_SECONDS, start_engine
 from runtime.telegram_updates import poll_updates
 from runtime.distribution_scheduler import scheduler_loop
 from runtime import runtime_status
@@ -340,6 +340,7 @@ def start_system() -> None:
         "BinaryBot runtime running",
         telegram_enabled=telegram_enabled,
         telegram_polling_started=telegram_enabled,
+        engine_tick_seconds=ENGINE_TICK_SECONDS,
         shadow_mode=_env_flag("SHADOW_MODE", default=False),
         readiness_evaluated=_env_flag("RAILWAY_READINESS_EVALUATED", default=False),
         recovery_required=bool(start_info["recovery_required"]),

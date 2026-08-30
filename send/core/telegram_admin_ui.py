@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from core.owner_knowledge import get_knowledge
 from core.role_constants import (
     ROLE_OWNER as _ROLE_OWNER,
     ROLE_PRIMARY_ADMIN as _ROLE_PRIMARY_ADMIN,
@@ -13,6 +14,7 @@ from core.role_constants import (
 )
 
 CALLBACK_PREFIX = "ADMIN_NAV:"
+KNOWLEDGE_ACTION_PREFIX = "INFO:"
 
 # Canonical short dir keys used in file-browse callbacks (max 3 chars for callback budget).
 DIR_KEY_OBS = "obs"
@@ -38,6 +40,38 @@ _PANEL_ROLES = "ROLES"
 _PANEL_SYSHEALTH = "SYSHEALTH"
 _PANEL_GOVDOCS = "GOVDOCS"
 _PANEL_SECAUDIT = "SECAUDIT"
+
+_SAFE_KNOWLEDGE_RETURN_ACTIONS: frozenset[str] = frozenset({
+    "HOME",
+    "STATUS",
+    "OPERATIONS",
+    "OPS_ENGINE",
+    "OPS_DIAGNOSE",
+    "STRATEGY",
+    "PROFILE_HOME",
+    "THRESHOLDS",
+    "SR",
+    "SPIKE",
+    "SYMBOLS",
+    "SYMBOLS_COV",
+    "ENGINE",
+    "DEBUG",
+    "DECISION_VIS",
+    "DISTRIBUTION",
+    "RESEARCH",
+    "REPORT",
+    "INTELLIGENCE",
+    "AFFILIATE",
+    "ROLES",
+    "SYSHEALTH",
+    "SH_ENGINE",
+    "SH_DIAGNOSE",
+    "GOVDOCS",
+    "DOCS",
+    "SECAUDIT",
+    "FILES_HOME",
+    "DIAGNOSE",
+})
 
 # Ordered canonical panel definitions: (action_key, button_label).
 # Order follows ADMIN_TREE_MAP_v2.0.0.md §4.
@@ -129,6 +163,57 @@ def _kb(rows: list[list[dict[str, str]]]) -> dict[str, list[list[dict[str, str]]
     return {"inline_keyboard": rows}
 
 
+def _safe_knowledge_return_action(return_action: str) -> str:
+    action = str(return_action or "HOME").strip()
+    if action in _SAFE_KNOWLEDGE_RETURN_ACTIONS:
+        return action
+    if action.startswith("FILES:"):
+        parts = action.split(":")
+        allowed_dirs = {
+            DIR_KEY_OBS,
+            DIR_KEY_OUT,
+            DIR_KEY_ANA,
+            DIR_KEY_RPT,
+            DIR_KEY_DOC,
+            DIR_KEY_AUD,
+            DIR_KEY_SNP,
+        }
+        if len(parts) == 3 and parts[1] in allowed_dirs and parts[2].isdigit():
+            return action
+    return "HOME"
+
+
+def knowledge_action(knowledge_key: str, return_action: str) -> str:
+    key = str(knowledge_key or "").strip().lower()
+    parent = _safe_knowledge_return_action(return_action)
+    return f"{KNOWLEDGE_ACTION_PREFIX}{key}:{parent}"
+
+
+def _knowledge_btn(knowledge_key: str, return_action: str) -> dict[str, str]:
+    return _btn("ℹ️ What is this?", knowledge_action(knowledge_key, return_action))
+
+
+def knowledge_detail_markup(return_action: str) -> dict[str, list[list[dict[str, str]]]]:
+    parent = _safe_knowledge_return_action(return_action)
+    return _kb([[_btn("⬅️ Back", parent)]])
+
+
+def panel_visible_for_role(role: str, panel_action: str) -> bool:
+    allowed = _PANEL_VISIBILITY.get(role, frozenset())
+    return str(panel_action or "").strip().upper() in allowed
+
+
+def knowledge_visible_for_role(role: str, knowledge_key: str) -> bool:
+    entry = get_knowledge(knowledge_key)
+    if entry is None:
+        return False
+    if entry.public:
+        return True
+    if entry.key == "admin_home":
+        return role in _PANEL_VISIBILITY
+    return any(panel_visible_for_role(role, action) for action in entry.panel_actions)
+
+
 def parse_action(callback_data: str) -> Optional[str]:
     if not isinstance(callback_data, str) or not callback_data.startswith(CALLBACK_PREFIX):
         return None
@@ -170,6 +255,8 @@ def admin_home_markup(
     if include_roles_reload:
         rows.append([_btn("🔄 Reload Roles", "RELOAD_ROLES_CONFIRM")])
 
+    rows.append([_knowledge_btn("admin_home", "HOME")])
+
     nav_row: list[dict[str, str]] = []
     if back_button_callback is not None:
         nav_row.append({"text": "⬅️ Back", "callback_data": back_button_callback})
@@ -185,6 +272,7 @@ def status_markup() -> dict[str, list[list[dict[str, str]]]]:
     return _kb(
         [
             [_btn("⚙️ Strategy", "STRATEGY"), _btn("🤖 Engine", "ENGINE")],
+            [_knowledge_btn("status", "STATUS")],
             [_btn("⬅️ Admin", "HOME")],
         ]
     )
@@ -196,14 +284,27 @@ def strategy_markup() -> dict[str, list[list[dict[str, str]]]]:
             [_btn("🎯 Thresholds", "THRESHOLDS"), _btn("📐 S/R", "SR")],
             [_btn("⚡ Spike Filter", "SPIKE"), _btn("💱 Symbols", "SYMBOLS")],
             [_btn("📋 Quick Profile", "PROFILE_HOME"), _btn("⬅️ Operations", "OPERATIONS")],
+            [_knowledge_btn("strategy", "STRATEGY")],
         ]
     )
+
+
+def strategy_parameter_markup(
+    knowledge_key: str,
+    refresh_action: str,
+) -> dict[str, list[list[dict[str, str]]]]:
+    return _kb([
+        [_btn("🔄 Refresh", refresh_action)],
+        [_knowledge_btn(knowledge_key, refresh_action)],
+        [_btn("⬅️ Strategy", "STRATEGY")],
+    ])
 
 
 def symbols_markup() -> dict[str, list[list[dict[str, str]]]]:
     return _kb(
         [
             [_btn("🔄 Refresh Symbols", "SYMBOLS"), _btn("⚙️ Strategy", "STRATEGY")],
+            [_knowledge_btn("symbols_coverage", "SYMBOLS")],
             [_btn("⬅️ Admin", "HOME")],
         ]
     )
@@ -272,6 +373,8 @@ def symbols_toggle_markup(
         _btn("⬜ None", _symbol_action("SYMBOLS_NONE")),
         _btn("🔄 Refresh", "SYMBOLS_COV" if parent_action == "HOME" else "SYMBOLS"),
     ])
+    info_return = "SYMBOLS_COV" if parent_action == "HOME" else "SYMBOLS"
+    rows.append([_knowledge_btn("symbols_coverage", info_return)])
     back_label = "⬅️ Admin" if parent_action == "HOME" else "⬅️ Strategy"
     rows.append([_btn(back_label, parent_action)])
     return _kb(rows)
@@ -304,6 +407,7 @@ def strategy_quick_markup(current_profile: Optional[str]) -> dict[str, list[list
             _btn(f"{_mark('BALANCED')}MEDIU / MEDIUM", "PROFILE_CONFIRM:BALANCED"),
             _btn(f"{_mark('AGGRESSIVE')}MARE / LARGE", "PROFILE_CONFIRM:AGGRESSIVE"),
         ],
+        [_knowledge_btn("strategy", "PROFILE_HOME")],
         [_btn("⬅️ Strategy", "STRATEGY")],
     ])
 
@@ -334,13 +438,22 @@ def engine_markup(*, include_roles_reload: bool, parent_action: str = "HOME") ->
     rows = [[_btn("🔄 Refresh Engine", refresh_action), _btn("📊 Status", "STATUS")]]
     if include_roles_reload:
         rows.append([_btn("🔄 Reload Roles", "RELOAD_ROLES_CONFIRM")])
+    rows.append([_knowledge_btn("engine", refresh_action)])
     back_label = "⬅️ Admin" if parent_action == "HOME" else f"⬅️ {_PANEL_BACK_LABELS.get(parent_action, 'Back')}"
     rows.append([_btn(back_label, parent_action)])
     return _kb(rows)
 
 
-def standard_back_markup() -> dict[str, list[list[dict[str, str]]]]:
-    return _kb([[_btn("⬅️ Admin", "HOME")]])
+def standard_back_markup(
+    *,
+    knowledge_key: Optional[str] = None,
+    return_action: str = "HOME",
+) -> dict[str, list[list[dict[str, str]]]]:
+    rows: list[list[dict[str, str]]] = []
+    if knowledge_key:
+        rows.append([_knowledge_btn(knowledge_key, return_action)])
+    rows.append([_btn("⬅️ Admin", "HOME")])
+    return _kb(rows)
 
 
 def reload_confirm_markup(*, cancel_action: str = "ROLES") -> dict[str, list[list[dict[str, str]]]]:
@@ -353,6 +466,7 @@ def files_home_markup() -> dict[str, list[list[dict[str, str]]]]:
         [_btn("📂 Observability", f"FILES:{DIR_KEY_OBS}:0"), _btn("📂 Outcomes", f"FILES:{DIR_KEY_OUT}:0")],
         [_btn("📂 Analytics", f"FILES:{DIR_KEY_ANA}:0"), _btn("📂 Reports", f"FILES:{DIR_KEY_RPT}:0")],
         [_btn("📂 Docs", f"FILES:{DIR_KEY_DOC}:0"), _btn("📂 Audit", f"FILES:{DIR_KEY_AUD}:0")],
+        [_knowledge_btn("files_reports", "FILES_HOME")],
         [_btn("⬅️ Admin", "HOME")],
     ])
 
@@ -379,6 +493,7 @@ def files_list_markup(
     if nav:
         rows.append(nav)
 
+    rows.append([_knowledge_btn("files_reports", f"FILES:{dir_key}:{page}")])
     rows.append([_btn("⬅️ Files", "FILES_HOME"), _btn("⬅️ Admin", "HOME")])
     return _kb(rows)
 
@@ -389,6 +504,7 @@ def docs_list_markup(filenames: List[str]) -> dict[str, list[list[dict[str, str]
     for fname in filenames:
         display = fname if len(fname) <= 36 else fname[:33] + "…"
         rows.append([_btn(f"📄 {display}", f"FILE_DL:{DIR_KEY_DOC}:{fname}")])
+    rows.append([_knowledge_btn("governance_docs", "DOCS")])
     rows.append([_btn("⬅️ Admin", "HOME")])
     return _kb(rows)
 
@@ -411,6 +527,7 @@ def diagnose_markup(*, parent_action: str = "HOME") -> dict[str, list[list[dict[
     back_label = "⬅️ Admin" if parent_action == "HOME" else f"⬅️ {_PANEL_BACK_LABELS.get(parent_action, 'Back')}"
     return _kb([
         [_btn("🔍 Runtime Audit", audit_action), _btn("🔄 Refresh", refresh_action)],
+        [_knowledge_btn("diagnostics", refresh_action)],
         [_btn(back_label, parent_action)],
     ])
 
@@ -420,6 +537,7 @@ def report_markup(*, has_file: bool = False, dir_key: str = DIR_KEY_RPT, filenam
     rows: list[list[dict[str, str]]] = []
     if has_file and filename:
         rows.append([_btn("📥 Download Report", f"FILE_DL:{dir_key}:{filename}")])
+    rows.append([_knowledge_btn("research_analytics", "REPORT")])
     rows.append([_btn("⬅️ Admin", "HOME")])
     return _kb(rows)
 
@@ -439,6 +557,7 @@ def operations_markup() -> dict[str, list[list[dict[str, str]]]]:
     return _kb([
         [_btn("🤖 Engine State", "OPS_ENGINE"), _btn("🩺 Diagnose", "OPS_DIAGNOSE")],
         [_btn("📋 Strategy Parameters", "STRATEGY"), _btn("💱 Symbols", "SYMBOLS_COV")],
+        [_knowledge_btn("operations", "OPERATIONS")],
         [_btn("⬅️ Admin", "HOME")],
     ])
 
@@ -452,6 +571,7 @@ def decision_visibility_markup() -> dict[str, list[list[dict[str, str]]]]:
     """
     return _kb([
         [_btn("🔄 Refresh", "DECISION_VIS")],
+        [_knowledge_btn("decision_visibility", "DECISION_VIS")],
         [_btn("⬅️ Admin", "HOME")],
     ])
 
@@ -466,6 +586,7 @@ def distribution_markup() -> dict[str, list[list[dict[str, str]]]]:
     """
     return _kb([
         [_btn("🔄 Refresh", "DISTRIBUTION")],
+        [_knowledge_btn("distribution", "DISTRIBUTION")],
         [_btn("⬅️ Admin", "HOME")],
     ])
 
@@ -481,6 +602,7 @@ def research_markup(*, has_file: bool = False, filename: str = "") -> dict[str, 
     if has_file and filename:
         rows.append([_btn("📥 Download Report", f"FILE_DL:{DIR_KEY_RPT}:{filename}")])
     rows.append([_btn("🔄 Refresh", "RESEARCH")])
+    rows.append([_knowledge_btn("research_analytics", "RESEARCH")])
     rows.append([_btn("⬅️ Admin", "HOME")])
     return _kb(rows)
 
@@ -494,6 +616,7 @@ def intelligence_markup() -> dict[str, list[list[dict[str, str]]]]:
     """
     return _kb([
         [_btn("🔄 Refresh", "INTELLIGENCE")],
+        [_knowledge_btn("intelligence", "INTELLIGENCE")],
         [_btn("⬅️ Admin", "HOME")],
     ])
 
@@ -508,6 +631,7 @@ def roles_identity_markup(*, can_reload: bool = False) -> dict[str, list[list[di
     rows: list[list[dict[str, str]]] = []
     if can_reload:
         rows.append([_btn("🔄 Reload Roles", "RELOAD_ROLES_CONFIRM")])
+    rows.append([_knowledge_btn("roles_identity", "ROLES")])
     rows.append([_btn("⬅️ Admin", "HOME")])
     return _kb(rows)
 
@@ -522,6 +646,7 @@ def system_health_markup() -> dict[str, list[list[dict[str, str]]]]:
     return _kb([
         [_btn("🤖 Engine State", "SH_ENGINE"), _btn("🩺 Diagnose", "SH_DIAGNOSE")],
         [_btn("🔍 Runtime Audit", "SH_AUDIT")],
+        [_knowledge_btn("system_health", "SYSHEALTH")],
         [_btn("⬅️ Admin", "HOME")],
     ])
 
@@ -537,6 +662,7 @@ def governance_docs_markup(filenames: List[str]) -> dict[str, list[list[dict[str
     for fname in filenames:
         display = fname if len(fname) <= 36 else fname[:33] + "…"
         rows.append([_btn(f"📄 {display}", f"FILE_DL:{DIR_KEY_DOC}:{fname}")])
+    rows.append([_knowledge_btn("governance_docs", "GOVDOCS")])
     rows.append([_btn("⬅️ Admin", "HOME")])
     return _kb(rows)
 
@@ -550,5 +676,13 @@ def security_audit_markup() -> dict[str, list[list[dict[str, str]]]]:
     """
     return _kb([
         [_btn("🔍 Runtime Audit", "SECAUDIT_AUDIT"), _btn("📁 File Browser", "FILES_HOME")],
+        [_knowledge_btn("security_audit", "SECAUDIT")],
+        [_btn("⬅️ Admin", "HOME")],
+    ])
+
+
+def affiliate_markup() -> dict[str, list[list[dict[str, str]]]]:
+    return _kb([
+        [_knowledge_btn("affiliate", "AFFILIATE")],
         [_btn("⬅️ Admin", "HOME")],
     ])

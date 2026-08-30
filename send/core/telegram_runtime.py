@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Iterable, Optional, Sequence
 
 
 @dataclass(frozen=True)
@@ -84,8 +84,13 @@ def render_help_text() -> str:
     return "\n".join(line for line in lines if line is not None).strip()
 
 
-def render_start_text(*, shadow_mode: bool) -> str:
-    mode = "SHADOW_MODE is active." if shadow_mode else "Shadow mode is disabled."
+def render_start_text(*, shadow_mode: Optional[bool]) -> str:
+    if shadow_mode is True:
+        mode = "SHADOW_MODE is reported/configured as active."
+    elif shadow_mode is False:
+        mode = "Shadow mode is reported/configured as disabled."
+    else:
+        mode = "Shadow mode is UNKNOWN because no runtime/configuration evidence was reported."
     return "\n".join(
         [
             "BinaryBot is online.",
@@ -96,18 +101,19 @@ def render_start_text(*, shadow_mode: bool) -> str:
 
 
 def render_status_text(snapshot: dict[str, object]) -> str:
+    unavailable = "UNKNOWN (not reported)"
     lines = [
         "BinaryBot Status",
         "",
-        f"Overall: {snapshot.get('overall_state', 'UNKNOWN')}",
-        f"Runtime phase: {snapshot.get('runtime_phase', 'unknown')}",
-        f"Health: {snapshot.get('runtime_message', 'unknown')}",
-        f"Recovery: {snapshot.get('recovery_state', 'UNKNOWN')}",
-        f"Market data: {snapshot.get('market_data_state', 'UNKNOWN')}",
-        f"Telegram: {snapshot.get('telegram_state', 'UNKNOWN')}",
-        f"FSM: {snapshot.get('fsm_state', 'UNKNOWN')}",
-        f"Shadow mode: {snapshot.get('shadow_mode', 'OFF')}",
-        f"Broker execution: {snapshot.get('broker_state', 'NOT AVAILABLE')}",
+        f"Overall: {snapshot.get('overall_state', unavailable)}",
+        f"Runtime phase: {snapshot.get('runtime_phase', unavailable)}",
+        f"Health: {snapshot.get('runtime_message', unavailable)}",
+        f"Recovery: {snapshot.get('recovery_state', unavailable)}",
+        f"Market data: {snapshot.get('market_data_state', unavailable)}",
+        f"Telegram: {snapshot.get('telegram_state', unavailable)}",
+        f"FSM: {snapshot.get('fsm_state', unavailable)}",
+        f"Shadow mode: {snapshot.get('shadow_mode', unavailable)}",
+        f"Broker execution: {snapshot.get('broker_state', unavailable)}",
     ]
     note = snapshot.get("market_data_note")
     if isinstance(note, str) and note.strip():

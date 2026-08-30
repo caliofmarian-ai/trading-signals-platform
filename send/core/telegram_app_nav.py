@@ -17,6 +17,7 @@ Canonical sources:
 - TELEGRAM_UX_v2.0.0.md §15–§18 (Admin UX), §29, §31
 - ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md §3–§5
 - ADMIN_TREE_MAP_v2.0.0.md §3 (/admin entry)
+- HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md
 
 Implementation decision record:
 - /start in private DM shows the role-scoped welcome page.
@@ -53,6 +54,11 @@ from core.role_constants import (
     ROLE_LABELS,
     ADMIN_TIER_ROLES,
 )
+from core.owner_knowledge import (
+    public_knowledge_key,
+    render_contextual_knowledge,
+    render_operational_page,
+)
 from core.telegram_targets import valid_thread_id
 from state_store import state_store
 
@@ -68,6 +74,7 @@ ACT_STATUS = "STATUS"
 ACT_HELP = "HELP"
 ACT_ADMIN = "ADMIN"
 ACT_BACK = "BACK"
+ACT_INFO_PREFIX = "INFO:"
 
 _SUPPORTED_APP_ACTIONS: frozenset[str] = frozenset({
     ACT_HOME,
@@ -75,6 +82,18 @@ _SUPPORTED_APP_ACTIONS: frozenset[str] = frozenset({
     ACT_HELP,
     ACT_ADMIN,
 })
+
+
+def make_info_action(knowledge_key: str) -> str:
+    return f"{ACT_INFO_PREFIX}{str(knowledge_key or '').strip().lower()}"
+
+
+def _is_supported_app_action(action: str) -> bool:
+    if action in _SUPPORTED_APP_ACTIONS:
+        return True
+    if isinstance(action, str) and action.startswith(ACT_INFO_PREFIX):
+        return public_knowledge_key(action[len(ACT_INFO_PREFIX):])
+    return False
 
 
 def make_callback(action: str, generation: Optional[int] = None) -> str:
@@ -1032,7 +1051,7 @@ def render_welcome_page(
     user_id: int,
     primary_role: str,
     first_name: str = "",
-    shadow_mode: bool = False,
+    shadow_mode: Optional[bool] = None,
     generation: Optional[int] = None,
 ) -> Tuple[str, Dict]:
     """
@@ -1048,49 +1067,65 @@ def render_welcome_page(
     """
     greeting = f"Hello, {first_name}!" if first_name else "Hello!"
     role_label = ROLE_LABELS.get(primary_role, primary_role)
-    shadow_note = "\n\n⚠️ Shadow mode is active. No live signal delivery." if shadow_mode else ""
+    if shadow_mode is True:
+        mode_note = (
+            "Mode: SHADOW — reported runtime/configuration evidence is ON; "
+            "no live signal delivery or broker execution is implied."
+        )
+    elif shadow_mode is False:
+        mode_note = "Mode: Shadow mode is reported/configured as disabled."
+    else:
+        mode_note = "Mode: UNKNOWN — shadow-mode evidence was not reported."
 
     if primary_role == ROLE_OWNER:
-        text = (
-            f"🤖 *BinaryBot*{shadow_note}\n\n"
+        current_state = (
             f"{greeting}\n\n"
             f"You are connected as *{role_label}* — the supreme governance authority.\n\n"
             "You have full access to the admin control surface, including all governance, "
-            "operational, research and audit surfaces."
+            f"operational, research and audit surfaces.\n\n{mode_note}"
         )
         markup = _kb([
             [_btn("⚙️ Admin Control Surface", ACT_ADMIN, generation)],
             [_btn("📊 System Status", ACT_STATUS, generation)],
+            [
+                _btn("ℹ️ What is BinaryBot?", make_info_action("home"), generation),
+                _btn("❓ Help", ACT_HELP, generation),
+            ],
         ])
 
     elif primary_role in ADMIN_TIER_ROLES:
-        text = (
-            f"🤖 *BinaryBot*{shadow_note}\n\n"
+        current_state = (
             f"{greeting}\n\n"
             f"You are connected as *{role_label}*.\n\n"
             "Your access is configured for the designated admin control channel. "
             "Navigate to the admin control channel to access your control surface.\n\n"
-            "From here you can check system status."
+            f"From here you can check system status.\n\n{mode_note}"
         )
         markup = _kb([
             [_btn("📊 System Status", ACT_STATUS, generation)],
-            [_btn("❓ Help", ACT_HELP, generation)],
+            [
+                _btn("ℹ️ What is BinaryBot?", make_info_action("home"), generation),
+                _btn("❓ Help", ACT_HELP, generation),
+            ],
         ])
 
     else:
         # USER role: platform introduction
-        text = (
-            f"🤖 *BinaryBot*{shadow_note}\n\n"
+        current_state = (
             f"{greeting}\n\n"
             "Welcome to *BinaryBot* — an automated trading signal platform.\n\n"
             "This bot delivers trading signals to configured trading channels. "
-            "You can check the system status or view the command list below."
+            f"You can check the system status or view the command list below.\n\n{mode_note}"
         )
         markup = _kb([
             [_btn("📊 System Status", ACT_STATUS, generation)],
-            [_btn("❓ Help", ACT_HELP, generation)],
+            [
+                _btn("ℹ️ What is BinaryBot?", make_info_action("home"), generation),
+                _btn("❓ Help", ACT_HELP, generation),
+            ],
         ])
 
+    text = render_operational_page("home", current_state, title="🤖 *BinaryBot*")
     return text, markup
 
 
@@ -1109,18 +1144,18 @@ def render_status_page(
     This page is accessible to all roles and provides a read-only summary.
     The field set mirrors the original render_status_text to preserve information parity.
     """
-    overall = snapshot.get("overall_state", "UNKNOWN")
-    phase = snapshot.get("runtime_phase", "unknown")
-    health = snapshot.get("runtime_message", "unknown")
-    recovery = snapshot.get("recovery_state", "UNKNOWN")
-    market = snapshot.get("market_data_state", "UNKNOWN")
-    telegram = snapshot.get("telegram_state", "UNKNOWN")
-    fsm = snapshot.get("fsm_state", "UNKNOWN")
-    shadow = snapshot.get("shadow_mode", "OFF")
-    broker = snapshot.get("broker_state", "NOT AVAILABLE")
+    unavailable = "UNKNOWN (not reported)"
+    overall = snapshot.get("overall_state", unavailable)
+    phase = snapshot.get("runtime_phase", unavailable)
+    health = snapshot.get("runtime_message", unavailable)
+    recovery = snapshot.get("recovery_state", unavailable)
+    market = snapshot.get("market_data_state", unavailable)
+    telegram = snapshot.get("telegram_state", unavailable)
+    fsm = snapshot.get("fsm_state", unavailable)
+    shadow = snapshot.get("shadow_mode", unavailable)
+    broker = snapshot.get("broker_state", unavailable)
 
-    text = (
-        "📊 *System Status*\n\n"
+    current_state = (
         f"Overall: {overall}\n"
         f"Runtime phase: {phase}\n"
         f"Health: {health}\n"
@@ -1133,9 +1168,14 @@ def render_status_page(
     )
     note = snapshot.get("market_data_note")
     if isinstance(note, str) and note.strip():
-        text += f"\n\nMarket note: {note.strip()}"
+        current_state += f"\n\nMarket note: {note.strip()}"
 
-    rows: List[List[Dict[str, str]]] = [[_btn("🔄 Refresh", ACT_STATUS, generation)]]
+    text = render_operational_page("status", current_state, title="📊 *System Status*")
+
+    rows: List[List[Dict[str, str]]] = [[
+        _btn("🔄 Refresh", ACT_STATUS, generation),
+        _btn("ℹ️ What is this?", make_info_action("status"), generation),
+    ]]
     if include_back:
         rows.append([
             _btn("⬅️ Back", ACT_BACK, generation),
@@ -1165,8 +1205,7 @@ def render_help_page(
     is_admin = primary_role in ADMIN_TIER_ROLES
 
     if is_admin:
-        text = (
-            "❓ *Help — BinaryBot*\n\n"
+        current_state = (
             "*Public commands (available anywhere):*\n"
             "/start — Show the welcome page\n"
             "/status — System status\n"
@@ -1181,8 +1220,7 @@ def render_help_page(
             "_Your role:_ " + ROLE_LABELS.get(primary_role, primary_role)
         )
     else:
-        text = (
-            "❓ *Help — BinaryBot*\n\n"
+        current_state = (
             "*Available commands:*\n"
             "/start — Show the welcome page\n"
             "/status — System status\n"
@@ -1191,7 +1229,12 @@ def render_help_page(
             "You will receive signals automatically when they are generated."
         )
 
-    rows: List[List[Dict[str, str]]] = [[_btn("📊 System Status", ACT_STATUS, generation)]]
+    text = render_operational_page("help", current_state, title="❓ *Help — BinaryBot*")
+
+    rows: List[List[Dict[str, str]]] = [[
+        _btn("📊 System Status", ACT_STATUS, generation),
+        _btn("ℹ️ What is this?", make_info_action("help"), generation),
+    ]]
     if include_back:
         rows.append([
             _btn("⬅️ Back", ACT_BACK, generation),
@@ -1209,11 +1252,23 @@ def _render_app_page(
     user_id: int,
     primary_role: str,
     first_name: str = "",
-    shadow_mode: bool = False,
+    shadow_mode: Optional[bool] = None,
     status_snapshot: Optional[Dict] = None,
     include_back: bool = False,
     generation: Optional[int] = None,
 ) -> Tuple[str, Dict]:
+    if isinstance(action, str) and action.startswith(ACT_INFO_PREFIX):
+        knowledge_key = action[len(ACT_INFO_PREFIX):]
+        if public_knowledge_key(knowledge_key):
+            rows: List[List[Dict[str, str]]] = []
+            if include_back:
+                rows.append([
+                    _btn("⬅️ Back", ACT_BACK, generation),
+                    _btn("🏠 Home", ACT_HOME, generation),
+                ])
+            else:
+                rows.append([_btn("🏠 Home", ACT_HOME, generation)])
+            return render_contextual_knowledge(knowledge_key), _kb(rows)
     if action == ACT_HOME:
         return render_welcome_page(
             user_id,
@@ -1271,7 +1326,7 @@ def handle_app_action(
     user_id: int,
     primary_role: str,
     first_name: str = "",
-    shadow_mode: bool = False,
+    shadow_mode: Optional[bool] = None,
     status_snapshot: Optional[Dict] = None,
     chat_id: Optional[int] = None,
     thread_id: Optional[int] = None,
@@ -1323,7 +1378,7 @@ def handle_app_action(
             generation=meta["generation"],
         )
 
-    if chat_id is not None and action in _SUPPORTED_APP_ACTIONS:
+    if chat_id is not None and _is_supported_app_action(action):
         meta = record_app_navigation(
             chat_id=resolved_chat_id,
             user_id=user_id,
@@ -1336,7 +1391,7 @@ def handle_app_action(
         include_back = False
 
     return _render_app_page(
-        action if action in _SUPPORTED_APP_ACTIONS else ACT_HOME,
+        action if _is_supported_app_action(action) else ACT_HOME,
         user_id=user_id,
         primary_role=primary_role,
         first_name=first_name,

@@ -33,6 +33,7 @@ from core.admin_views import (
 from core import params_loader as _params_loader
 from core import observability_logger
 from core import storage as _storage
+from core.operational_snapshot import build_status_snapshot
 
 CONFIG_DIR = _storage.root_path("config")
 OBS_DIR = os.getenv("OBS_DIR", _storage.root_path("observability"))
@@ -40,7 +41,6 @@ REPORTS_DIR = os.path.join(os.getenv("ANALYTICS_DIR", _storage.root_path("analyt
 
 ALGO_PARAMS_PATH = os.path.join(CONFIG_DIR, "algo_params.json")
 ACTIVE_SYMBOLS_PATH = os.path.join(CONFIG_DIR, "active_symbols.json")
-ADMIN_SETTINGS_PATH = os.path.join(CONFIG_DIR, "admin_settings.json")
 ADMIN_EVENTS_PATH = os.path.join(os.getenv("OBS_DIR", _storage.root_path("observability")), "admin_events.jsonl")
 ADMIN_PROOFS_PATH = os.path.join(os.getenv("OBS_DIR", _storage.root_path("observability")), "admin_proofs.jsonl")
 ENGINE_EVENTS_PATH = os.path.join(os.getenv("OBS_DIR", _storage.root_path("observability")), "engine_events.jsonl")
@@ -134,6 +134,17 @@ def _safe_load_json(path: str, default: Any) -> Any:
         return default
 
 
+def _read_json_observation(path: str) -> Optional[Any]:
+    """Read a JSON artifact without converting absence/corruption into state."""
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+
+
 def _append_jsonl(path: str, payload: Dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
@@ -166,6 +177,19 @@ def _load_algo_params() -> Dict[str, Any]:
         return {}
     except (FileNotFoundError, OSError):
         return {}
+
+
+def _load_algo_params_observation() -> Optional[Dict[str, Any]]:
+    """Return validated effective parameters, or None for missing/invalid evidence."""
+    try:
+        return _params_loader.load_algo_params(_algo_params_path())
+    except (
+        _params_loader.ParamsValidationError,
+        _params_loader.ParamsMigrationError,
+        FileNotFoundError,
+        OSError,
+    ):
+        return None
 
 
 def _save_algo_params_validated(params: Dict[str, Any]) -> None:
@@ -201,6 +225,33 @@ def _load_active_symbols() -> List[str]:
     return _flatten_active_symbols(_load_active_symbols_raw())
 
 
+def _load_active_symbols_observation() -> Optional[List[str]]:
+    """Return persisted symbol evidence, or None when it is absent/invalid."""
+    data = _read_json_observation(ACTIVE_SYMBOLS_PATH)
+
+    def strict_values(values: List[Any]) -> Optional[List[str]]:
+        normalized: List[str] = []
+        for value in values:
+            if not isinstance(value, str) or not value.strip():
+                return None
+            normalized.append(value.strip().upper())
+        return sorted(set(normalized))
+
+    if isinstance(data, list):
+        return strict_values(data)
+    if isinstance(data, dict):
+        observed: List[str] = []
+        for values in data.values():
+            if not isinstance(values, list):
+                return None
+            normalized = strict_values(values)
+            if normalized is None:
+                return None
+            observed.extend(normalized)
+        return sorted(set(observed))
+    return None
+
+
 def _save_active_symbols(symbols: List[str]) -> None:
     """
     Preserve current project compatibility:
@@ -220,15 +271,6 @@ def _save_active_symbols(symbols: List[str]) -> None:
     _storage.save_json_atomic(ACTIVE_SYMBOLS_PATH, normalized)
 
 
-def _load_admin_settings() -> Dict[str, Any]:
-    data = _safe_load_json(ADMIN_SETTINGS_PATH, {})
-    if not isinstance(data, dict):
-        data = {}
-    data.setdefault("engine_tick_interval", 2)
-    data.setdefault("feature_flags", {})
-    return data
-
-
 def _iter_jsonl(path: str):
     if not os.path.exists(path):
         return
@@ -246,30 +288,72 @@ def _iter_jsonl(path: str):
         return
 
 
-def _last_decision_event() -> Optional[Dict[str, Any]]:
-    events = list(_iter_jsonl(ENGINE_EVENTS_PATH) or [])
-    for event in reversed(events):
-        if isinstance(event, dict) and event.get("event_type") == "decision":
-            return event
-    return None
+def _read_engine_events_observation() -> Optional[List[Dict[str, Any]]]:
+    """Read the event log strictly so absence/corruption is not reported as zero."""
+    if not os.path.isfile(ENGINE_EVENTS_PATH):
+        return None
+    events: List[Dict[str, Any]] = []
+    try:
+        with open(ENGINE_EVENTS_PATH, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                if not isinstance(record, dict):
+                    return None
+                events.append(record)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return events
 
 
-def _decision_count() -> int:
-    count = 0
-    for event in _iter_jsonl(ENGINE_EVENTS_PATH) or []:
-        if isinstance(event, dict) and event.get("event_type") == "decision":
-            count += 1
-    return count
+def _decision_debug_observation() -> Dict[str, Any]:
+    events = _read_engine_events_observation()
+    if events is None:
+        return {
+            "availability": "UNAVAILABLE (engine event log absent or invalid)",
+            "event": None,
+        }
+    decisions = [event for event in events if event.get("event_type") == "decision"]
+    if not decisions:
+        return {
+            "availability": "AVAILABLE (no decision recorded in event log)",
+            "event": None,
+        }
+    return {
+        "availability": "AVAILABLE (persisted engine event log)",
+        "event": decisions[-1],
+    }
 
 
 def _engine_status() -> Dict[str, Any]:
-    last = _last_decision_event()
-    settings = _load_admin_settings()
+    snapshot = build_status_snapshot()
+    events = _read_engine_events_observation()
+    decisions = (
+        None
+        if events is None
+        else [event for event in events if event.get("event_type") == "decision"]
+    )
+    last = decisions[-1] if decisions else None
+    event_gap = "UNAVAILABLE (engine event log absent or invalid)"
     return {
-        "running": "UNKNOWN" if last is None else "YES",
-        "tick_interval": settings.get("engine_tick_interval", 2),
-        "last_decision_ts": None if last is None else (last.get("ts_utc") or last.get("ts_epoch_ms")),
-        "decision_count": _decision_count(),
+        "runtime_phase": snapshot["runtime_phase"],
+        "tick_interval": snapshot["engine_tick_seconds"],
+        "last_decision_ts": (
+            event_gap
+            if decisions is None
+            else (
+                "NONE (no decision recorded in available event log)"
+                if last is None
+                else (
+                    last.get("ts_utc")
+                    or last.get("ts_epoch_ms")
+                    or "UNKNOWN (decision timestamp not reported)"
+                )
+            )
+        ),
+        "decision_count": event_gap if decisions is None else len(decisions),
     }
 
 
@@ -290,19 +374,14 @@ def _report_summary() -> Dict[str, Any]:
     path = _find_latest_report_json()
     if not path:
         return {
-            "date": "N/A",
-            "decisions": 0,
-            "rejects": 0,
-            "pre": 0,
-            "confirm": 0,
-            "open_now": 0,
-            "avg_score": "N/A",
-            "top_rejects": [],
+            "availability": "UNAVAILABLE (no report artifact found)",
         }
 
-    data = _safe_load_json(path, {})
+    data = _read_json_observation(path)
     if not isinstance(data, dict):
-        data = {}
+        return {
+            "availability": "UNAVAILABLE (report artifact invalid or unreadable)",
+        }
 
     top_rejects = data.get("top_reject_reasons", [])
     if isinstance(top_rejects, dict):
@@ -311,13 +390,17 @@ def _report_summary() -> Dict[str, Any]:
         top_rejects = []
 
     return {
+        "availability": "AVAILABLE (persisted report artifact)",
         "date": data.get("date", os.path.basename(path)),
-        "decisions": data.get("decisions", data.get("total_decisions", 0)),
-        "rejects": data.get("rejects", 0),
-        "pre": data.get("pre", 0),
-        "confirm": data.get("confirm", 0),
-        "open_now": data.get("open_now", 0),
-        "avg_score": data.get("avg_score", "N/A"),
+        "decisions": data.get(
+            "decisions",
+            data.get("total_decisions", "UNKNOWN (not reported)"),
+        ),
+        "rejects": data.get("rejects", "UNKNOWN (not reported)"),
+        "pre": data.get("pre", "UNKNOWN (not reported)"),
+        "confirm": data.get("confirm", "UNKNOWN (not reported)"),
+        "open_now": data.get("open_now", "UNKNOWN (not reported)"),
+        "avg_score": data.get("avg_score", "UNKNOWN (not reported)"),
         "top_rejects": top_rejects,
     }
 
@@ -482,6 +565,10 @@ def get_current_strategy_profile() -> Optional[str]:
     Returns the profile name if an exact match is found, otherwise None.
     """
     params = _load_algo_params()
+    return _detect_strategy_profile(params)
+
+
+def _detect_strategy_profile(params: Dict[str, Any]) -> Optional[str]:
     thresholds = params.get("score_thresholds", {})
     sr = params.get("sr_required_multiplier")
     for name, profile in STRATEGY_PROFILES.items():
@@ -492,6 +579,16 @@ def get_current_strategy_profile() -> Optional[str]:
                 and sr == profile["sr_required_multiplier"]):
             return name
     return None
+
+
+def get_current_strategy_profile_observation() -> str:
+    params = _load_algo_params_observation()
+    if params is None:
+        return "UNAVAILABLE (strategy configuration absent or invalid)"
+    profile = _detect_strategy_profile(params)
+    if profile is not None:
+        return f"{profile} (matched valid effective configuration)"
+    return "CUSTOM (valid effective configuration does not match a named profile)"
 
 
 def handle_strategy_profile(profile: str, user_id: int) -> str:
@@ -765,34 +862,7 @@ def handle_diagnose(user_id: int) -> str:
     if not ok_perm:
         return render_error(reason)
 
-    try:
-        from runtime import runtime_status  # type: ignore
-        status = runtime_status.read_status()
-    except Exception:
-        status = {}
-
-    runtime_phase = str(status.get("phase") or "unknown").upper()
-    market_data = str(status.get("market_data_state") or "UNKNOWN").upper()
-    recovery_required = bool(status.get("recovery_required"))
-    recovery_state = str(status.get("recovery_state") or ("DEGRADED_SAFE" if recovery_required else "HEALTHY"))
-    shadow_mode = "ON" if status.get("shadow_mode") else "OFF"
-    telegram_enabled = bool(status.get("telegram_enabled"))
-    telegram_polling = bool(status.get("telegram_polling_started"))
-    telegram_state = "DISABLED"
-    if telegram_enabled:
-        telegram_state = "POLLING" if telegram_polling else "ENABLED/PENDING"
-
-    broker_exec = "ON" if os.getenv("ENABLE_BROKER_EXECUTION", "false").lower() in {"1", "true", "yes"} else "OFF"
-
-    fsm_state = "UNAVAILABLE"
-    try:
-        from core import fsm_runtime  # type: ignore
-        fstate = fsm_runtime.load_state()
-        mode = str(fstate.get("mode") or "UNKNOWN") if isinstance(fstate, dict) else "UNKNOWN"
-        wl = fstate.get("watchlist", []) if isinstance(fstate, dict) else []
-        fsm_state = f"{mode} / watchlist={len(wl)}"
-    except Exception:
-        pass
+    snapshot = build_status_snapshot()
 
     # Recent incidents (last 3 errors from error log)
     incidents: List[str] = []
@@ -817,13 +887,13 @@ def handle_diagnose(user_id: int) -> str:
     lines = [
         "🩺 Diagnosis",
         "",
-        f"Runtime phase: {runtime_phase}",
-        f"Telegram polling: {telegram_state}",
-        f"Market data: {market_data}",
-        f"FSM: {fsm_state}",
-        f"Shadow mode: {shadow_mode}",
-        f"Broker execution: {broker_exec}",
-        f"Recovery: {recovery_state}",
+        f"Runtime phase: {snapshot['runtime_phase']}",
+        f"Telegram polling: {snapshot['telegram_state']}",
+        f"Market data: {snapshot['market_data_state']}",
+        f"FSM: {snapshot['fsm_state']}",
+        f"Shadow mode: {snapshot['shadow_mode']}",
+        f"Broker execution: {snapshot['broker_state']}",
+        f"Recovery: {snapshot['recovery_state']}",
         "",
         f"Files: {file_status}",
     ]
@@ -904,8 +974,13 @@ def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
         params = _load_algo_params()
         config_summary["score_thresholds"] = params.get("score_thresholds")
         config_summary["sr_required_multiplier"] = params.get("sr_required_multiplier")
-        config_summary["strategy_profile"] = get_current_strategy_profile()
-        config_summary["active_symbols_count"] = len(_load_active_symbols())
+        config_summary["strategy_profile"] = get_current_strategy_profile_observation()
+        observed_symbols = _load_active_symbols_observation()
+        config_summary["active_symbols_count"] = (
+            "UNAVAILABLE (active-symbol configuration absent or invalid)"
+            if observed_symbols is None
+            else len(observed_symbols)
+        )
     except Exception:
         config_summary["error"] = "unable to load"
 
@@ -1060,7 +1135,7 @@ def handle_admin_command(text: str, user_id: int) -> str:
                 ok, reason = require_permission(user_id, "strategy.view")
                 if not ok:
                     return render_error(reason)
-                return render_symbols(_load_active_symbols())
+                return render_symbols(_load_active_symbols_observation())
 
             ok, reason = require_permission(user_id, "strategy.symbols.write")
             if not ok:
@@ -1094,7 +1169,11 @@ def handle_admin_command(text: str, user_id: int) -> str:
             ok, reason = require_permission(user_id, "debug.view")
             if not ok:
                 return render_error(reason)
-            return render_debug_last(_last_decision_event())
+            observation = _decision_debug_observation()
+            return render_debug_last(
+                observation["event"],
+                availability=observation["availability"],
+            )
 
         if cmd == "/report":
             ok, reason = require_permission(user_id, "reports.view")
