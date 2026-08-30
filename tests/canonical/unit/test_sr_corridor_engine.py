@@ -76,6 +76,21 @@ def test_required_room_comes_from_buffer_and_versioned_multiplier(canonical_runt
     )
 
 
+def test_numerically_equal_room_is_not_falsely_constrained(canonical_runtime_root: Path) -> None:
+    params, _, m5, market = _inputs(canonical_runtime_root)
+    required = market.context.buffer_distance * params["sr_required_multiplier"]
+    resistance = market.context.latest_price + required - 1e-16
+    for candle in m5:
+        candle["open"] = market.context.latest_price
+        candle["close"] = market.context.latest_price
+        candle["high"] = resistance
+        candle["low"] = market.context.latest_price - required
+    result = evaluate_corridor(m5, replace(market, direction_bias="BUY"), params)
+
+    assert result.structure.feasibility_state == "VALID"
+    assert "INSUFFICIENT_DIRECTIONAL_ROOM" not in result.structure.conflicts
+
+
 def test_insufficient_directional_room_is_explicit(canonical_runtime_root: Path) -> None:
     params, _, m5, market = _inputs(canonical_runtime_root)
     enlarged_context = replace(market.context, buffer_distance=0.01)

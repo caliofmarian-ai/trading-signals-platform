@@ -7,7 +7,7 @@ scores, FSM states, signals, or execution instructions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import isfinite
+from math import isclose, isfinite
 from typing import Any, Mapping, Sequence
 
 from .decision_object import StructureContext
@@ -139,7 +139,9 @@ def evaluate_corridor(
         feasibility = "UNAVAILABLE"
         position = "UNBOUNDED"
         explanation = "A complete corridor cannot be established from the observed M5 structure."
-    elif available_distance < required_distance:
+    elif available_distance < required_distance and not isclose(
+        available_distance, required_distance, rel_tol=1e-12, abs_tol=1e-12
+    ):
         feasibility = "CONSTRAINED"
         position = "INTERIOR"
         conflicts.append("INSUFFICIENT_DIRECTIONAL_ROOM")
