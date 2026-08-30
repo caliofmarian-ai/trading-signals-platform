@@ -1,0 +1,718 @@
+{
+  "schema_version": "1.0.0",
+  "registry_id": "owner-knowledge-layer",
+  "human_comprehension_canon": "HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md",
+  "aliases": {
+    "audit": "security_audit",
+    "decision": "decision_visibility",
+    "docs": "governance_docs",
+    "files": "files_reports",
+    "health": "system_health",
+    "research": "research_analytics",
+    "roles": "roles_identity",
+    "spike": "spike_filter",
+    "sr": "sr_corridor",
+    "symbols": "symbols_coverage"
+  },
+  "entries": [
+    {
+      "key": "home",
+      "title": "BinaryBot Home",
+      "identity": "The role-aware entry point into BinaryBot's Telegram interface.",
+      "purpose": "It identifies the current user context and provides safe navigation to the surfaces available in that context.",
+      "pipeline_position": "Telegram is a presentation and interaction layer over canonical runtime, control, and delivery subsystems.",
+      "controls": [
+        "Open System Status.",
+        "Open Help.",
+        "Owners may enter the governed Admin Control Surface."
+      ],
+      "consequences": [
+        "Navigation changes only the visible Telegram page.",
+        "Opening a page does not change strategy, execution, distribution, or permissions."
+      ],
+      "limitations": [
+        "The Home page is not proof that market data, signal generation, or broker execution is healthy.",
+        "Telegram is not a source of strategy truth."
+      ],
+      "canonical_sources": [
+        "TELEGRAM_UX_v2.0.0.md",
+        "ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": true,
+      "panel_actions": []
+    },
+    {
+      "key": "status",
+      "title": "System Status",
+      "identity": "A read-only summary of the runtime evidence currently available to Telegram.",
+      "purpose": "It helps a human distinguish service state, market-data state, Telegram state, FSM state, recovery state, shadow mode, and broker-execution availability.",
+      "pipeline_position": "It consumes operational evidence; it does not create runtime or trading truth.",
+      "controls": [
+        "Refresh the observed status.",
+        "Return to the previous page or Home."
+      ],
+      "consequences": [
+        "Refresh requests a new snapshot but does not restart or mutate the system."
+      ],
+      "limitations": [
+        "A healthy service does not prove profitable signals.",
+        "Telegram availability does not prove market-data freshness or broker execution.",
+        "UNKNOWN means sufficient evidence was not available; it must not be read as healthy or failed."
+      ],
+      "canonical_sources": [
+        "OBSERVABILITY_SPEC_v2.0.0.md",
+        "ADMIN_CONTROL_SPEC_v2.0.0.md",
+        "TELEGRAM_UX_v2.0.0.md"
+      ],
+      "glossary": [
+        [
+          "HEALTHY / RUNNING",
+          "The available operational evidence reports normal activity."
+        ],
+        [
+          "DEGRADED_SAFE",
+          "The system is restricted because required evidence or a dependency is impaired."
+        ],
+        [
+          "UNKNOWN",
+          "The interface cannot determine the state from sufficient canonical evidence."
+        ],
+        [
+          "SHADOW",
+          "The system may observe or evaluate, but this is not live broker execution."
+        ],
+        [
+          "BROKER DISABLED",
+          "No automatic broker trade execution is available through this runtime."
+        ]
+      ],
+      "public": true,
+      "panel_actions": []
+    },
+    {
+      "key": "help",
+      "title": "Help",
+      "identity": "The role-scoped inventory of discoverable Telegram actions.",
+      "purpose": "It shows how to reach available surfaces without depending on remembered slash commands.",
+      "pipeline_position": "Help describes presentation routes; command authorization remains owned by the permission layer.",
+      "controls": [
+        "Open an available page.",
+        "Return Home."
+      ],
+      "consequences": [
+        "Reading Help never grants a role or permission."
+      ],
+      "limitations": [
+        "A listed command may still require the configured admin context and an explicit permission."
+      ],
+      "canonical_sources": [
+        "TELEGRAM_UX_v2.0.0.md",
+        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": true,
+      "panel_actions": []
+    },
+    {
+      "key": "admin_home",
+      "title": "Admin Control Surface",
+      "identity": "The role-scoped launch surface for observing, diagnosing, controlling, and governing BinaryBot.",
+      "purpose": "It gives the Owner and authorized operators one navigable control environment while preserving the authority of each canonical subsystem.",
+      "pipeline_position": "It sits above specialized operational, decision, distribution, research, identity, health, governance, and audit panels.",
+      "controls": [
+        "Open only the panels visible to the current role.",
+        "Use governed mutation controls only where a separate permission check allows them."
+      ],
+      "consequences": [
+        "Opening a panel is read-only.",
+        "A material control may change future governed behavior and must remain permission-checked and auditable."
+      ],
+      "limitations": [
+        "The Admin surface displays and controls canonical truths; it does not redefine strategy or execution truth.",
+        "Owner authority still acts through governed interfaces and audit rules."
+      ],
+      "canonical_sources": [
+        "ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md",
+        "ADMIN_CONTROL_SPEC_v2.0.0.md",
+        "ADMIN_TREE_MAP_v2.0.0.md",
+        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": []
+    },
+    {
+      "key": "operations",
+      "title": "Operations",
+      "identity": "The operational-state and governed-recovery area of the control plane.",
+      "purpose": "It brings together engine state, diagnostics, strategy parameters, coverage, restrictions, and recovery evidence needed for day-to-day operation.",
+      "pipeline_position": "It observes runtime and dependency evidence and may invoke only explicitly governed operational controls.",
+      "controls": [
+        "Inspect Engine State and Diagnostics.",
+        "Open Strategy Parameters and Symbols & Coverage.",
+        "Use future operational controls only when they are implemented, authorized, and audited."
+      ],
+      "consequences": [
+        "Inspection is read-only.",
+        "A future pause, freeze, recovery, or routing control can restrict forward behavior and must produce audit evidence."
+      ],
+      "limitations": [
+        "Operations health does not prove signal quality or profitability.",
+        "The current page must not imply that unimplemented freeze or recovery controls exist."
+      ],
+      "canonical_sources": [
+        "ADMIN_CONTROL_SPEC_v2.0.0.md",
+        "ADMIN_OPERATIONS_SPEC_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": [
+        "OPERATIONS"
+      ]
+    },
+    {
+      "key": "engine",
+      "title": "Engine",
+      "identity": "The runtime component that schedules and coordinates repeated market-evaluation work.",
+      "purpose": "It shows whether the evaluation loop is running and whether recent decision activity is observable.",
+      "pipeline_position": "The engine receives configuration and market inputs, invokes decision processing, and emits operational evidence; it is not itself the complete strategy or broker.",
+      "controls": [
+        "Refresh Engine State.",
+        "Open Status or Diagnostics through the surrounding panel."
+      ],
+      "consequences": [
+        "Refresh is read-only and does not restart the engine."
+      ],
+      "limitations": [
+        "Running means the loop is active; it does not prove fresh data, valid signals, delivery, or profit.",
+        "Decision count measures observed processing, not successful trades."
+      ],
+      "canonical_sources": [
+        "SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md",
+        "OBSERVABILITY_SPEC_v2.0.0.md",
+        "ADMIN_OPERATIONS_SPEC_v2.0.0.md"
+      ],
+      "glossary": [
+        [
+          "Tick interval",
+          "The configured delay between scheduled evaluation cycles."
+        ],
+        [
+          "Last decision timestamp",
+          "The latest decision time visible to this status source."
+        ],
+        [
+          "Decision count",
+          "The number of decision records observed by the current status source."
+        ]
+      ],
+      "public": false,
+      "panel_actions": [
+        "OPERATIONS",
+        "SYSHEALTH"
+      ]
+    },
+    {
+      "key": "strategy",
+      "title": "Strategy Parameters",
+      "identity": "The governed configuration surface for adjustable decision parameters.",
+      "purpose": "It makes current thresholds, structural-space requirements, instability gates, coverage, and profiles visible and controllable within permission boundaries.",
+      "pipeline_position": "Parameters influence future decision evaluation; the canonical strategy and validation layers remain their semantic owners.",
+      "controls": [
+        "Inspect thresholds, S/R requirements, spike filters, active symbols, and the current profile.",
+        "Authorized mutation controls may update validated future-facing configuration."
+      ],
+      "consequences": [
+        "Increasing or decreasing a parameter may change which future opportunities pass a gate.",
+        "A profile applies a governed bundle of parameter values; it does not replace the strategy."
+      ],
+      "limitations": [
+        "No parameter setting guarantees signal frequency, win rate, or profit.",
+        "Parameter changes must not rewrite historical decisions or outcomes."
+      ],
+      "canonical_sources": [
+        "STRATEGY_PARAMETER_CONTROL_SPEC_v2.0.0.md",
+        "ALGO_SPEC_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": [
+        "OPERATIONS"
+      ]
+    },
+    {
+      "key": "thresholds",
+      "title": "Decision Thresholds",
+      "identity": "Minimum governed score boundaries for progressive decision stages.",
+      "purpose": "They separate early opportunity awareness from stronger confirmation and immediate actionability.",
+      "pipeline_position": "The decision layer compares evidence-derived scores with these thresholds before lifecycle progression.",
+      "controls": [
+        "Inspect PRE, CONFIRM, and OPEN values.",
+        "Authorized roles may update a validated threshold."
+      ],
+      "consequences": [
+        "A higher threshold generally requires stronger evidence and may reduce progression frequency.",
+        "A lower threshold generally allows weaker candidates to progress and may increase risk or noise."
+      ],
+      "limitations": [
+        "Crossing a score threshold alone is not sufficient for OPEN_NOW; focus, timing, corridor, instability, and other gates still apply.",
+        "Thresholds do not predict or guarantee profit."
+      ],
+      "canonical_sources": [
+        "STRATEGY_PARAMETER_CONTROL_SPEC_v2.0.0.md",
+        "ALGO_SPEC_v2.0.0.md",
+        "SYSTEM_INVARIANTS_v2.0.0.md"
+      ],
+      "glossary": [
+        [
+          "PRE",
+          "Early-stage opportunity evidence suitable for governed observation."
+        ],
+        [
+          "CONFIRM",
+          "Stronger evidence that may progress an already valid opportunity."
+        ],
+        [
+          "OPEN / OPEN_NOW",
+          "The highest actionability stage, still subject to every mandatory safety and feasibility gate."
+        ]
+      ],
+      "public": false,
+      "panel_actions": [
+        "OPERATIONS"
+      ]
+    },
+    {
+      "key": "sr_corridor",
+      "title": "S/R and Corridor",
+      "identity": "The structural-space gate around support, resistance, and available price room.",
+      "purpose": "It helps reject opportunities that do not have enough usable space relative to the required movement buffer.",
+      "pipeline_position": "It evaluates structural actionability before a candidate may become immediately actionable.",
+      "controls": [
+        "Inspect the required multiplier.",
+        "Authorized roles may update the validated multiplier."
+      ],
+      "consequences": [
+        "Increasing the multiplier generally demands more structural room and is more restrictive.",
+        "Decreasing it generally accepts tighter room and may increase structural risk."
+      ],
+      "limitations": [
+        "Passing the S/R gate does not prove timing feasibility or profitability.",
+        "A failed mandatory structural-space gate cannot be treated as an informal suggestion."
+      ],
+      "canonical_sources": [
+        "SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md",
+        "ALGO_SPEC_v2.0.0.md",
+        "SYSTEM_INVARIANTS_v2.0.0.md"
+      ],
+      "glossary": [
+        [
+          "S/R",
+          "Support and resistance: nearby market structure used to estimate usable movement space."
+        ]
+      ],
+      "public": false,
+      "panel_actions": [
+        "OPERATIONS"
+      ]
+    },
+    {
+      "key": "spike_filter",
+      "title": "Spike and Instability Filter",
+      "identity": "A safety gate that identifies abnormal candle shape, range, or jump behavior.",
+      "purpose": "It prevents unstable price movement from being treated as an ordinary actionable setup.",
+      "pipeline_position": "It consumes candle and volatility evidence before final signal actionability.",
+      "controls": [
+        "Inspect wick/body, range-z, and jump-versus-ATR limits.",
+        "Authorized roles may update validated limits."
+      ],
+      "consequences": [
+        "Higher maxima are generally more permissive of unstable movement.",
+        "Lower maxima are generally more restrictive and may reject more candidates."
+      ],
+      "limitations": [
+        "The filter reduces a defined instability risk; it cannot make a trade safe or profitable.",
+        "ATR is a volatility measure, not a direction forecast."
+      ],
+      "canonical_sources": [
+        "ALGO_SPEC_v2.0.0.md",
+        "SYSTEM_INVARIANTS_v2.0.0.md"
+      ],
+      "glossary": [
+        [
+          "Wick/body ratio",
+          "Compares candle wick size with its real body."
+        ],
+        [
+          "Range z-score",
+          "Compares the current candle range with its recent statistical baseline."
+        ],
+        [
+          "Jump vs ATR",
+          "Compares a sudden move with recent average true range volatility."
+        ]
+      ],
+      "public": false,
+      "panel_actions": [
+        "OPERATIONS"
+      ]
+    },
+    {
+      "key": "symbols_coverage",
+      "title": "Symbols and Coverage",
+      "identity": "The governed universe of markets the system is allowed to monitor for future activity.",
+      "purpose": "It lets authorized operators inspect or change prospective market coverage without altering historical evidence.",
+      "pipeline_position": "Coverage is an input boundary before scanning and decision evaluation.",
+      "controls": [
+        "Toggle one symbol.",
+        "Enable all known symbols.",
+        "Disable all known symbols.",
+        "Refresh the list."
+      ],
+      "consequences": [
+        "Enabling a symbol allows future monitoring; it does not create a signal.",
+        "Disabling a symbol removes it from future coverage and may require focus eviction, but must not rewrite history."
+      ],
+      "limitations": [
+        "An active symbol is not proof of provider readiness, signal readiness, or profitability.",
+        "Coverage changes apply prospectively."
+      ],
+      "canonical_sources": [
+        "ADMIN_CONTROL_SPEC_v2.0.0.md",
+        "CANONICAL_STRATEGY_STACK_v1.0.0.md",
+        "SYSTEM_INVARIANTS_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": [
+        "SYMBOLS_COV",
+        "OPERATIONS"
+      ]
+    },
+    {
+      "key": "decision_visibility",
+      "title": "Decision Visibility",
+      "identity": "A read-only explanation surface for the latest observable decision evidence.",
+      "purpose": "It helps an authorized human understand why a candidate passed, failed, stalled, downgraded, or was rejected.",
+      "pipeline_position": "It reads decision, gate, score, focus, and lifecycle evidence between market evaluation and governed distribution.",
+      "controls": [
+        "Refresh the latest available decision evidence."
+      ],
+      "consequences": [
+        "Inspection does not override, replay, or mutate strategy truth."
+      ],
+      "limitations": [
+        "One decision snapshot is not a performance statistic.",
+        "Missing evidence must remain unknown; the panel must not invent a reason."
+      ],
+      "canonical_sources": [
+        "DECISION_AUDIT_SPEC_v2.0.0.md",
+        "TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md",
+        "ADMIN_CONTROL_SPEC_v2.0.0.md"
+      ],
+      "glossary": [
+        [
+          "Score",
+          "A governed aggregation of decision evidence, not a probability of profit."
+        ],
+        [
+          "Gate",
+          "A mandatory condition that may block progression even when a score is high."
+        ],
+        [
+          "FSM",
+          "The finite-state lifecycle that governs valid progression between operational stages."
+        ]
+      ],
+      "public": false,
+      "panel_actions": [
+        "DECISION_VIS"
+      ]
+    },
+    {
+      "key": "distribution",
+      "title": "Distribution Control",
+      "identity": "The routing and publication-readiness surface for already eligible outputs.",
+      "purpose": "It shows where a governed signal may be delivered and whether configured routes are ready.",
+      "pipeline_position": "It is downstream of decision/FSM eligibility and upstream of Telegram or other destination publishers.",
+      "controls": [
+        "Refresh route visibility.",
+        "Use route mutations only when a canonical backend and permission are available."
+      ],
+      "consequences": [
+        "A future route control may permit, restrict, mute, or freeze prospective publication to a destination."
+      ],
+      "limitations": [
+        "Distribution does not decide whether a signal is valid.",
+        "Successful delivery does not mean the signal was profitable.",
+        "Configured route text is not proof of live end-to-end delivery."
+      ],
+      "canonical_sources": [
+        "SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md",
+        "SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md",
+        "CHANNEL_CONFIG_SPEC_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": [
+        "DISTRIBUTION"
+      ]
+    },
+    {
+      "key": "research_analytics",
+      "title": "Research and Analytics",
+      "identity": "A read-only review surface for governed performance, outcome, rejection, and experiment data products.",
+      "purpose": "It supports evidence-based evaluation and comparison without giving analytics automatic strategy authority.",
+      "pipeline_position": "It consumes labeled decision, outcome, market, operational, and distribution evidence after runtime activity.",
+      "controls": [
+        "Refresh summaries.",
+        "Download an available governed report."
+      ],
+      "consequences": [
+        "Reading or exporting a report does not change the production strategy."
+      ],
+      "limitations": [
+        "Community feedback is not objective Market Truth.",
+        "A report based on incomplete evidence must not be treated as complete performance truth.",
+        "Historical performance does not guarantee future results."
+      ],
+      "canonical_sources": [
+        "PERFORMANCE_ANALYTICS_SPEC_v2.0.0.md",
+        "OUTCOME_TRACKING_SPEC_v2.0.0.md",
+        "RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": [
+        "RESEARCH"
+      ]
+    },
+    {
+      "key": "intelligence",
+      "title": "Intelligence",
+      "identity": "A higher-order summary of patterns, anomalies, drift, and recommendation candidates.",
+      "purpose": "It helps humans notice evidence that may deserve investigation or governed research.",
+      "pipeline_position": "It is downstream of observability and analytics and upstream of human review; it is advisory, not production authority.",
+      "controls": [
+        "Refresh currently available intelligence evidence."
+      ],
+      "consequences": [
+        "A recommendation may enter review but must not automatically mutate production behavior."
+      ],
+      "limitations": [
+        "A pattern or anomaly is not automatically causal.",
+        "No displayed recommendation is approval, canonical change, or profit guarantee."
+      ],
+      "canonical_sources": [
+        "AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v2.0.0.md",
+        "RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v2.0.0.md",
+        "GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": [
+        "INTELLIGENCE"
+      ]
+    },
+    {
+      "key": "affiliate",
+      "title": "Affiliate and Partner",
+      "identity": "A scope-limited commercial visibility surface for referral and partner operations.",
+      "purpose": "It separates authorized affiliate metrics and support workflows from strategy, execution, and unrestricted admin authority.",
+      "pipeline_position": "It consumes commercial and distribution-adjacent evidence without owning signal validity or global routing.",
+      "controls": [
+        "Inspect only the affiliate scope allowed to the current identity."
+      ],
+      "consequences": [
+        "Viewing affiliate data does not grant wider admin or strategy permissions."
+      ],
+      "limitations": [
+        "Affiliate roles are not strategy or distribution owners.",
+        "The surface must not expose other affiliates' private scope or internal strategy truth."
+      ],
+      "canonical_sources": [
+        "AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.0.md",
+        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": [
+        "AFFILIATE"
+      ]
+    },
+    {
+      "key": "roles_identity",
+      "title": "Roles and Identity",
+      "identity": "The surface that explains who the current actor is and which governed role memberships apply.",
+      "purpose": "It makes authorization context visible and provides a controlled configuration reload where separately permitted.",
+      "pipeline_position": "It reads the canonical role and permission configuration used by admin command and callback enforcement.",
+      "controls": [
+        "Inspect role membership.",
+        "Authorized admin-topic users may reload role and permission configuration."
+      ],
+      "consequences": [
+        "Reload re-reads configuration; it does not grant roles that are absent from the governed source."
+      ],
+      "limitations": [
+        "Seeing a role does not bypass per-command permission checks or chat-context requirements.",
+        "Owner private chat intentionally cannot perform the role-reload mutation."
+      ],
+      "canonical_sources": [
+        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md",
+        "ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": [
+        "ROLES"
+      ]
+    },
+    {
+      "key": "files_reports",
+      "title": "Files and Reports",
+      "identity": "A bounded, permission-checked browser for operational artifacts made available by the runtime.",
+      "purpose": "It lets an authorized operator inspect or download evidence without treating the file browser as a source of new system truth.",
+      "pipeline_position": "It exposes selected observability, outcome, analytics, report, documentation, and audit artifacts produced by their owning subsystems.",
+      "controls": [
+        "Choose an allowed directory.",
+        "Page through allowed filenames.",
+        "Download an allowed file."
+      ],
+      "consequences": [
+        "Download sends a separate Telegram document and does not mutate the artifact."
+      ],
+      "limitations": [
+        "An empty directory means no artifact is currently exposed there; it does not prove the underlying subsystem never ran.",
+        "Only allow-listed paths and sanitized exports may be exposed."
+      ],
+      "canonical_sources": [
+        "OBSERVABILITY_SPEC_v2.0.0.md",
+        "ADMIN_OPERATIONS_SPEC_v2.0.0.md",
+        "SECURITY_MODEL_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": [
+        "RESEARCH",
+        "GOVDOCS",
+        "SECAUDIT"
+      ]
+    },
+    {
+      "key": "governance_docs",
+      "title": "Governance and Documentation",
+      "identity": "The discoverable reference surface for active canon, governed implementation references, and change-control evidence.",
+      "purpose": "It helps an authorized human locate the documents that own the meaning of the system and its controls.",
+      "pipeline_position": "It is a presentation layer over the active canonical documentation hierarchy.",
+      "controls": [
+        "Inspect the active document inventory.",
+        "Download an allowed canonical document."
+      ],
+      "consequences": [
+        "Reading or downloading documentation does not modify canon or runtime behavior."
+      ],
+      "limitations": [
+        "Deprecated, superseded, proposed, or historical documents must not be presented as active authority.",
+        "Telegram summaries do not replace the complete canonical documents."
+      ],
+      "canonical_sources": [
+        "CANONICAL_MASTER_INDEX_v1.0.0.md",
+        "GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": [
+        "GOVDOCS"
+      ]
+    },
+    {
+      "key": "diagnostics",
+      "title": "Diagnostics",
+      "identity": "A concise operational interpretation of currently available runtime evidence.",
+      "purpose": "It helps an authorized operator identify likely failure areas and obtain a sanitized audit artifact.",
+      "pipeline_position": "It consumes health, observability, recovery, and configuration evidence without replacing their canonical owners.",
+      "controls": [
+        "Refresh the diagnosis.",
+        "Generate a sanitized Runtime Audit artifact."
+      ],
+      "consequences": [
+        "Diagnosis and audit generation are observational; they do not repair or restart the system."
+      ],
+      "limitations": [
+        "A diagnosis is bounded by available evidence and must not invent missing causes.",
+        "A generated audit is a snapshot, not a permanent guarantee of health."
+      ],
+      "canonical_sources": [
+        "OBSERVABILITY_SPEC_v2.0.0.md",
+        "ADMIN_OPERATIONS_SPEC_v2.0.0.md",
+        "SECURITY_MODEL_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": [
+        "OPERATIONS",
+        "SYSHEALTH",
+        "SECAUDIT"
+      ]
+    },
+    {
+      "key": "system_health",
+      "title": "System Health and Recovery",
+      "identity": "The aggregated technical-health surface for runtime, market data, Telegram, FSM, recovery, and shadow state.",
+      "purpose": "It helps an operator distinguish healthy, degraded, blocked, unknown, and recovery-relevant conditions.",
+      "pipeline_position": "It consumes observability and recovery evidence and links to Engine, Diagnostics, and Runtime Audit.",
+      "controls": [
+        "Open Engine State.",
+        "Run Diagnostics.",
+        "Generate Runtime Audit."
+      ],
+      "consequences": [
+        "These current controls inspect evidence; they do not restart or repair the service."
+      ],
+      "limitations": [
+        "An overall healthy label does not prove profitable trading.",
+        "A recovery recommendation is not an executed recovery action.",
+        "Unknown evidence must remain visibly unknown."
+      ],
+      "canonical_sources": [
+        "OBSERVABILITY_SPEC_v2.0.0.md",
+        "ADMIN_OPERATIONS_SPEC_v2.0.0.md",
+        "SYSTEM_INVARIANTS_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": [
+        "SYSHEALTH"
+      ]
+    },
+    {
+      "key": "security_audit",
+      "title": "Security and Audit",
+      "identity": "The oversight surface for permission-sensitive activity, access denials, admin evidence, and sanitized audit exports.",
+      "purpose": "It supports accountability and forensic review of governed operations.",
+      "pipeline_position": "It consumes role, admin-action, observability, and audit evidence without granting mutation authority.",
+      "controls": [
+        "Generate Runtime Audit.",
+        "Open the bounded File Browser."
+      ],
+      "consequences": [
+        "Audit generation creates a sanitized snapshot artifact; it does not change runtime behavior."
+      ],
+      "limitations": [
+        "Audit visibility must not expose credentials, secrets, protected identities, or unrestricted payloads.",
+        "Absence of a displayed event is not proof that an event did not occur unless the canonical evidence contract says so."
+      ],
+      "canonical_sources": [
+        "SECURITY_MODEL_v2.0.0.md",
+        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md",
+        "ADMIN_OPERATIONS_SPEC_v2.0.0.md"
+      ],
+      "glossary": [],
+      "public": false,
+      "panel_actions": [
+        "SECAUDIT"
+      ]
+    }
+  ]
+}

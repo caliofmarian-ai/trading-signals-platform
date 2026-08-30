@@ -157,6 +157,25 @@ What is happening now?
 
 Static definition and live state must remain distinguishable.
 
+Operational values shown as current state must not be embedded in renderer code.
+
+Every displayed current-state value must come from one of:
+
+- reported runtime evidence;
+- effective governed configuration;
+- a persisted canonical state or observability artifact;
+- a transparent derivation from explicitly identified evidence.
+
+When the required evidence is absent, invalid, or unreadable, the surface must
+display `UNKNOWN`, `UNAVAILABLE`, or an equally explicit evidence-gap state. It
+must not substitute a healthy, ready, enabled, disabled, profitable, or
+otherwise reassuring value.
+
+Stable definitions and explanations are canonical knowledge data. They must be
+maintained in a versioned declarative registry and validated by renderer code,
+not duplicated as inline operational content across Python handlers. Interface
+labels and rendering structure are not operational observations.
+
 ### 5.5 Interpretation
 
 What do the displayed:
@@ -453,6 +472,12 @@ Implementation of this canon must eventually prove that:
 8. help text does not expose secrets;
 9. truth-domain boundaries remain explicit;
 10. deprecated canon is not presented as active truth.
+11. current-state values are traceable to runtime, configuration, persisted
+    evidence, or an explicit derivation;
+12. missing evidence produces an explicit evidence-gap state rather than a
+    hardcoded operational value;
+13. canonical explanatory content is loaded from a versioned declarative
+    registry rather than embedded across renderer implementations.
 
 ---
 

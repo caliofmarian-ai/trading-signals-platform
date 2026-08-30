@@ -578,7 +578,11 @@ class TestPermissionFiltering:
         callbacks = _extract_button_callbacks(markup)
         panel_callbacks = [cb.replace("ADMIN_NAV:", "") for cb in callbacks if cb.startswith("ADMIN_NAV:")]
         # Only affiliate panel should be visible
-        non_affiliate = [cb for cb in panel_callbacks if cb not in ("AFFILIATE", "HOME")]
+        non_affiliate = [
+            cb
+            for cb in panel_callbacks
+            if cb not in ("AFFILIATE", "HOME") and not cb.startswith("INFO:")
+        ]
         assert len(non_affiliate) == 0, f"Affiliate admin saw unexpected panels: {non_affiliate}"
 
 

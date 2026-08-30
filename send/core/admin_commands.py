@@ -33,6 +33,7 @@ from core.admin_views import (
 from core import params_loader as _params_loader
 from core import observability_logger
 from core import storage as _storage
+from core.operational_snapshot import build_status_snapshot
 
 CONFIG_DIR = _storage.root_path("config")
 OBS_DIR = os.getenv("OBS_DIR", _storage.root_path("observability"))
@@ -765,34 +766,7 @@ def handle_diagnose(user_id: int) -> str:
     if not ok_perm:
         return render_error(reason)
 
-    try:
-        from runtime import runtime_status  # type: ignore
-        status = runtime_status.read_status()
-    except Exception:
-        status = {}
-
-    runtime_phase = str(status.get("phase") or "unknown").upper()
-    market_data = str(status.get("market_data_state") or "UNKNOWN").upper()
-    recovery_required = bool(status.get("recovery_required"))
-    recovery_state = str(status.get("recovery_state") or ("DEGRADED_SAFE" if recovery_required else "HEALTHY"))
-    shadow_mode = "ON" if status.get("shadow_mode") else "OFF"
-    telegram_enabled = bool(status.get("telegram_enabled"))
-    telegram_polling = bool(status.get("telegram_polling_started"))
-    telegram_state = "DISABLED"
-    if telegram_enabled:
-        telegram_state = "POLLING" if telegram_polling else "ENABLED/PENDING"
-
-    broker_exec = "ON" if os.getenv("ENABLE_BROKER_EXECUTION", "false").lower() in {"1", "true", "yes"} else "OFF"
-
-    fsm_state = "UNAVAILABLE"
-    try:
-        from core import fsm_runtime  # type: ignore
-        fstate = fsm_runtime.load_state()
-        mode = str(fstate.get("mode") or "UNKNOWN") if isinstance(fstate, dict) else "UNKNOWN"
-        wl = fstate.get("watchlist", []) if isinstance(fstate, dict) else []
-        fsm_state = f"{mode} / watchlist={len(wl)}"
-    except Exception:
-        pass
+    snapshot = build_status_snapshot()
 
     # Recent incidents (last 3 errors from error log)
     incidents: List[str] = []
@@ -817,13 +791,13 @@ def handle_diagnose(user_id: int) -> str:
     lines = [
         "🩺 Diagnosis",
         "",
-        f"Runtime phase: {runtime_phase}",
-        f"Telegram polling: {telegram_state}",
-        f"Market data: {market_data}",
-        f"FSM: {fsm_state}",
-        f"Shadow mode: {shadow_mode}",
-        f"Broker execution: {broker_exec}",
-        f"Recovery: {recovery_state}",
+        f"Runtime phase: {snapshot['runtime_phase']}",
+        f"Telegram polling: {snapshot['telegram_state']}",
+        f"Market data: {snapshot['market_data_state']}",
+        f"FSM: {snapshot['fsm_state']}",
+        f"Shadow mode: {snapshot['shadow_mode']}",
+        f"Broker execution: {snapshot['broker_state']}",
+        f"Recovery: {snapshot['recovery_state']}",
         "",
         f"Files: {file_status}",
     ]
