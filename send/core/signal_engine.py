@@ -288,9 +288,23 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
         scan_symbols = watchlist if natural_in_focus else symbols
         effective_in_focus = bool(natural_in_focus)
 
+    from runtime import market_client
+
+    provider_symbols = market_client.configured_symbols()
+    if provider_symbols is not None:
+        allowed = {str(item).strip().upper() for item in provider_symbols}
+        scan_symbols = [
+            symbol for symbol in scan_symbols
+            if str(symbol).strip().upper().replace("_", "/") in allowed
+        ]
+
     for symbol in scan_symbols:
         try:
-            from runtime.market_client import MarketDataRateLimitError, get_candles
+            from runtime.market_client import (
+                MarketDataRateLimitError,
+                MarketDataUnavailableError,
+                get_candles,
+            )
 
             raw_m1 = get_candles(symbol, "1min")
             raw_m5 = get_candles(symbol, "5min")
@@ -404,6 +418,14 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                     warn_type="MARKET_DATA_LIMITED",
                     message="Twelve Data rate limit is active; skipping remaining symbols for this cycle",
                     context={"symbol": symbol},
+                    source={"module": "signal_engine", "function": "run_once"},
+                )
+                break
+            if isinstance(e, MarketDataUnavailableError):
+                observability_logger.log_warning(
+                    warn_type="MARKET_DATA_UNAVAILABLE",
+                    message="Current market data is unavailable; no decision was produced",
+                    context={"symbol": symbol, "reason": str(e)},
                     source={"module": "signal_engine", "function": "run_once"},
                 )
                 break

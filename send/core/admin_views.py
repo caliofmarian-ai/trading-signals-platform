@@ -342,6 +342,8 @@ def render_system_health_summary(snapshot: Dict[str, Any]) -> str:
         f"Overall state: {_clean(snapshot.get('overall_state'))}",
         f"Runtime phase: {_clean(snapshot.get('runtime_phase'))}",
         f"Market data: {_clean(snapshot.get('market_data_state'))}",
+        f"Market provider: {_clean(snapshot.get('market_data_provider'))}",
+        f"Market symbol: {_clean(snapshot.get('market_data_symbol'))}",
         f"Recovery state: {_clean(snapshot.get('recovery_state'))}",
         f"Telegram: {_clean(snapshot.get('telegram_state'))}",
         f"FSM state: {_clean(snapshot.get('fsm_state'))}",

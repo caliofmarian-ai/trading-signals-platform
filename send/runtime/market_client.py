@@ -20,6 +20,35 @@ class MarketDataRateLimitError(RuntimeError):
     pass
 
 
+class MarketDataUnavailableError(RuntimeError):
+    pass
+
+
+_OANDA_FEED = None
+
+
+def configured_provider() -> str:
+    provider = os.getenv("MARKET_DATA_PROVIDER", "TWELVE_DATA").strip().upper()
+    if provider not in {"TWELVE_DATA", "OANDA_PRACTICE"}:
+        raise RuntimeError(f"Unsupported MARKET_DATA_PROVIDER: {provider}")
+    return provider
+
+
+def configured_symbols():
+    if configured_provider() == "OANDA_PRACTICE":
+        return ["EUR/USD"]
+    return None
+
+
+def _oanda_feed():
+    global _OANDA_FEED
+    if _OANDA_FEED is None:
+        from runtime.oanda_market_data import OandaPracticeFeed
+
+        _OANDA_FEED = OandaPracticeFeed()
+    return _OANDA_FEED
+
+
 def _api_key() -> str:
     token = os.getenv("TWELVE_DATA_API_KEY", "").strip()
     if not token:
@@ -131,8 +160,31 @@ def fetch_klines(symbol: str, interval: str, limit: int = 50):
 
 def get_candles(symbol: str, timeframe: str):
     """
-    Wrapper used by engine.
+    Provider-independent wrapper used by the engine.
     """
+    if configured_provider() == "OANDA_PRACTICE":
+        try:
+            candles = _oanda_feed().get_candles(symbol, timeframe)
+        except Exception as exc:
+            runtime_status.update_status(
+                market_data_state="MARKET_DATA_UNAVAILABLE",
+                market_data_note=str(exc),
+                market_data_provider="OANDA_PRACTICE",
+            )
+            raise MarketDataUnavailableError(str(exc)) from exc
+
+        health = _oanda_feed().health()
+        runtime_status.update_status(
+            market_data_state="READY",
+            market_data_note="OANDA Practice live EUR/USD data available",
+            market_data_provider="OANDA_PRACTICE",
+            market_data_symbol=health["symbol"],
+            last_market_data_success_ts=health["last_price_ts"],
+            market_data_age_seconds=health["price_age_seconds"],
+            market_data_freshness_limit_seconds=health["freshness_limit_seconds"],
+        )
+        return candles
+
     raw = fetch_klines(symbol, timeframe)
 
     candles = []
