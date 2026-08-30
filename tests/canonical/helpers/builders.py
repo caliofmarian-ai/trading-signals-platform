@@ -24,6 +24,7 @@ def make_signal_event(signal_id: str = "sig-001", stage: str = "OPEN_NOW", **ove
 
 
 def make_candles(symbol: str = "EURUSD", timeframe: str = "M1") -> list[dict[str, Any]]:
+    """Build canonical newest-first candles (``candles[0]`` is newest)."""
     candles = []
     for i in range(30):
         ts = 1720000000 + i * 60
@@ -40,4 +41,4 @@ def make_candles(symbol: str = "EURUSD", timeframe: str = "M1") -> list[dict[str
                 "volume": 100 + i,
             }
         )
-    return candles
+    return list(reversed(candles))

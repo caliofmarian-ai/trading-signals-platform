@@ -55,6 +55,18 @@ def _get_ts(c: Dict[str, Any]) -> int:
     # Contract expects epoch seconds (int). Upstream must normalize.
     return int(c["ts"])
 
+def _assert_newest_first(candles: List[Dict[str, Any]], label: str) -> None:
+    """Reject candle series that violate the canonical newest-first contract."""
+    for index in range(1, len(candles)):
+        newer_position_ts = _get_ts(candles[index - 1])
+        older_position_ts = _get_ts(candles[index])
+        if older_position_ts > newer_position_ts:
+            raise ValueError(
+                f"{label} must be newest-first: "
+                f"candle[{index - 1}] ts={newer_position_ts} precedes "
+                f"candle[{index}] ts={older_position_ts}"
+            )
+
 
 # ----------------------------
 # Indicators: EMA / RSI / ATR
@@ -239,11 +251,13 @@ def _jump_vs_atr(last_close: float, prev_close: float, atr_val: float) -> float:
 
 def _avg_speed_price_per_minute(candles_m1: List[Dict[str, Any]], lookback: int = 20) -> float:
     """
-    Proxy speed: average absolute close-to-close movement per minute (price units).
+    Proxy speed over the most recent newest-first window: average absolute
+    close-to-close movement per minute (price units).
     """
     if len(candles_m1) < lookback + 1:
         return 0.0
-    closes = [float(c["close"]) for c in candles_m1[-(lookback + 1):]]
+    recent_chronological = list(reversed(candles_m1[:lookback + 1]))
+    closes = [float(c["close"]) for c in recent_chronological]
     diffs = [abs(closes[i] - closes[i - 1]) for i in range(1, len(closes))]
     return sum(diffs) / max(1, len(diffs))
 
@@ -291,11 +305,16 @@ def decide(
             "candle_ts": int(_now_epoch()),
         }
 
-    symbol = _normalize_symbol(str(candles_m1[-1].get("symbol", context.get("symbol", "UNKNOWN"))))
+    _assert_newest_first(candles_m1, "candles_m1")
+    _assert_newest_first(candles_m5, "candles_m5")
+
+    current_candle = candles_m1[0]
+    previous_candle = candles_m1[1] if len(candles_m1) >= 2 else current_candle
+    symbol = _normalize_symbol(str(current_candle.get("symbol", context.get("symbol", "UNKNOWN"))))
     tf = str(context.get("decision_timeframe", "M15"))
 
     # Latest candle timestamp (dedup key)
-    candle_ts = _get_ts(candles_m1[-1])
+    candle_ts = _get_ts(current_candle)
 
     # ----------------------------
     # Load params (with safe defaults)
@@ -345,13 +364,16 @@ def decide(
     # ----------------------------
     # Build indicator series
     # ----------------------------
-    closes_m1 = [float(c["close"]) for c in candles_m1]
-    closes_m5 = [float(c["close"]) for c in candles_m5]
-    highs_m5 = [float(c["high"]) for c in candles_m5]
-    lows_m5 = [float(c["low"]) for c in candles_m5]
+    # EMA/RSI/ATR helpers consume chronological inputs even though the public
+    # candle contract remains newest-first end-to-end.
+    m1_chronological = list(reversed(candles_m1))
+    m5_chronological = list(reversed(candles_m5))
+    closes_m1 = [float(c["close"]) for c in m1_chronological]
+    closes_m5 = [float(c["close"]) for c in m5_chronological]
+    highs_m5 = [float(c["high"]) for c in m5_chronological]
+    lows_m5 = [float(c["low"]) for c in m5_chronological]
 
-    price = closes_m1[-1]
-    prev_price = closes_m1[-2] if len(closes_m1) >= 2 else price
+    price = _get_close(current_candle)
 
     ema_fast = ema(closes_m5, ema_fast_n)
     ema_slow = ema(closes_m5, ema_slow_n)
@@ -363,7 +385,8 @@ def decide(
     # ----------------------------
     # avg M1 range over last 10
     m1_n = min(10, len(candles_m1))
-    m1_ranges = [float(candles_m1[-i]["high"]) - float(candles_m1[-i]["low"]) for i in range(1, m1_n + 1)]
+    recent_m1 = candles_m1[:m1_n]
+    m1_ranges = [float(c["high"]) - float(c["low"]) for c in recent_m1]
     avg_range = sum(m1_ranges) / max(1, len(m1_ranges))
 
     is_crypto = _is_crypto(symbol)
@@ -449,12 +472,11 @@ def decide(
     # ----------------------------
     # Spike filter (ALGO_SPEC)
     # ----------------------------
-    last_candle = candles_m1[-1]
-    prev_candle = candles_m1[-2] if len(candles_m1) >= 2 else candles_m1[-1]
-    feat = _candle_features(last_candle)
-    m1_ranges_all = [float(c["high"]) - float(c["low"]) for c in candles_m1[-50:]] if len(candles_m1) >= 50 else m1_ranges
+    feat = _candle_features(current_candle)
+    recent_for_range_z = list(reversed(candles_m1[:50]))
+    m1_ranges_all = [float(c["high"]) - float(c["low"]) for c in recent_for_range_z]
     rz = _range_zscore(m1_ranges_all)
-    jva = _jump_vs_atr(_get_close(last_candle), _get_close(prev_candle), atr_val)
+    jva = _jump_vs_atr(_get_close(current_candle), _get_close(previous_candle), atr_val)
 
     spike_ok = True
     spike_reasons: List[str] = []
@@ -534,7 +556,7 @@ def decide(
     # C: Body expansion score
     # ratio = last_body / avg_body_last_10
     bodies = []
-    for c in candles_m1[-11:-1] if len(candles_m1) >= 11 else candles_m1[:-1]:
+    for c in candles_m1[1:11]:
         o = float(c["open"]); cl = float(c["close"])
         bodies.append(abs(cl - o))
     avg_body = (sum(bodies) / len(bodies)) if bodies else 0.0
