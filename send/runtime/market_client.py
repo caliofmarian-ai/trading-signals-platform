@@ -20,6 +20,35 @@ class MarketDataRateLimitError(RuntimeError):
     pass
 
 
+class MarketDataUnavailableError(RuntimeError):
+    pass
+
+
+_FINNHUB_FEED = None
+
+
+def configured_provider() -> str:
+    provider = os.getenv("MARKET_DATA_PROVIDER", "TWELVE_DATA").strip().upper()
+    if provider not in {"TWELVE_DATA", "FINNHUB"}:
+        raise RuntimeError(f"Unsupported MARKET_DATA_PROVIDER: {provider}")
+    return provider
+
+
+def configured_symbols():
+    if configured_provider() == "FINNHUB":
+        return ["EUR/USD"]
+    return None
+
+
+def _finnhub_feed():
+    global _FINNHUB_FEED
+    if _FINNHUB_FEED is None:
+        from runtime.finnhub_market_data import FinnhubForexFeed
+
+        _FINNHUB_FEED = FinnhubForexFeed()
+    return _FINNHUB_FEED
+
+
 def _api_key() -> str:
     token = os.getenv("TWELVE_DATA_API_KEY", "").strip()
     if not token:
@@ -131,8 +160,50 @@ def fetch_klines(symbol: str, interval: str, limit: int = 50):
 
 def get_candles(symbol: str, timeframe: str):
     """
-    Wrapper used by engine.
+    Provider-independent wrapper used by the engine.
     """
+    if configured_provider() == "FINNHUB":
+        feed = _finnhub_feed()
+        try:
+            candles = feed.get_candles(symbol, timeframe)
+        except Exception as exc:
+            health = feed.health()
+            collecting = exc.__class__.__name__ == "FinnhubInsufficientHistory"
+            runtime_status.update_status(
+                market_data_state=(
+                    "MARKET_DATA_COLLECTING" if collecting else "MARKET_DATA_UNAVAILABLE"
+                ),
+                market_data_note=str(exc),
+                market_data_provider="FINNHUB",
+                market_data_symbol=health["symbol"],
+                last_market_data_success_ts=health["last_price_ts"],
+                market_data_age_seconds=health["price_age_seconds"],
+                market_data_freshness_limit_seconds=health["freshness_limit_seconds"],
+                market_data_candle_counts=health["candle_counts"],
+                market_data_minimum_candles=health["minimum_candles"],
+                market_data_history_ready=health["history_ready"],
+            )
+            raise MarketDataUnavailableError(str(exc)) from exc
+
+        health = feed.health()
+        counts = health["candle_counts"]
+        runtime_status.update_status(
+            market_data_state="READY",
+            market_data_note=(
+                "Finnhub live EUR/USD ready; "
+                f"real candles M1={counts['M1']}, M5={counts['M5']}"
+            ),
+            market_data_provider="FINNHUB",
+            market_data_symbol=health["symbol"],
+            last_market_data_success_ts=health["last_price_ts"],
+            market_data_age_seconds=health["price_age_seconds"],
+            market_data_freshness_limit_seconds=health["freshness_limit_seconds"],
+            market_data_candle_counts=health["candle_counts"],
+            market_data_minimum_candles=health["minimum_candles"],
+            market_data_history_ready=health["history_ready"],
+        )
+        return candles
+
     raw = fetch_klines(symbol, timeframe)
 
     candles = []

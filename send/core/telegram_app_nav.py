@@ -1159,6 +1159,10 @@ def render_status_page(
     fsm = snapshot.get("fsm_state", unavailable)
     shadow = snapshot.get("shadow_mode", unavailable)
     broker = snapshot.get("broker_state", unavailable)
+    market_provider = snapshot.get("market_data_provider", unavailable)
+    market_symbol = snapshot.get("market_data_symbol", unavailable)
+    market_age = snapshot.get("market_data_age_seconds")
+    freshness_limit = snapshot.get("market_data_freshness_limit_seconds")
 
     current_state = (
         f"Overall: {overall}\n"
@@ -1166,11 +1170,18 @@ def render_status_page(
         f"Health: {health}\n"
         f"Recovery: {recovery}\n"
         f"Market data: {market}\n"
+        f"Market provider: {market_provider}\n"
+        f"Market symbol: {market_symbol}\n"
         f"Telegram: {telegram}\n"
         f"FSM: {fsm}\n"
         f"Shadow mode: {shadow}\n"
         f"Broker execution: {broker}"
     )
+    if isinstance(market_age, int) and isinstance(freshness_limit, int):
+        current_state += (
+            f"\nLatest price age: {market_age} seconds "
+            f"(maximum accepted: {freshness_limit})"
+        )
     note = snapshot.get("market_data_note")
     if isinstance(note, str) and note.strip():
         current_state += f"\n\nMarket note: {note.strip()}"

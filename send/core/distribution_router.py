@@ -437,6 +437,21 @@ def route(event: Dict[str, Any], now_ts: Optional[int] = None) -> None:
         - ELITE channel
         - ADMIN SIGNALS_LIVE topic
     """
+    if os.getenv("MARKET_DATA_PROVIDER", "TWELVE_DATA").strip().upper() == "FINNHUB":
+        observability_logger.log_warning(
+            warn_type="FINNHUB_PERSONAL_USE_DISTRIBUTION_BLOCKED",
+            message=(
+                "Finnhub personal-use market data cannot publish signals to Telegram channels"
+            ),
+            context={
+                "signal_id": event.get("signal_id"),
+                "stage": event.get("stage"),
+                "provider": "FINNHUB",
+            },
+            source={"module": "distribution_router", "function": "route"},
+        )
+        return
+
     now_ts = int(now_ts or time.time())
     cfg = load_config()
     state = load_state()
