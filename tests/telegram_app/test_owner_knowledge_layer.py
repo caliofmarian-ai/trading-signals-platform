@@ -159,6 +159,171 @@ def test_missing_runtime_evidence_is_never_presented_as_healthy_or_ready(
     assert "READY" not in snapshot.values()
 
 
+def test_partial_runtime_evidence_cannot_claim_overall_ready(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    from core import operational_snapshot
+
+    monkeypatch.setattr(
+        operational_snapshot.fsm_runtime,
+        "STATE_PATH",
+        str(tmp_path / "missing_fsm_state.json"),
+    )
+    for name in ("ENABLE_TELEGRAM", "SHADOW_MODE", "ENABLE_BROKER_EXECUTION"):
+        monkeypatch.delenv(name, raising=False)
+
+    partial = operational_snapshot.build_status_snapshot(
+        {"phase": "RUNNING", "recovery_required": False}
+    )
+    complete = operational_snapshot.build_status_snapshot(
+        {
+            "phase": "RUNNING",
+            "recovery_required": False,
+            "market_data_state": "READY",
+        }
+    )
+
+    assert partial["market_data_state"].startswith("UNKNOWN")
+    assert partial["overall_state"].startswith("UNKNOWN")
+    assert complete["overall_state"].startswith("READY")
+
+
+def test_missing_fsm_artifact_is_not_presented_as_default_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    from core import operational_snapshot
+
+    state_path = tmp_path / "missing_focus_state.json"
+    monkeypatch.setattr(
+        operational_snapshot.fsm_runtime,
+        "STATE_PATH",
+        str(state_path),
+    )
+
+    projected = operational_snapshot._fsm_projection()
+
+    assert projected.startswith("UNAVAILABLE")
+    assert "WIDE_SCAN" not in projected
+    assert "watchlist=0" not in projected
+
+
+def test_engine_tick_interval_requires_reported_runtime_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    from core import operational_snapshot
+
+    monkeypatch.setattr(
+        operational_snapshot.fsm_runtime,
+        "STATE_PATH",
+        str(tmp_path / "missing_focus_state.json"),
+    )
+
+    missing = operational_snapshot.build_status_snapshot({})
+    reported = operational_snapshot.build_status_snapshot(
+        {"engine_tick_seconds": 2}
+    )
+    invalid = operational_snapshot.build_status_snapshot(
+        {"engine_tick_seconds": float("nan")}
+    )
+
+    assert missing["engine_tick_seconds"].startswith("UNKNOWN")
+    assert reported["engine_tick_seconds"] == (
+        "2 seconds (reported runtime evidence)"
+    )
+    assert invalid["engine_tick_seconds"].startswith("UNAVAILABLE")
+
+
+def test_missing_operational_artifacts_do_not_become_zero_or_empty_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    from core import admin_commands, admin_views
+
+    missing_root = tmp_path / "missing"
+    monkeypatch.setattr(
+        admin_commands,
+        "ENGINE_EVENTS_PATH",
+        str(missing_root / "engine_events.jsonl"),
+    )
+    monkeypatch.setattr(
+        admin_commands,
+        "ACTIVE_SYMBOLS_PATH",
+        str(missing_root / "active_symbols.json"),
+    )
+    monkeypatch.setattr(admin_commands, "REPORTS_DIR", str(missing_root / "reports"))
+    monkeypatch.setattr(
+        admin_commands,
+        "build_status_snapshot",
+        lambda: {
+            "runtime_phase": "UNKNOWN (not reported)",
+            "engine_tick_seconds": "UNKNOWN (not reported)",
+        },
+    )
+
+    engine = admin_commands._engine_status()
+    symbols = admin_commands._load_active_symbols_observation()
+    report = admin_commands._report_summary()
+
+    assert engine["tick_interval"].startswith("UNKNOWN")
+    assert engine["decision_count"].startswith("UNAVAILABLE")
+    assert engine["decision_count"] != 0
+    assert symbols is None
+    assert report["availability"].startswith("UNAVAILABLE")
+    assert "UNAVAILABLE" in admin_views.render_symbols(symbols)
+    assert "UNAVAILABLE" in admin_views.render_report_summary(report)
+
+
+def test_explicit_empty_artifacts_remain_distinct_from_missing_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    from core import admin_commands
+
+    engine_events = tmp_path / "engine_events.jsonl"
+    active_symbols = tmp_path / "active_symbols.json"
+    reports_dir = tmp_path / "reports"
+    report_path = reports_dir / "daily_strategy_audit_20260830.json"
+    engine_events.write_text("", encoding="utf-8")
+    active_symbols.write_text("[]", encoding="utf-8")
+    reports_dir.mkdir()
+    report_path.write_text(
+        json.dumps(
+            {
+                "date": "2026-08-30",
+                "decisions": 0,
+                "rejects": 0,
+                "pre": 0,
+                "confirm": 0,
+                "open_now": 0,
+                "avg_score": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(admin_commands, "ENGINE_EVENTS_PATH", str(engine_events))
+    monkeypatch.setattr(admin_commands, "ACTIVE_SYMBOLS_PATH", str(active_symbols))
+    monkeypatch.setattr(admin_commands, "REPORTS_DIR", str(reports_dir))
+    monkeypatch.setattr(
+        admin_commands,
+        "build_status_snapshot",
+        lambda: {
+            "runtime_phase": "RUNNING",
+            "engine_tick_seconds": "2 seconds (reported runtime evidence)",
+        },
+    )
+
+    engine = admin_commands._engine_status()
+    report = admin_commands._report_summary()
+
+    assert engine["decision_count"] == 0
+    assert admin_commands._load_active_symbols_observation() == []
+    assert report["availability"].startswith("AVAILABLE")
+    assert report["decisions"] == 0
+
+
 def test_welcome_page_does_not_invent_a_shadow_mode_default():
     text, _ = telegram_app_nav.render_welcome_page(1, ROLE_USER)
     assert "Mode: UNKNOWN" in text

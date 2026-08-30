@@ -7,7 +7,9 @@ values or maintain its own fallback state model.
 
 from __future__ import annotations
 
+import math
 import os
+from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
 from core import fsm_runtime
@@ -85,10 +87,18 @@ def _reported_text(status: Mapping[str, Any], key: str, absent: str) -> str:
 
 
 def _fsm_projection() -> str:
+    state_path = Path(str(fsm_runtime.STATE_PATH))
+    if not state_path.is_file():
+        return "UNAVAILABLE (persisted FSM state absent)"
     try:
         state = fsm_runtime.load_state()
     except Exception:
         return "UNAVAILABLE (state not readable)"
+    # ``load_state`` may synthesize the canonical default when the artifact
+    # disappears between the existence check and the read.  A synthesized
+    # WIDE_SCAN state is not persisted operational evidence.
+    if not state_path.is_file():
+        return "UNAVAILABLE (persisted FSM state absent)"
     if not isinstance(state, dict):
         return "UNAVAILABLE (state payload invalid)"
 
@@ -102,7 +112,21 @@ def _fsm_projection() -> str:
         if raw_mode is not None and str(raw_mode).strip()
         else UNKNOWN_NOT_REPORTED
     )
-    return f"{mode} watchlist={watchlist_count}"
+    return f"{mode} watchlist={watchlist_count} (persisted FSM state)"
+
+
+def _reported_positive_seconds(status: Mapping[str, Any], key: str) -> str:
+    raw = status.get(key)
+    if isinstance(raw, bool):
+        return UNKNOWN_NOT_REPORTED
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return UNKNOWN_NOT_REPORTED
+    if not math.isfinite(seconds) or seconds <= 0:
+        return "UNAVAILABLE (reported interval invalid)"
+    rendered = str(int(seconds)) if seconds.is_integer() else str(seconds)
+    return f"{rendered} seconds (reported runtime evidence)"
 
 
 def build_status_snapshot(
@@ -182,7 +206,11 @@ def build_status_snapshot(
         overall_state = (
             "MARKET_DATA_LIMITED (derived from market-data state)"
         )
-    elif runtime_phase == "RUNNING" and recovery_required is False:
+    elif (
+        runtime_phase == "RUNNING"
+        and recovery_required is False
+        and market_data_state == "READY"
+    ):
         overall_state = "READY (derived from reported runtime evidence)"
     else:
         overall_state = "UNKNOWN (insufficient evidence)"
@@ -202,6 +230,10 @@ def build_status_snapshot(
             evidence,
             "message",
             "No runtime message reported.",
+        ),
+        "engine_tick_seconds": _reported_positive_seconds(
+            evidence,
+            "engine_tick_seconds",
         ),
         "recovery_state": recovery_state,
         "market_data_state": market_data_state,

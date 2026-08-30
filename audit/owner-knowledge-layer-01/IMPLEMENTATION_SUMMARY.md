@@ -124,6 +124,13 @@ projection to Status, System Health, and Diagnose surfaces.
 - runtime values come from `runtime_status`;
 - effective feature flags come from explicit configuration;
 - FSM mode and coverage come from persisted FSM state;
+- an absent FSM artifact remains `UNAVAILABLE` instead of materializing the
+  state store's default `WIDE_SCAN` value as observed evidence;
+- absent runtime tick evidence and absent engine-event, active-symbol, or
+  report artifacts remain explicit evidence gaps rather than becoming interval
+  `2`, count `0`, or an empty operational state;
+- derived overall `READY` requires reported runtime phase, recovery, and
+  market-data readiness evidence;
 - derived states are labeled as derived;
 - absent or unreadable evidence remains `UNKNOWN` or `UNAVAILABLE`;
 - the broker gate reports its effective fail-closed default when configuration
@@ -158,6 +165,9 @@ New focused coverage verifies:
 - declarative registry loading and schema versioning;
 - absence of canonical explanatory prose from the Python loader;
 - missing runtime evidence cannot be presented as healthy or ready;
+- partial runtime evidence cannot be presented as overall ready;
+- missing persisted artifacts remain distinguishable from explicit empty or
+  zero-valued artifacts;
 - missing shadow-mode evidence remains explicit;
 - complete registry materialization;
 - all required comprehension fields;
@@ -175,7 +185,7 @@ New focused coverage verifies:
 
 Full repository result:
 
-`761 passed`
+`766 passed`
 
 ## Remaining live acceptance
 

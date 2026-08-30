@@ -41,7 +41,6 @@ REPORTS_DIR = os.path.join(os.getenv("ANALYTICS_DIR", _storage.root_path("analyt
 
 ALGO_PARAMS_PATH = os.path.join(CONFIG_DIR, "algo_params.json")
 ACTIVE_SYMBOLS_PATH = os.path.join(CONFIG_DIR, "active_symbols.json")
-ADMIN_SETTINGS_PATH = os.path.join(CONFIG_DIR, "admin_settings.json")
 ADMIN_EVENTS_PATH = os.path.join(os.getenv("OBS_DIR", _storage.root_path("observability")), "admin_events.jsonl")
 ADMIN_PROOFS_PATH = os.path.join(os.getenv("OBS_DIR", _storage.root_path("observability")), "admin_proofs.jsonl")
 ENGINE_EVENTS_PATH = os.path.join(os.getenv("OBS_DIR", _storage.root_path("observability")), "engine_events.jsonl")
@@ -135,6 +134,17 @@ def _safe_load_json(path: str, default: Any) -> Any:
         return default
 
 
+def _read_json_observation(path: str) -> Optional[Any]:
+    """Read a JSON artifact without converting absence/corruption into state."""
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+
+
 def _append_jsonl(path: str, payload: Dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
@@ -202,6 +212,18 @@ def _load_active_symbols() -> List[str]:
     return _flatten_active_symbols(_load_active_symbols_raw())
 
 
+def _load_active_symbols_observation() -> Optional[List[str]]:
+    """Return persisted symbol evidence, or None when it is absent/invalid."""
+    data = _read_json_observation(ACTIVE_SYMBOLS_PATH)
+    if isinstance(data, list):
+        return _flatten_active_symbols(data)
+    if isinstance(data, dict):
+        if any(not isinstance(values, list) for values in data.values()):
+            return None
+        return _flatten_active_symbols(data)
+    return None
+
+
 def _save_active_symbols(symbols: List[str]) -> None:
     """
     Preserve current project compatibility:
@@ -219,15 +241,6 @@ def _save_active_symbols(symbols: List[str]) -> None:
             return
 
     _storage.save_json_atomic(ACTIVE_SYMBOLS_PATH, normalized)
-
-
-def _load_admin_settings() -> Dict[str, Any]:
-    data = _safe_load_json(ADMIN_SETTINGS_PATH, {})
-    if not isinstance(data, dict):
-        data = {}
-    data.setdefault("engine_tick_interval", 2)
-    data.setdefault("feature_flags", {})
-    return data
 
 
 def _iter_jsonl(path: str):
@@ -255,22 +268,53 @@ def _last_decision_event() -> Optional[Dict[str, Any]]:
     return None
 
 
-def _decision_count() -> int:
-    count = 0
-    for event in _iter_jsonl(ENGINE_EVENTS_PATH) or []:
-        if isinstance(event, dict) and event.get("event_type") == "decision":
-            count += 1
-    return count
+def _read_engine_events_observation() -> Optional[List[Dict[str, Any]]]:
+    """Read the event log strictly so absence/corruption is not reported as zero."""
+    if not os.path.isfile(ENGINE_EVENTS_PATH):
+        return None
+    events: List[Dict[str, Any]] = []
+    try:
+        with open(ENGINE_EVENTS_PATH, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                if not isinstance(record, dict):
+                    return None
+                events.append(record)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return events
 
 
 def _engine_status() -> Dict[str, Any]:
-    last = _last_decision_event()
-    settings = _load_admin_settings()
+    snapshot = build_status_snapshot()
+    events = _read_engine_events_observation()
+    decisions = (
+        None
+        if events is None
+        else [event for event in events if event.get("event_type") == "decision"]
+    )
+    last = decisions[-1] if decisions else None
+    event_gap = "UNAVAILABLE (engine event log absent or invalid)"
     return {
-        "running": "UNKNOWN" if last is None else "YES",
-        "tick_interval": settings.get("engine_tick_interval", 2),
-        "last_decision_ts": None if last is None else (last.get("ts_utc") or last.get("ts_epoch_ms")),
-        "decision_count": _decision_count(),
+        "runtime_phase": snapshot["runtime_phase"],
+        "tick_interval": snapshot["engine_tick_seconds"],
+        "last_decision_ts": (
+            event_gap
+            if decisions is None
+            else (
+                "NONE (no decision recorded in available event log)"
+                if last is None
+                else (
+                    last.get("ts_utc")
+                    or last.get("ts_epoch_ms")
+                    or "UNKNOWN (decision timestamp not reported)"
+                )
+            )
+        ),
+        "decision_count": event_gap if decisions is None else len(decisions),
     }
 
 
@@ -291,19 +335,14 @@ def _report_summary() -> Dict[str, Any]:
     path = _find_latest_report_json()
     if not path:
         return {
-            "date": "N/A",
-            "decisions": 0,
-            "rejects": 0,
-            "pre": 0,
-            "confirm": 0,
-            "open_now": 0,
-            "avg_score": "N/A",
-            "top_rejects": [],
+            "availability": "UNAVAILABLE (no report artifact found)",
         }
 
-    data = _safe_load_json(path, {})
+    data = _read_json_observation(path)
     if not isinstance(data, dict):
-        data = {}
+        return {
+            "availability": "UNAVAILABLE (report artifact invalid or unreadable)",
+        }
 
     top_rejects = data.get("top_reject_reasons", [])
     if isinstance(top_rejects, dict):
@@ -312,13 +351,17 @@ def _report_summary() -> Dict[str, Any]:
         top_rejects = []
 
     return {
+        "availability": "AVAILABLE (persisted report artifact)",
         "date": data.get("date", os.path.basename(path)),
-        "decisions": data.get("decisions", data.get("total_decisions", 0)),
-        "rejects": data.get("rejects", 0),
-        "pre": data.get("pre", 0),
-        "confirm": data.get("confirm", 0),
-        "open_now": data.get("open_now", 0),
-        "avg_score": data.get("avg_score", "N/A"),
+        "decisions": data.get(
+            "decisions",
+            data.get("total_decisions", "UNKNOWN (not reported)"),
+        ),
+        "rejects": data.get("rejects", "UNKNOWN (not reported)"),
+        "pre": data.get("pre", "UNKNOWN (not reported)"),
+        "confirm": data.get("confirm", "UNKNOWN (not reported)"),
+        "open_now": data.get("open_now", "UNKNOWN (not reported)"),
+        "avg_score": data.get("avg_score", "UNKNOWN (not reported)"),
         "top_rejects": top_rejects,
     }
 
@@ -879,7 +922,12 @@ def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
         config_summary["score_thresholds"] = params.get("score_thresholds")
         config_summary["sr_required_multiplier"] = params.get("sr_required_multiplier")
         config_summary["strategy_profile"] = get_current_strategy_profile()
-        config_summary["active_symbols_count"] = len(_load_active_symbols())
+        observed_symbols = _load_active_symbols_observation()
+        config_summary["active_symbols_count"] = (
+            "UNAVAILABLE (active-symbol configuration absent or invalid)"
+            if observed_symbols is None
+            else len(observed_symbols)
+        )
     except Exception:
         config_summary["error"] = "unable to load"
 
@@ -1034,7 +1082,7 @@ def handle_admin_command(text: str, user_id: int) -> str:
                 ok, reason = require_permission(user_id, "strategy.view")
                 if not ok:
                     return render_error(reason)
-                return render_symbols(_load_active_symbols())
+                return render_symbols(_load_active_symbols_observation())
 
             ok, reason = require_permission(user_id, "strategy.symbols.write")
             if not ok:

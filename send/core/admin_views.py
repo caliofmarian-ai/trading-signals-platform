@@ -64,10 +64,12 @@ def render_ok(message: str) -> str:
     return f"OK\n\n{_clean(message)}"
 
 
-def render_symbols(symbols: List[str], title: str = "Active Symbols") -> str:
+def render_symbols(symbols: Optional[List[str]], title: str = "Active Symbols") -> str:
     lines: List[str] = [title, ""]
-    if not symbols:
-        lines.append("No active symbols.")
+    if symbols is None:
+        lines.append("UNAVAILABLE (active-symbol configuration absent or invalid).")
+    elif not symbols:
+        lines.append("No active symbols configured in the available persisted configuration.")
     else:
         for sym in symbols:
             lines.append(f"- {sym}")
@@ -78,7 +80,7 @@ def render_engine_status(status: Dict[str, Any]) -> str:
     lines: List[str] = [
         "Engine Status",
         "",
-        f"Running: {_clean(status.get('running'))}",
+        f"Runtime phase: {_clean(status.get('runtime_phase'))}",
         f"Tick interval: {_clean(status.get('tick_interval'))}",
         f"Last decision ts: {_clean(status.get('last_decision_ts'))}",
         f"Decision count: {_clean(status.get('decision_count'))}",
@@ -127,9 +129,14 @@ def render_debug_last(decision_event: Optional[Dict[str, Any]]) -> str:
 
 
 def render_report_summary(summary: Dict[str, Any]) -> str:
+    availability = _clean(summary.get("availability"), "UNAVAILABLE (not reported)")
+    if availability.startswith("UNAVAILABLE"):
+        return _lines(["Strategy Report", "", availability])
+
     lines: List[str] = [
         "Strategy Report",
         "",
+        f"Evidence: {availability}",
         f"Date: {_clean(summary.get('date'))}",
         f"Decisions: {_clean(summary.get('decisions'))}",
         f"Rejects: {_clean(summary.get('rejects'))}",

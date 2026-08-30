@@ -33,7 +33,7 @@ from core.admin_commands import (
     handle_audit_runtime,
     handle_docs_list,
     get_all_known_symbols,
-    _load_active_symbols,
+    _load_active_symbols_observation,
     _find_latest_report_json,
     _iter_jsonl,
     ENGINE_EVENTS_PATH,
@@ -661,6 +661,13 @@ def _surface_current_state(rendered_surface: str) -> str:
     return text.rsplit(marker, 1)[-1] if marker in text else text
 
 
+def _active_symbols_for_markup() -> list[str]:
+    observed = _load_active_symbols_observation()
+    if observed is None:
+        raise RuntimeError("active-symbol configuration evidence unavailable")
+    return observed
+
+
 def _build_canonical_admin_root_page(
     user_id: int,
     *,
@@ -721,7 +728,7 @@ def _admin_reply_markup(cmd: str, user_id: int, *, owner_private: bool) -> Optio
         # Default to parent_action="HOME" (matches /symbols command entry from admin root).
         try:
             all_syms = get_all_known_symbols()
-            active = _load_active_symbols()
+            active = _active_symbols_for_markup()
             return telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action="HOME")
         except Exception:
             return telegram_admin_ui.symbols_markup()
@@ -902,7 +909,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         # Refresh toggle markup
         try:
             all_syms = get_all_known_symbols()
-            active = _load_active_symbols()
+            active = _active_symbols_for_markup()
             markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action=parent_action)
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
@@ -917,7 +924,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         result = handle_symbols_all(user_id)
         try:
             all_syms = get_all_known_symbols()
-            active = _load_active_symbols()
+            active = _active_symbols_for_markup()
             markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action=parent_action)
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
@@ -932,7 +939,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         result = handle_symbols_none(user_id)
         try:
             all_syms = get_all_known_symbols()
-            active = _load_active_symbols()
+            active = _active_symbols_for_markup()
             markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action=parent_action)
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
@@ -1122,7 +1129,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         # Source: ADMIN_TREE_MAP_v2.0.0.md §6.3; ADMIN_CONTROL_SPEC_v2.0.0.md §7
         try:
             all_syms = get_all_known_symbols()
-            active = _load_active_symbols()
+            active = _active_symbols_for_markup()
             markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action="HOME")
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
@@ -1282,7 +1289,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
     if action == "SYMBOLS":
         try:
             all_syms = get_all_known_symbols()
-            active = _load_active_symbols()
+            active = _active_symbols_for_markup()
             markup = telegram_admin_ui.symbols_toggle_markup(all_syms, active, parent_action="STRATEGY")
         except Exception:
             markup = telegram_admin_ui.symbols_markup()
