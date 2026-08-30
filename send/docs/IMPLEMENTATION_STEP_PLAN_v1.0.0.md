@@ -218,6 +218,15 @@ Structură:
 
 ScoreContext score_total score_components normalized_score
 
+Implementation status (2026-08-30):
+
+- implemented as a deterministic shadow module in `core/scoring_model.py`
+- consumes synchronized Market Model, SR/Corridor and Time Model evidence
+- preserves the five established score formulas and their 30/20/15/20/15 maxima
+- exposes immutable components, normalized total, score band, eligibility and hard blockers
+- a high arithmetic score cannot bypass market instability, invalid structure or infeasible time
+- does not produce a `DecisionObject`, FSM state, signal stage, execution expiry or trade
+
 ---
 
 ## 9. STEP 112 — DECISION FSM INTEGRATION

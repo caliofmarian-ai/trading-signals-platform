@@ -32,6 +32,8 @@ class IndicatorEvidence:
     wick_body_ratio: float
     range_z_score: float
     jump_vs_atr: float
+    latest_body: float
+    average_body_last_10: float
 
 
 @dataclass(frozen=True)
@@ -197,6 +199,10 @@ def evaluate_market(
 
     open_price, high, low = (float(latest[key]) for key in ("open", "high", "low"))
     body = abs(latest_price - open_price)
+    previous_bodies = [
+        abs(float(candle["close"]) - float(candle["open"])) for candle in candles_m1[1:11]
+    ]
+    average_body_last_10 = sum(previous_bodies) / len(previous_bodies)
     wick = max(0.0, high - max(open_price, latest_price)) + max(0.0, min(open_price, latest_price) - low)
     wick_body_ratio = wick / max(body, 1e-9)
     ranges_chronological = list(reversed([
@@ -244,6 +250,8 @@ def evaluate_market(
             wick_body_ratio=wick_body_ratio,
             range_z_score=range_z_score,
             jump_vs_atr=jump_vs_atr,
+            latest_body=body,
+            average_body_last_10=average_body_last_10,
         ),
         noise_reasons=tuple(noise_reasons),
     )
