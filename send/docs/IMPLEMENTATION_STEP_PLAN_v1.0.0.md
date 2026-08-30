@@ -189,6 +189,15 @@ Output:
 
 TimeContext
 
+Implementation status (2026-08-30):
+
+- implemented as a deterministic shadow module in `core/time_model.py`
+- consumes synchronized Market Model and VALID SR/Corridor evidence
+- preserves the established buffer/speed, trend adjustment, structure adjustment and configured model-window mathematics
+- emits canonical `t_needed`, `t_needed_adjusted`, `model_expiry`, `model_time_reach_ratio` and `time_state`
+- `corridor_time_pressure` remains explicitly unavailable because active canon does not yet define a calibrated formula
+- does not derive trader-facing execution expiry, telemetry checkpoints, score, FSM transitions, signals or trades
+
 ---
 
 ## 8. STEP 111 — SCORING MODEL
