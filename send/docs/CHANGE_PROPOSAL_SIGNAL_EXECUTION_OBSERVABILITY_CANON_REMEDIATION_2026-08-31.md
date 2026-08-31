@@ -59,6 +59,8 @@ A second audit against SYSTEM_ARCHITECTURE_MAP_v2.0.0 found additional governanc
 3. A future replacement root strategy manifest must remain a complete self-contained root manifest. A delta-only root document is not promotion-ready.
 4. Future successor canonical specs must be self-contained at promotion time. They must not depend normatively on versions that become Superseded.
 5. SignalEvent construction is not EMITTED. EMITTED requires downstream governed publication evidence. If a valid SignalEvent exists while distribution is intentionally not invoked, the signal-engine execution outcome is DEFERRED.
+6. PRE/CONFIRM lifecycle handoff readiness must be separated from final trade execution readiness.
+7. Legacy signal_emitted is too ambiguous to remain the primary v3 execution proof; the proposed migration makes it compatibility-only while signal_execution_result carries execution truth and signal_stage_visible/route_publish_result carry external visibility and route truth.
 
 These corrections narrow the remediation and prevent new canonical drift.
 
@@ -73,6 +75,15 @@ The handoff concern stays inside existing primary homes:
 - SIGNAL_DISTRIBUTION_ARCHITECTURE / SIGNAL_DISTRIBUTION_SPEC: remain unchanged owners of route/destination/publication truth.
 
 No additional active canonical authority is required for the handoff itself.
+
+## PROPOSED READINESS MODEL
+
+Two separate post-FSM semantics are required:
+
+- stage_handoff_ready: PRE / CONFIRM / OPEN_NOW may continue to SignalEvent consideration after exact-stage FSM acceptance.
+- trade_execution_ready: false for PRE and CONFIRM; may be true only for accepted actionable OPEN_NOW.
+
+This prevents the old OPEN_NOW-only candidate-readiness concept from suppressing canonical PRE/CONFIRM lifecycle handoff while preserving the stronger meaning of final trade readiness.
 
 ## EXPECTED IMPACT
 
@@ -89,6 +100,15 @@ No additional active canonical authority is required for the handoff itself.
 - EMITTED is only valid when downstream governed publication evidence confirms at least one authorized publication succeeded.
 - Exact route-level success/failure remains distribution truth in route publication events.
 - NOT_EMITTED, BLOCKED, SKIPPED and FAILED must remain distinguishable according to execution cause.
+
+## EVENT MIGRATION CLARIFICATION
+
+Proposed v3 primary truth:
+- signal_execution_result = signal-engine execution truth
+- signal_stage_visible = governed external lifecycle visibility
+- route_publish_attempt / route_publish_result = exact route publication truth
+
+Legacy signal_emitted becomes compatibility-only after v3 migration and historical records remain interpretable under their original schema/version.
 
 ## RISK
 
@@ -155,12 +175,22 @@ None. Documentation phase only.
 ## SUCCESS CRITERIA
 
 - Proposed material unambiguously defines accepted-stage handoff within existing authority homes.
+- Proposed material separates stage_handoff_ready from trade_execution_ready.
 - Proposed material defines post-FSM execution-result semantics.
 - Minimum execution trace is representable before routing exists.
 - SignalEvent creation does not equal distribution authorization or EMITTED.
 - No new duplicate active authority is introduced.
 - Any future promoted successor is self-contained.
 - PR #73 remains blocked until promotion and re-audit.
+
+## DEEP AUDIT DISPOSITION
+
+PASS FOR MERGE AS PROPOSAL MATERIAL ONLY, subject to the following hard interpretation:
+- files under canonical/proposed remain non-authoritative;
+- the proposed version files are design deltas, not promotion-ready replacements;
+- merge of the proposal does not supersede any active document;
+- merge does not authorize code, distribution, Telegram, outcomes, broker execution or scan-cadence changes;
+- a later promotion artifact must materialize complete self-contained successor documents and complete root/master updates before active authority changes.
 
 ## FAILURE TRIGGERS
 
