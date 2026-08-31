@@ -1,32 +1,36 @@
 # OBSERVABILITY_SPEC_v3.0.0
 
 Version: 3.0.0
-Status: PROPOSED — NOT ACTIVE CANONICAL
+Status: PROPOSED DESIGN DELTA — NOT ACTIVE CANONICAL — NOT PROMOTION READY
 Supersession intent: OBSERVABILITY_SPEC_v2.0.0.md
 
-All v2.0.0 policy truths remain inherited except where this proposed version makes execution truth a first-class observability domain distinct from strategy, FSM and distribution truth.
+This file records the approved observability-policy delta. A promoted successor must be materialized as a complete self-contained specification.
 
 ## 1. Execution Observability Is Explicit
 
 Observability must reconstruct the chain:
-DecisionObject -> FSM result -> signal-engine execution result -> distribution result -> external visibility/outcome where applicable.
+DecisionObject -> FSM result/handoff -> signal-engine execution result -> distribution result -> external visibility/outcome where applicable.
 
 ## 2. Required Execution Questions
 
 Observability must answer:
-- was the actionable stage accepted by FSM?
+- what actionable stage did strategy request?
+- did FSM release that exact stage to signal engine?
+- was the stage lifecycle-handoff-ready?
+- was it final trade-execution-ready?
 - did signal engine construct SignalEvent?
 - what execution outcome resulted?
 - why was it emitted, not emitted, blocked, skipped, failed or deferred?
 - had routing begun?
-- which destination class was involved, or was it explicitly pre-distribution unresolved?
+- what downstream distribution evidence exists when routing did begin?
 
 ## 3. Separate Truth Domains
 
 Forbidden:
 - hiding execution truth only inside generic decision debug;
 - treating FSM state as publication proof;
-- treating SignalEvent construction as external visibility;
+- treating stage_handoff_ready as trade_execution_ready;
+- treating SignalEvent construction as external visibility or EMITTED;
 - treating distribution failure as strategy rejection.
 
 ## 4. Required Execution Outcome Families
@@ -39,7 +43,17 @@ Observability must preserve:
 - FAILED
 - DEFERRED
 
-## 5. Correlation
+## 5. Execution Phases
+
+Execution observability must distinguish at least:
+- PRE_DISTRIBUTION
+- POST_DISTRIBUTION
+
+PRE_DISTRIBUTION may show a valid candidate with DEFERRED while distribution is intentionally not invoked.
+
+EMITTED is not valid merely because a candidate exists. It requires linked downstream governed publication evidence.
+
+## 6. Correlation
 
 Execution evidence must correlate with:
 - execution_attempt_id
@@ -49,14 +63,30 @@ Execution evidence must correlate with:
 - timeframe where applicable
 - run/cycle identity where available
 - timestamp
+- downstream distribution references where applicable
 
-## 6. Pre-Distribution Visibility
+The same execution_attempt_id may correlate a pre-distribution checkpoint with a later post-distribution final execution result.
 
-If routing has not begun, observability must make that explicit. Absence of route data must not be mistaken for missing evidence or delivery failure.
+## 7. Pre-Distribution Destination State
 
-Baseline proposed semantic:
-- destination_class = PRE_DISTRIBUTION_UNRESOLVED
+If routing has not begun, observability must make that explicit rather than silently omitting destination context.
 
-## 7. Promotion Preconditions
+Proposed semantic:
+- destination_state = PRE_DISTRIBUTION_UNRESOLVED
 
-Promotion requires aligned EVENT_SCHEMA, OBSERVABILITY_LOGGING, SIGNAL_ENGINE_EXECUTION and MODULE_INTERFACE versions plus root manifest/master-index promotion.
+This is not a failed destination and not authorization to publish.
+
+## 8. Route-Level Truth Preservation
+
+When distribution begins, exact route/destination/publish truth remains owned by distribution events.
+
+Signal-engine observability may summarize the final execution outcome but must link to route-level evidence and must not overwrite partial route failures, skips or duplicate suppressions.
+
+## 9. Promotion Requirements
+
+Before active promotion:
+- materialize a complete self-contained successor OBSERVABILITY specification;
+- align complete EVENT_SCHEMA, OBSERVABILITY_LOGGING, SIGNAL_ENGINE_EXECUTION and MODULE_INTERFACE successors;
+- resolve primary event-family semantics so internal candidate creation cannot be mistaken for external delivery;
+- update root/master version references completely where required;
+- keep runtime unchanged until promotion and re-audit.
