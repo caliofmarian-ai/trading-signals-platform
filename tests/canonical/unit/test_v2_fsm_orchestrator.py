@@ -68,7 +68,7 @@ def test_open_now_becomes_candidate_without_false_live_sent_state() -> None:
     assert result.accepted is True
     assert result.candidate_ready is True
     assert result.state_changed is False
-    assert result.reason == "SIGNAL_EVENT_NOT_ENABLED"
+    assert result.reason == "SIGNAL_EVENT_CANDIDATE_READY"
     assert result.next_state["per_symbol"]["EUR/USD"]["state"] == "WATCHLIST"
 
 
