@@ -2,7 +2,7 @@
 
 **Canonical Name:** CANONICAL_MASTER_INDEX  
 **Version:** 2.0.0  
-**Status:** PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+**Status:** PROPOSED COMPLETE INVENTORY/SEMANTIC SUCCESSOR — NOT ACTIVE CANONICAL — PROMOTION VERSION RESOLUTION REQUIRED  
 **Owner:** BinaryBot / DROPi Signals  
 **Proposed Path:** `send/docs/canonical/proposed/CANONICAL_MASTER_INDEX_v2.0.0.md`  
 **Governance Basis:** CHANGE_ID `20260831-01`; merged proposal PR #77
@@ -13,9 +13,13 @@
 
 ## 0. AUTHORITY AND PROMOTION STATUS
 
-This document is the complete proposed successor to the current canonical master index.
+This document is the complete inventory/semantic proposed successor to the current canonical master index.
 
 It describes the intended authority set after staged-execution/observability promotion. It does not become authoritative merely by being merged into `canonical/proposed`.
+
+The inventory and semantic roles are complete, but the file is **not promotion-ready yet**: rows currently showing otherwise-unchanged active versions are semantic base versions, not guaranteed final filename/version pins. If promotion preflight determines that an unchanged semantic authority needs a reference-only PATCH successor, this Master Index MUST be refreshed to the exact PATCH filename/version before active promotion.
+
+The same rule applies to `CANONICAL_STRATEGY_STACK_v2.0.0.md`: Root Stack and Master Index must agree on the exact final version pins installed in `canonical/active`.
 
 Until explicit promotion:
 - `CANONICAL_MASTER_INDEX_v1.0.0.md` remains the authoritative master index;
@@ -24,7 +28,7 @@ Until explicit promotion:
 - no runtime implementation is authorized by this proposal;
 - PR #73 remains blocked.
 
-On promotion this file is intended to become the single authoritative master documentation index.
+Only after reference-version resolution, atomic promotion and post-promotion re-audit is this file intended to become the single authoritative master documentation index.
 
 ---
 
@@ -37,7 +41,8 @@ This proposed index provides:
 - policy-vs-implementation authority relationships;
 - proposed successor versions for staged execution and observability;
 - treatment of proposed, transitional, supporting, superseded and deprecated documents;
-- explicit reconciliation of current inventory drift.
+- explicit reconciliation of current inventory drift;
+- a promotion-time requirement to resolve all reference-only PATCH version pins before activation.
 
 The index must be updated whenever active canonical documents are added, removed, promoted or superseded.
 
@@ -50,14 +55,14 @@ The index must be updated whenever active canonical documents are added, removed
 | Root Manifest | Cluster |
 |---|---|
 | `CANONICAL_STRATEGY_STACK_v2.0.0.md` | Strategy pipeline cluster — proposed successor |
-| `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md` | Admin/control-plane cluster — unchanged |
+| `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md` | Admin/control-plane cluster — unchanged semantic base version; final promotion pin subject to reference-only PATCH preflight |
 
 ### 2.2 System Policy and Architectural Authority
 
 | Policy / Architecture Authority | Implementation-Level Contract |
 |---|---|
 | `OBSERVABILITY_SPEC_v3.0.0.md` | `OBSERVABILITY_LOGGING_SPEC_v3.0.0.md` |
-| `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md` | `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md` |
+| `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md` | `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md` semantic base versions; final promotion pins subject to reference-only PATCH preflight |
 
 `EVENT_SCHEMA_SPEC_v3.0.0.md` remains the structural event-envelope/domain-schema authority within observability mechanics.
 
@@ -99,7 +104,8 @@ Rules of this inventory:
 - every functional canonical specification appears exactly once;
 - cross-domain relevance is described in notes rather than duplicate numbering;
 - the Master Index itself is the authority index and is not counted as a functional-domain specification;
-- `CANON_BATCH_EVALUATION_v2.0.0.md` remains a supporting/governance record and is not counted.
+- `CANON_BATCH_EVALUATION_v2.0.0.md` remains a supporting/governance record and is not counted;
+- entries marked unchanged represent semantic base authorities until promotion preflight resolves any required PATCH successors.
 
 ### Inventory reconciliation note
 
@@ -114,7 +120,7 @@ This proposed v2 removes that ambiguity by providing exactly 41 unique functiona
 | # | Canonical Filename | Version | Intended Status | Functional Domain | Authority Role |
 |---|---|---|---|---|---|
 | 1 | `CANONICAL_STRATEGY_STACK_v2.0.0.md` | 2.0.0 | Active Canonical after promotion | Strategy pipeline architecture | Root manifest for strategy cluster |
-| 2 | `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Admin/control-plane architecture | Root manifest for admin/control-plane cluster |
+| 2 | `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Admin/control-plane architecture | Root manifest for admin/control-plane cluster |
 
 ---
 
@@ -124,13 +130,13 @@ This proposed v2 removes that ambiguity by providing exactly 41 unique functiona
 
 | # | Canonical Filename | Version | Intended Status | Functional Domain | Authority Role |
 |---|---|---|---|---|---|
-| 3 | `ALGO_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Trading algorithm and strategy logic | Strategy evaluation algorithm authority |
-| 4 | `SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Support/resistance corridor detection | Corridor engine authority |
-| 5 | `TIME_MODEL_UNIFIED_CANON_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Unified time model | Time-model authority |
-| 6 | `DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md` | 1.0.0 | Active Canonical — unchanged | DecisionObject contract | Strategic output contract authority |
+| 3 | `ALGO_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Trading algorithm and strategy logic | Strategy evaluation algorithm authority |
+| 4 | `SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Support/resistance corridor detection | Corridor engine authority |
+| 5 | `TIME_MODEL_UNIFIED_CANON_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Unified time model | Time-model authority |
+| 6 | `DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md` | 1.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | DecisionObject contract | Strategic output contract authority |
 | 7 | `FSM_DECISION_ENGINE_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical after promotion | FSM lifecycle / exact-stage handoff | FSM operational/lifecycle authority |
 | 8 | `SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md` | 3.0.0 | Active Canonical after promotion | Signal execution | SignalEvent candidate and execution-outcome authority |
-| 9 | `RISK_MODEL_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Risk control and capital protection | Risk filtering/capital protection authority |
+| 9 | `RISK_MODEL_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Risk control and capital protection | Risk filtering/capital protection authority |
 
 `RISK_MODEL_v2.0.0.md` is cross-domain relevant to Security/Risk but is counted here once only.
 
@@ -145,39 +151,39 @@ This proposed v2 removes that ambiguity by providing exactly 41 unique functiona
 | 10 | `OBSERVABILITY_SPEC_v3.0.0.md` | 3.0.0 | Active Canonical after promotion | Observability architecture/policy | Policy and architectural authority |
 | 11 | `OBSERVABILITY_LOGGING_SPEC_v3.0.0.md` | 3.0.0 | Active Canonical after promotion | Logging/telemetry mechanics | Implementation-level logging authority |
 | 12 | `EVENT_SCHEMA_SPEC_v3.0.0.md` | 3.0.0 | Active Canonical after promotion | Event schema | Event envelope/family/domain-schema authority |
-| 13 | `DECISION_AUDIT_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Decision audit | Decision-audit authority |
-| 14 | `TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Temporal telemetry | Trade temporal telemetry authority |
+| 13 | `DECISION_AUDIT_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Decision audit | Decision-audit authority |
+| 14 | `TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Temporal telemetry | Trade temporal telemetry authority |
 
 ---
 
 ### 3.4 Signal Distribution Cluster
 
-*Distribution topology/architecture and entitlement/delivery policy remain unchanged by this remediation.*
+*Distribution topology/architecture and entitlement/delivery policy remain semantically unchanged by this remediation, but reference-only PATCH successors may be required.*
 
 | # | Canonical Filename | Version | Intended Status | Functional Domain | Authority Role |
 |---|---|---|---|---|---|
-| 15 | `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Distribution topology | Distribution architecture authority |
-| 16 | `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Entitlement/delivery | Distribution delivery-policy authority |
-| 17 | `CHANNEL_CONFIG_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Channel configuration | Channel/topic configuration authority |
-| 18 | `TELEGRAM_UX_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Telegram UX | User-facing Telegram presentation authority |
-| 19 | `AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Affiliate distribution | Affiliate distribution-model authority |
-| 20 | `SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Signal economics | Monetization/economics authority |
+| 15 | `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Distribution topology | Distribution architecture authority |
+| 16 | `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — PATCH successor expected for reference/wording clarification | Entitlement/delivery | Distribution delivery-policy authority |
+| 17 | `CHANNEL_CONFIG_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Channel configuration | Channel/topic configuration authority |
+| 18 | `TELEGRAM_UX_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Telegram UX | User-facing Telegram presentation authority |
+| 19 | `AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Affiliate distribution | Affiliate distribution-model authority |
+| 20 | `SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Signal economics | Monetization/economics authority |
 
 ---
 
 ### 3.5 Admin / Control-Plane / Human Comprehension Cluster
 
-*Governed by `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md`.*
+*Governed by `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md` semantic base authority; final version pins subject to promotion preflight.*
 
 | # | Canonical Filename | Version | Intended Status | Functional Domain | Authority Role |
 |---|---|---|---|---|---|
-| 21 | `ADMIN_CONTROL_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Admin command surface | Admin control implementation authority |
-| 22 | `ADMIN_OPERATIONS_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Admin operations | Day-to-day admin operations authority |
-| 23 | `ADMIN_TREE_MAP_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Admin hierarchy | Structural admin tree authority |
-| 24 | `CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Control panel / intelligence display | Control-panel hierarchy authority |
-| 25 | `ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Roles/permissions | Permission boundary authority |
-| 26 | `STRATEGY_PARAMETER_CONTROL_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Strategy parameter governance | Controlled parameter-change authority |
-| 27 | `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md` | 1.0.0 | Active Canonical — unchanged | Human comprehension / operational memory | Human-facing comprehension and self-explaining control-surface authority |
+| 21 | `ADMIN_CONTROL_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Admin command surface | Admin control implementation authority |
+| 22 | `ADMIN_OPERATIONS_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Admin operations | Day-to-day admin operations authority |
+| 23 | `ADMIN_TREE_MAP_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Admin hierarchy | Structural admin tree authority |
+| 24 | `CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Control panel / intelligence display | Control-panel hierarchy authority |
+| 25 | `ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Roles/permissions | Permission boundary authority |
+| 26 | `STRATEGY_PARAMETER_CONTROL_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Strategy parameter governance | Controlled parameter-change authority |
+| 27 | `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md` | 1.0.0 semantic base | Active Canonical — PATCH successor expected for schema/logging references | Human comprehension / operational memory | Human-facing comprehension and self-explaining control-surface authority |
 
 ---
 
@@ -185,12 +191,12 @@ This proposed v2 removes that ambiguity by providing exactly 41 unique functiona
 
 | # | Canonical Filename | Version | Intended Status | Functional Domain | Authority Role |
 |---|---|---|---|---|---|
-| 28 | `OUTCOME_TRACKING_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Outcome tracking | Outcome truth authority |
-| 29 | `PERFORMANCE_ANALYTICS_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Performance analytics | Performance analysis authority |
-| 30 | `RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Research/learning | Research methodology authority |
-| 31 | `STRATEGY_INTELLIGENCE_SYSTEM_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Strategy intelligence | Intelligence architecture authority |
-| 32 | `AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Autonomous evolution | Strategy-evolution authority |
-| 33 | `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Community feedback/privacy | Community feedback and privacy authority |
+| 28 | `OUTCOME_TRACKING_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Outcome tracking | Outcome truth authority |
+| 29 | `PERFORMANCE_ANALYTICS_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Performance analytics | Performance analysis authority |
+| 30 | `RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Research/learning | Research methodology authority |
+| 31 | `STRATEGY_INTELLIGENCE_SYSTEM_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Strategy intelligence | Intelligence architecture authority |
+| 32 | `AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Autonomous evolution | Strategy-evolution authority |
+| 33 | `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Community feedback/privacy | Community feedback and privacy authority |
 
 ---
 
@@ -198,11 +204,11 @@ This proposed v2 removes that ambiguity by providing exactly 41 unique functiona
 
 | # | Canonical Filename | Version | Intended Status | Functional Domain | Authority Role |
 |---|---|---|---|---|---|
-| 34 | `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | System architecture | Overall architectural classification/ownership authority |
+| 34 | `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | System architecture | Overall architectural classification/ownership authority |
 | 35 | `MODULE_INTERFACE_SPEC_v3.0.0.md` | 3.0.0 | Active Canonical after promotion | Module interfaces | Shared contracts and module-boundary authority |
-| 36 | `SYSTEM_INVARIANTS_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | System invariants | Non-negotiable invariant authority |
-| 37 | `FAILURE_RECOVERY_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Failure/recovery | Failure-mode and recovery authority |
-| 38 | `DEPLOYMENT_PROTOCOL_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Deployment safety | Deployment protocol authority |
+| 36 | `SYSTEM_INVARIANTS_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | System invariants | Non-negotiable invariant authority |
+| 37 | `FAILURE_RECOVERY_SPEC_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Failure/recovery | Failure-mode and recovery authority |
+| 38 | `DEPLOYMENT_PROTOCOL_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Deployment safety | Deployment protocol authority |
 
 ---
 
@@ -210,7 +216,7 @@ This proposed v2 removes that ambiguity by providing exactly 41 unique functiona
 
 | # | Canonical Filename | Version | Intended Status | Functional Domain | Authority Role |
 |---|---|---|---|---|---|
-| 39 | `SECURITY_MODEL_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Security architecture | Security/threat-protection authority |
+| 39 | `SECURITY_MODEL_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Security architecture | Security/threat-protection authority |
 
 `RISK_MODEL_v2.0.0.md` is cross-referenced here for Security/Risk relevance but remains unique inventory entry #9.
 
@@ -220,7 +226,7 @@ This proposed v2 removes that ambiguity by providing exactly 41 unique functiona
 
 | # | Canonical Filename | Version | Intended Status | Functional Domain | Authority Role |
 |---|---|---|---|---|---|
-| 40 | `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Governance/change control | Change governance/versioning authority |
+| 40 | `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin pending PATCH preflight | Governance/change control | Change governance/versioning authority |
 
 ---
 
@@ -228,7 +234,7 @@ This proposed v2 removes that ambiguity by providing exactly 41 unique functiona
 
 | # | Canonical Filename | Version | Intended Status | Functional Domain | Authority Role |
 |---|---|---|---|---|---|
-| 41 | `TEST_PLAN_v2.0.0.md` | 2.0.0 | Active Canonical — unchanged | Testing/validation | System test-plan authority |
+| 41 | `TEST_PLAN_v2.0.0.md` | 2.0.0 semantic base | Active Canonical — final pin subject to PATCH preflight | Testing/validation | System test-plan authority |
 
 ---
 
@@ -257,7 +263,7 @@ The Master Index itself is the index authority and is not counted as a functiona
 | `MODULE_INTERFACE_SPEC_v2.0.0.md` | `MODULE_INTERFACE_SPEC_v3.0.0.md` | MAJOR — FSMExecutionHandoff and candidate boundary |
 | `CANONICAL_MASTER_INDEX_v1.0.0.md` | `CANONICAL_MASTER_INDEX_v2.0.0.md` | MAJOR — authority-set/root-version update plus inventory reconciliation |
 
-All other functional authorities are unchanged semantically by this proposal, though some may require PATCH successors solely to repair references during active promotion.
+All other functional authorities remain semantically unchanged by this proposal, though some require PATCH successors solely for normative reference repair or non-structural wording clarification during active promotion.
 
 ---
 
@@ -266,15 +272,17 @@ All other functional authorities are unchanged semantically by this proposal, th
 A future active-promotion PR must be atomic at the documentation level.
 
 It must:
-1. install complete successor versions in `canonical/active`;
-2. move/retain prior versions in `canonical/superseded` with explicit historical status;
-3. ensure no old/new pair simultaneously claims active authority;
-4. patch-version active consumer documents where references to superseded filenames must change;
-5. activate the complete strategy root v2;
-6. activate this complete master index v2;
-7. preserve all 41 unique functional authorities;
-8. validate the active directory against the index;
-9. perform a fresh canonical re-audit before any runtime code change.
+1. determine all real reference-only active consumers from fresh `main`;
+2. assign PATCH successors only where an active normative reference/wording repair is required;
+3. refresh Root Stack v2 and this Master Index v2 to the exact final PATCH filenames/versions;
+4. install complete successor versions in `canonical/active`;
+5. move/retain prior versions in `canonical/superseded` with explicit historical status;
+6. ensure no old/new pair simultaneously claims active authority;
+7. activate the complete strategy root v2;
+8. activate this complete master index v2;
+9. preserve all 41 unique functional authorities;
+10. validate the active directory against the index;
+11. perform a fresh canonical re-audit before any runtime code change.
 
 Merge into `canonical/proposed` is not promotion.
 
@@ -289,6 +297,8 @@ According to active governance SemVer:
 - semantic/structural change requires appropriate MINOR/MAJOR classification.
 
 The promotion impact matrix must enumerate these consumers before active promotion.
+
+**Important:** until those PATCH successors are actually classified and assigned, any unchanged version shown in this proposed Master Index is a semantic base pin only. It MUST NOT be interpreted as the final promotion filename/version.
 
 ---
 
@@ -315,6 +325,7 @@ In particular, this promotion program does not claim to resolve unrelated deferr
 New promotion-specific risks:
 - stale active references to superseded filenames;
 - simultaneous old/new active authority;
+- Root/Master version pins not refreshed after PATCH successor assignment;
 - runtime schema still on legacy/generic event families after documentation promotion;
 - PR #73 code diverging from newly promoted semantics until separately remediated.
 
@@ -327,13 +338,13 @@ These are why code remains blocked until post-promotion re-audit.
 | Version | Date | Description |
 |---|---|---|
 | 1.0.0 | 2026-07-12 | Original reconciled authoritative master index. |
-| 2.0.0 | 2026-08-31 | Proposed complete successor for staged execution/observability authority update; reconciles unique inventory by including Human Comprehension and removing duplicate Risk numbering. |
+| 2.0.0 | 2026-08-31 | Proposed complete inventory/semantic successor for staged execution/observability authority update; reconciles unique inventory by including Human Comprehension and removing duplicate Risk numbering; promotion version pins remain unresolved until PATCH preflight. |
 
 ---
 
 ## 10. FINAL AUTHORITY PRINCIPLE
 
-After explicit promotion, this document is intended to be the single entry point for canonical documentation authority.
+After explicit version-pin resolution and canonical promotion, this document is intended to be the single entry point for canonical documentation authority.
 
 Before promotion, v1 remains authoritative.
 
