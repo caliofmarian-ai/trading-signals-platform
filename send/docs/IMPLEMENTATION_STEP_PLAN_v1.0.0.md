@@ -239,19 +239,18 @@ Implementation status (2026-08-30):
 
 ## 9. STEP 112 — DECISION FSM INTEGRATION
 
-FSM va primi:
+FSM primește `DecisionObject` și îl clasifică în familiile canonice:
 
-DecisionObject
+REJECT WAIT PREPARE CONFIRM OPEN_NOW DEGRADED BLOCKED
 
-și va produce stări:
+Implementation status (2026-08-31):
 
-NO_SIGNAL REJECT PRE CONFIRM OPEN_NOW
-
-Modificări:
-
-core/fsm_runtime.py
-
-FSM nu mai va depinde de strategy_v2.
+- implemented first as a deterministic shadow adapter in `core/fsm_decision_adapter.py`
+- maps canonical score bands only after checking runtime safety, hard blockers and degraded evidence
+- contradictory flags and evidence are rejected instead of being silently interpreted
+- `OPEN_NOW` is only a strategic interpretation; signal handoff remains explicitly disabled
+- does not persist FSM state, alter watchlists, call Signal Engine or authorize broker execution
+- the existing `core/fsm_runtime.py` remains unchanged until shadow comparison is complete
 
 ---
 
