@@ -583,7 +583,7 @@ def strategy_comparison_markup() -> dict[str, list[list[dict[str, str]]]]:
     """Read-only live-versus-canonical comparison navigation."""
     return _kb([
         [_btn("🔄 Refresh Comparison", "STRATEGY_COMPARE")],
-        [_knowledge_btn("decision_visibility", "STRATEGY_COMPARE")],
+        [_knowledge_btn("strategy_comparison", "STRATEGY_COMPARE")],
         [_btn("⬅️ Decision Visibility", "DECISION_VIS")],
         [_btn("⬅️ Admin", "HOME")],
     ])

@@ -431,6 +431,53 @@
       ]
     },
     {
+      "key": "strategy_comparison",
+      "title": "Strategy Comparison",
+      "identity": "A read-only comparison between the current decision engine and the new canonical strategy running in observation mode.",
+      "purpose": "It helps a human see whether both strategies read the same real market candles in the same way, without allowing the new strategy to send a signal or open a trade.",
+      "pipeline_position": "It reads the latest comparison already produced after market evaluation; it does not request market data, change either strategy, or participate in execution.",
+      "controls": [
+        "Refresh the latest available comparison.",
+        "Return to Decision Visibility or Admin."
+      ],
+      "consequences": [
+        "Agreement means both strategies reached the same observed direction or stage from the compared evidence.",
+        "Disagreement identifies an area for later analysis; it does not automatically prove that either strategy is correct."
+      ],
+      "limitations": [
+        "A score is a measurement of configured evidence, not a probability or guarantee of winning.",
+        "A single comparison cannot establish strategy quality, profitability, or readiness for real trading.",
+        "Missing, invalid, future-dated, or stale comparisons must not be presented as current market truth."
+      ],
+      "canonical_sources": [
+        "CANONICAL_STRATEGY_STACK_v1.0.0.md",
+        "DECISION_AUDIT_SPEC_v2.0.0.md",
+        "OBSERVABILITY_SPEC_v2.0.0.md"
+      ],
+      "glossary": [
+        [
+          "Current engine",
+          "The existing strategy_v2 decision process that remains operationally authoritative."
+        ],
+        [
+          "New strategy",
+          "The canonical strategy pipeline currently observing the same evidence in shadow mode."
+        ],
+        [
+          "Agreement",
+          "Both strategies reported the same normalized direction or decision stage for one comparison cycle."
+        ],
+        [
+          "Shadow mode",
+          "Observation and calculation without permission to hand off a signal or execute a trade."
+        ]
+      ],
+      "public": false,
+      "panel_actions": [
+        "STRATEGY_COMPARE"
+      ]
+    },
+    {
       "key": "distribution",
       "title": "Distribution Control",
       "identity": "The routing and publication-readiness surface for already eligible outputs.",

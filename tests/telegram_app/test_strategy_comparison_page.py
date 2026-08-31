@@ -53,6 +53,10 @@ def test_comparison_page_has_refresh_back_and_home() -> None:
     assert f"{CALLBACK_PREFIX}STRATEGY_COMPARE" in callbacks
     assert f"{CALLBACK_PREFIX}DECISION_VIS" in callbacks
     assert f"{CALLBACK_PREFIX}HOME" in callbacks
+    assert any(
+        callback.startswith("ADMIN_NAV:INFO:strategy_comparison:")
+        for callback in callbacks
+    )
 
 
 def test_current_comparison_is_explained_in_plain_language() -> None:
@@ -150,6 +154,7 @@ def test_navigation_action_reads_snapshot_and_returns_live_page(monkeypatch) -> 
     )
 
     assert result["text"].startswith("⚖️ Strategy Comparison")
+    assert "comparison between the current decision engine and the new canonical strategy" in result["text"]
     assert "Current engine says: CONFIRM" in result["text"]
     callbacks = _callbacks(result["reply_markup"])
     assert f"{CALLBACK_PREFIX}STRATEGY_COMPARE" in callbacks

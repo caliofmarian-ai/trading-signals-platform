@@ -1200,7 +1200,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         status_snapshot = _build_status_snapshot()
         return {
             "text": _format_surface(
-                "decision_visibility",
+                "strategy_comparison",
                 "⚖️ Strategy Comparison",
                 _surface_current_state(
                     render_strategy_comparison(
