@@ -131,11 +131,13 @@ All canonical events must preserve the v2 common envelope.
 ### 4.3 Correlation-capable fields
 
 As applicable:
+- `setup_correlation_id`
 - `signal_id`
 - `candidate_id`
 - `decision_audit_id`
 - `execution_attempt_id`
 - `symbol`
+- `direction`
 - `timeframe`
 - `candle_ts_utc`
 - `candle_ts_epoch`
@@ -265,11 +267,13 @@ For correlation with the module-interface contract:
 ## 7. SIGNAL IDENTITY AND CORRELATION RULES
 
 1. Every event has a globally unique `event_id`.
-2. The same trade idea must preserve one stable `signal_id` across PRE, CONFIRM, OPEN_NOW, signal-execution events, distribution events and outcome/reconciliation where applicable.
-3. `trace_id` should connect events belonging to the same logical runtime flow.
-4. `execution_attempt_id` must identify each materially relevant signal-engine execution attempt.
-5. A `signal_execution_result` must be linkable backward to the post-FSM handoff and forward to route events when distribution occurs.
-6. Missing contextual sufficiency is a schema-quality failure even when JSON is syntactically valid.
+2. Every materially relevant setup must preserve a `setup_correlation_id` or an explicitly equivalent canonical identifier across the layers needed for reconstruction.
+3. The same trade idea must preserve one stable `signal_id` across PRE, CONFIRM, OPEN_NOW, signal-execution events, distribution events and outcome/reconciliation where applicable.
+4. `trace_id` should connect events belonging to the same logical runtime flow.
+5. `execution_attempt_id` must identify each materially relevant signal-engine execution attempt.
+6. Direction/side must remain correlatable for a materially relevant setup and execution attempt.
+7. A `signal_execution_result` must be linkable backward to the post-FSM handoff and forward to route events when distribution occurs.
+8. Missing contextual sufficiency is a schema-quality failure even when JSON is syntactically valid.
 
 ---
 
@@ -280,7 +284,9 @@ For correlation with the module-interface contract:
 Purpose: preserve pre-FSM strategy truth after evaluation.
 
 Minimum context:
+- setup correlation id or canonical equivalent;
 - symbol;
+- direction/side where a directional candidate exists;
 - timeframe;
 - candle/evaluation timestamp.
 
@@ -320,7 +326,12 @@ Must preserve enough evidence to reconstruct:
 - prior state;
 - resulting state;
 - trigger/reason;
+- reason family where available;
+- execution readiness where relevant;
+- degradation/rejection status where relevant;
+- explanation snippets where relevant;
 - signal identity where applicable;
+- setup correlation and direction where applicable;
 - stage/request context where applicable;
 - invariant/suppression context;
 - persistence evidence where relevant.
@@ -345,27 +356,37 @@ It exists specifically so that `NOT_EMITTED`, `BLOCKED`, `SKIPPED`, `FAILED` and
 
 ### 10.2 Required correlation/context
 
-Minimum required where applicable:
+Minimum required for every materially relevant execution attempt:
 - `execution_attempt_id`;
+- `setup_correlation_id` or explicitly equivalent canonical setup identifier;
 - `symbol`;
+- `direction` / side where the setup is directional;
 - `timeframe` or equivalent temporal context;
 - evaluation/candle context;
 - `stage` for actionable-stage attempts;
-- `signal_id` for governed actionable lifecycle attempts;
 - trace/run context from the common envelope.
 
-For non-actionable decisions where no governed signal identity exists, `signal_id` may be absent, but setup/candidate correlation must remain sufficient.
+Additionally:
+- `signal_id` is required for governed PRE/CONFIRM/OPEN_NOW lifecycle attempts;
+- for non-actionable decisions where no governed signal identity exists, `signal_id` may be absent, but setup correlation must remain sufficient.
 
 ### 10.3 Required payload
 
 - `execution_outcome`: one of `EMITTED | NOT_EMITTED | BLOCKED | SKIPPED | FAILED | DEFERRED`;
 - `reason`: non-empty semantic reason;
+- `fsm_outcome`: explicit post-FSM outcome/state semantics;
+- `fsm_reason_family`: semantic reason family;
+- `fsm_execution_readiness`: boolean;
+- `fsm_degraded`: boolean;
+- `fsm_rejected`: boolean;
 - `fsm_handoff_disposition`: post-FSM disposition;
 - `fsm_handoff_reason`: post-FSM reason;
 - `destination_class`: explicit destination/channel class;
 - `payload_status`: whether a canonical SignalEvent/payload exists;
 - `distribution_authorized`: boolean;
 - `distribution_attempted`: boolean.
+
+Explanation snippets must be available directly or by a correlated FSM evidence reference when needed to explain the verdict.
 
 ### 10.4 Destination rule
 
@@ -418,14 +439,15 @@ This event must not be used merely because a `SignalEvent` candidate object was 
 It represents governed emission under the active signal-execution contract and must be correlated to the execution result that allowed it.
 
 Minimum context:
+- setup correlation id;
 - signal_id;
 - symbol;
+- direction;
 - timeframe;
 - stage;
 - candle/evaluation context.
 
 Payload should include:
-- direction;
 - score_total;
 - buffer mode/value semantics;
 - expiry/timing semantics;
@@ -566,16 +588,18 @@ Code must not pre-empt canonical promotion.
 
 ## 18. INTEGRITY RULES
 
-1. Signal identity remains stable across one trade idea.
-2. Strategy, FSM, execution and distribution truth remain separate.
-3. Dedup is observable.
-4. Governed state mutation is reconstructable.
-5. Entitlement mutation is provable.
-6. Persisted evidence is not silently rewritten.
-7. Schema-invalid events are not trusted as canonical evidence.
-8. A stage that was blocked or suppressed cannot be represented as an accepted SignalEvent candidate.
-9. OPEN_NOW candidacy is not successful delivery.
-10. No externally visible stage may lack corresponding structured upstream and distribution evidence.
+1. Setup correlation is sufficient to reconstruct every materially relevant setup across applicable layers.
+2. Signal identity remains stable across one trade idea.
+3. Direction/side remains correlatable across the applicable decision/FSM/execution chain.
+4. Strategy, FSM, execution and distribution truth remain separate.
+5. Dedup is observable.
+6. Governed state mutation is reconstructable.
+7. Entitlement mutation is provable.
+8. Persisted evidence is not silently rewritten.
+9. Schema-invalid events are not trusted as canonical evidence.
+10. A stage that was blocked or suppressed cannot be represented as an accepted SignalEvent candidate.
+11. OPEN_NOW candidacy is not successful delivery.
+12. No externally visible stage may lack corresponding structured upstream and distribution evidence.
 
 ---
 
@@ -586,7 +610,8 @@ v3.0.0 preserves the v2 event-envelope, correlation, privacy, distribution, outc
 The principal changes are:
 - new `signal_execution_result` family;
 - explicit execution-outcome enum;
-- explicit FSM-handoff disposition correlation;
+- explicit FSM semantic output and handoff-disposition correlation;
+- explicit setup-correlation and direction requirements;
 - explicit destination/payload trace semantics before route selection;
 - strict separation of strategy/FSM/execution/distribution truths;
 - migration rule away from generic runtime `decision`/`signal_event`/`tier_*` families as hidden authority.
