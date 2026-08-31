@@ -123,9 +123,9 @@ def derive_execution_time(
     open_now = None
     if fsm.outcome == "OPEN_NOW":
         candidate = model_expiry * (1 - calibration.pressure_bias)
-        open_now = min(max(candidate, confirm_min), confirm_max)
-        if not confirm_min <= open_now <= confirm_max:
+        if not confirm_min <= candidate <= confirm_max:
             raise ExecutionModelError("OPEN_NOW expiry violates the canonical consistency rule")
+        open_now = candidate
 
     return ExecutionTimeResult(
         schema_version=SCHEMA_VERSION,

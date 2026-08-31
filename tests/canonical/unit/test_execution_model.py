@@ -59,6 +59,14 @@ def test_open_now_is_exact_and_inside_the_confirm_range() -> None:
     assert result.signal_handoff_ready is False
 
 
+def test_open_now_outside_confirm_range_is_rejected_not_silently_clamped() -> None:
+    decision = _decision("SCORE_OPEN_BAND")
+    inconsistent = ExecutionCalibration(0.1, 0.5, 2.0, 15.0, "inconsistent-test")
+
+    with pytest.raises(ExecutionModelError, match="consistency rule"):
+        derive_execution_time(decision, interpret_decision(decision), inconsistent)
+
+
 def test_missing_calibration_remains_explicitly_unavailable() -> None:
     decision = _decision("SCORE_OPEN_BAND")
     result = derive_execution_time(decision, interpret_decision(decision))
