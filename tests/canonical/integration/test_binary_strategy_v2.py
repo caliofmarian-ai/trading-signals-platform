@@ -47,6 +47,7 @@ def test_v2_pipeline_preserves_one_real_evaluation(canonical_runtime_root: Path)
     assert result.decision.setup.cycle_id == "cycle-full"
     assert result.decision.setup.source == "binary_strategy_v2"
     assert result.decision.compatibility_mode is False
+    assert result.decision.kind in {"NO_SIGNAL", "PRE", "CONFIRM", "OPEN_NOW", "REJECT"}
     assert result.strategy_version == STRATEGY_VERSION == "2.0.0"
     assert result.canonical_spec == CANONICAL_SPEC == "ALGO_SPEC_v2.0.0"
     assert result.signal_handoff_ready is False

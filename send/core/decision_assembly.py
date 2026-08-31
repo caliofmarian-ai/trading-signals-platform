@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from hashlib import sha256
 from typing import Any, Iterator, Mapping
 
 from .decision_object import (
@@ -43,6 +44,28 @@ class FrozenInputs(Mapping[str, Any]):
 
     def __deepcopy__(self, memo: dict[int, Any]) -> "FrozenInputs":
         return self
+
+
+_TIER_TO_DECISION_KIND = {
+    "BELOW_PRE": "NO_SIGNAL",
+    "SCORE_PRE_BAND": "PRE",
+    "SCORE_CONFIRM_BAND": "CONFIRM",
+    "SCORE_OPEN_BAND": "OPEN_NOW",
+}
+
+
+def _decision_kind(scoring: ScoringResult) -> str:
+    if not scoring.eligible or scoring.hard_blockers:
+        return "REJECT"
+    try:
+        return _TIER_TO_DECISION_KIND[scoring.context.tier]
+    except KeyError as exc:
+        raise DecisionAssemblyUnavailable("score tier cannot form a canonical decision kind") from exc
+
+
+def _stable_signal_id(*, symbol: str, timeframe: str, candle_ts: int) -> str:
+    identity = f"binary-strategy-v2|{symbol.upper()}|{timeframe.upper()}|{candle_ts}"
+    return f"sig-v2-{sha256(identity.encode('utf-8')).hexdigest()[:24]}"
 
 
 def assemble_decision(
@@ -122,12 +145,25 @@ def assemble_decision(
         "unstable_market": unstable_market,
         "hard_blockers": blockers,
     })
+    kind = _decision_kind(scoring)
+    normalized_timeframe = timeframe.strip().upper()
+    signal_id = (
+        _stable_signal_id(
+            symbol=market.symbol,
+            timeframe=normalized_timeframe,
+            candle_ts=market.evaluated_ts,
+        )
+        if kind in {"PRE", "CONFIRM", "OPEN_NOW"}
+        else None
+    )
     return DecisionObject(
+        kind=kind,
+        signal_id=signal_id,
         setup=SetupContext(
             symbol=market.symbol,
             direction=market.direction_bias,
             evaluated_ts=market.evaluated_ts,
-            timeframe=timeframe.strip().upper(),
+            timeframe=normalized_timeframe,
             cycle_id=cycle_id.strip(),
             source=source,
         ),

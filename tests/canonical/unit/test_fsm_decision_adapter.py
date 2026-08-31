@@ -16,7 +16,15 @@ from send.core.fsm_decision_adapter import FSMInterpretationError, interpret_dec
 
 
 def _decision(tier: str = "SCORE_CONFIRM_BAND") -> DecisionObject:
+    kind = {
+        "BELOW_PRE": "NO_SIGNAL",
+        "SCORE_PRE_BAND": "PRE",
+        "SCORE_CONFIRM_BAND": "CONFIRM",
+        "SCORE_OPEN_BAND": "OPEN_NOW",
+    }.get(tier, "CONFIRM")
     return DecisionObject(
+        kind=kind,
+        signal_id=None if kind == "NO_SIGNAL" else "sig-v2-test",
         setup=SetupContext("EUR/USD", "BUY", 1_700_000_000, "M1", "cycle-1", "shadow-test"),
         market_context=MarketContext(1.1, 0.001, 0.002, "UP", "NORMAL", "LOW"),
         structure=StructureContext(1.09, 1.12, 1.09, 1.12, 0.03, 0.02, "INSIDE", "VALID"),
@@ -50,6 +58,8 @@ def test_strategic_hard_blockers_override_a_high_score() -> None:
     decision = _decision("SCORE_OPEN_BAND")
     decision = replace(
         decision,
+        kind="REJECT",
+        signal_id=None,
         structure=replace(decision.structure, feasibility_state="CONSTRAINED"),
         strategic_flags=replace(decision.strategic_flags, valid_structure=False, rejectable=True),
         reject=RejectContext("Insufficient directional room.", "STRUCTURE", "CORRIDOR", ("room",)),
@@ -81,13 +91,13 @@ def test_degraded_setup_never_becomes_actionable() -> None:
     assert result.signal_handoff_ready is False
 
 
-def test_unknown_score_tier_fails_closed_as_degraded() -> None:
+def test_decision_kind_remains_the_fsm_authority_when_score_vocabulary_evolves() -> None:
     decision = _decision("FUTURE_TIER")
 
     result = interpret_decision(decision)
 
-    assert result.outcome == "DEGRADED"
-    assert result.reason_family == "UNKNOWN_SCORE_TIER"
+    assert result.outcome == "CONFIRM"
+    assert result.reason_family == "CANONICAL_SCORE_BAND"
 
 
 def test_contradictory_decision_evidence_is_rejected() -> None:

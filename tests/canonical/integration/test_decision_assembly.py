@@ -55,6 +55,8 @@ def test_complete_stack_builds_one_pre_fsm_decision(canonical_runtime_root: Path
     assert decision.time == time.context
     assert decision.score == scoring.context
     assert decision.fsm_inputs["strategy_eligible"] is True
+    assert decision.kind in {"PRE", "CONFIRM", "OPEN_NOW"}
+    assert decision.signal_id.startswith("sig-v2-")
     assert not hasattr(decision, "fsm_state")
     assert not hasattr(decision, "signal")
 
@@ -72,6 +74,8 @@ def test_blockers_are_materialized_as_reject_semantics(canonical_runtime_root: P
     assert "MARKET_NOISE_UNSTABLE" in decision.reject.hard_blockers
     assert decision.reject.stage == "PRE_FSM"
     assert decision.fsm_inputs["strategy_eligible"] is False
+    assert decision.kind == "REJECT"
+    assert decision.signal_id is None
 
 
 def test_decision_serializes_to_plain_json_ready_evidence(canonical_runtime_root: Path) -> None:
@@ -81,6 +85,8 @@ def test_decision_serializes_to_plain_json_ready_evidence(canonical_runtime_root
     encoded = json.dumps(payload, sort_keys=True)
     assert '"producer": "binary_strategy_v2_decision_assembly"' in encoded
     assert payload["compatibility_mode"] is False
+    assert payload["kind"] in {"PRE", "CONFIRM", "OPEN_NOW"}
+    assert payload["signal_id"].startswith("sig-v2-")
     assert isinstance(payload["score"]["components"], dict)
     assert isinstance(payload["fsm_inputs"], dict)
     assert isinstance(payload["reject"]["hard_blockers"], list)
@@ -107,7 +113,31 @@ def test_assembly_is_deterministic_and_does_not_mutate_layers(canonical_runtime_
     first = assemble_decision(*stack, timeframe="M1", cycle_id="cycle-repeat")
     second = assemble_decision(*stack, timeframe="M1", cycle_id="cycle-repeat")
     assert first == second
+    assert first.signal_id == second.signal_id
     assert stack[0].context.target_distance is None
+
+
+def test_signal_identity_follows_real_opportunity_not_runtime_cycle_id(
+    canonical_runtime_root: Path,
+) -> None:
+    stack = _stack(canonical_runtime_root)
+    first = assemble_decision(*stack, timeframe="M1", cycle_id="runtime-cycle-a")
+    second = assemble_decision(*stack, timeframe="M1", cycle_id="runtime-cycle-b")
+    assert first.signal_id == second.signal_id
+
+    later_market = replace(stack[0], evaluated_ts=stack[0].evaluated_ts + 60)
+    later_corridor = replace(stack[1], evaluated_ts=stack[1].evaluated_ts + 60)
+    later_time = replace(stack[2], evaluated_ts=stack[2].evaluated_ts + 60)
+    later_scoring = replace(stack[3], evaluated_ts=stack[3].evaluated_ts + 60)
+    later = assemble_decision(
+        later_market,
+        later_corridor,
+        later_time,
+        later_scoring,
+        timeframe="M1",
+        cycle_id="runtime-cycle-c",
+    )
+    assert later.signal_id != first.signal_id
 
 
 @pytest.mark.parametrize(

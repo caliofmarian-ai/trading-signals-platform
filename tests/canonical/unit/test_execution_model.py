@@ -21,7 +21,15 @@ from send.core.fsm_decision_adapter import interpret_decision
 
 
 def _decision(tier: str) -> DecisionObject:
+    kind = {
+        "BELOW_PRE": "NO_SIGNAL",
+        "SCORE_PRE_BAND": "PRE",
+        "SCORE_CONFIRM_BAND": "CONFIRM",
+        "SCORE_OPEN_BAND": "OPEN_NOW",
+    }[tier]
     return DecisionObject(
+        kind=kind,
+        signal_id=None if kind == "NO_SIGNAL" else "sig-v2-test",
         setup=SetupContext("EUR/USD", "BUY", 1_700_000_000, "M1", "cycle-1", "test"),
         market_context=MarketContext(1.1, 0.001, 0.002, "UP", "NORMAL", "LOW"),
         structure=StructureContext(1.09, 1.12, 1.09, 1.12, 0.03, 0.02, "INSIDE", "VALID"),
