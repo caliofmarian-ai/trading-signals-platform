@@ -2,47 +2,49 @@
 
 Path: /opt/binarybot/docs/canonical/proposed/CANONICAL_STRATEGY_STACK_v2.0.0.md  
 Version: 2.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: PROPOSED COMPLETE SEMANTIC SUCCESSOR — NOT ACTIVE CANONICAL — PROMOTION REFERENCE-VERSION RESOLUTION REQUIRED  
 Owner: BinaryBot / DROPi Signals  
 Scope: Root strategy stack, canonical authority order, module contract chain, staged execution handoff, document precedence
 
 Supersession Intent: CANONICAL_STRATEGY_STACK_v1.0.0.md
 
 Linked Documents:
-- canonical/active/ALGO_SPEC_v2.0.0.md
-- canonical/active/TIME_MODEL_UNIFIED_CANON_v2.0.0.md
-- canonical/active/SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md
-- canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md
-- canonical/proposed/FSM_DECISION_ENGINE_SPEC_v2.0.0.md
-- canonical/proposed/SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md
-- canonical/proposed/OBSERVABILITY_SPEC_v3.0.0.md
-- canonical/proposed/MODULE_INTERFACE_SPEC_v3.0.0.md
-- canonical/proposed/EVENT_SCHEMA_SPEC_v3.0.0.md
-- canonical/proposed/OBSERVABILITY_LOGGING_SPEC_v3.0.0.md
-- canonical/active/SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md
-- canonical/active/SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md
+- ALGO_SPEC_v2.0.0.md
+- TIME_MODEL_UNIFIED_CANON_v2.0.0.md
+- SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md
+- DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md
+- FSM_DECISION_ENGINE_SPEC_v2.0.0.md
+- SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md
+- OBSERVABILITY_SPEC_v3.0.0.md
+- MODULE_INTERFACE_SPEC_v3.0.0.md
+- EVENT_SCHEMA_SPEC_v3.0.0.md
+- OBSERVABILITY_LOGGING_SPEC_v3.0.0.md
+- SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md
+- SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md
 
 Depends on:
-- canonical/active/ALGO_SPEC_v2.0.0.md
-- canonical/active/TIME_MODEL_UNIFIED_CANON_v2.0.0.md
-- canonical/active/SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md
-- canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md
-- canonical/proposed/FSM_DECISION_ENGINE_SPEC_v2.0.0.md
-- canonical/proposed/SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md
-- canonical/proposed/OBSERVABILITY_SPEC_v3.0.0.md
-- canonical/proposed/MODULE_INTERFACE_SPEC_v3.0.0.md
-- canonical/proposed/EVENT_SCHEMA_SPEC_v3.0.0.md
-- canonical/proposed/OBSERVABILITY_LOGGING_SPEC_v3.0.0.md
-- canonical/active/SYSTEM_INVARIANTS_v2.0.0.md
-- canonical/active/GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md
+- ALGO_SPEC_v2.0.0.md
+- TIME_MODEL_UNIFIED_CANON_v2.0.0.md
+- SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md
+- DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md
+- FSM_DECISION_ENGINE_SPEC_v2.0.0.md
+- SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md
+- OBSERVABILITY_SPEC_v3.0.0.md
+- MODULE_INTERFACE_SPEC_v3.0.0.md
+- EVENT_SCHEMA_SPEC_v3.0.0.md
+- OBSERVABILITY_LOGGING_SPEC_v3.0.0.md
+- SYSTEM_INVARIANTS_v2.0.0.md
+- GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md
 
 ---
 
 ## 0. AUTHORITY AND PROMOTION STATUS
 
-This document is a complete proposed successor to `CANONICAL_STRATEGY_STACK_v1.0.0.md`.
+This document is a complete semantic proposed successor to `CANONICAL_STRATEGY_STACK_v1.0.0.md`.
 
 It defines the intended strategy-cluster authority after the staged-execution/observability remediation is promoted. It does not become authoritative merely by being merged into `canonical/proposed`.
+
+Its semantic content is complete, but it is **not promotion-ready yet**: exact filename/version pins for otherwise-unchanged active documents that require reference-only PATCH successors must first be resolved during promotion preflight. Before activation, this root manifest MUST be refreshed to those final PATCH filenames wherever a normative dependency/reference points to such a document.
 
 Until explicit promotion:
 - `CANONICAL_STRATEGY_STACK_v1.0.0.md` remains the active root manifest;
@@ -143,6 +145,8 @@ Aceste șapte documente formează stack-ul strategic root intenționat după pro
 
 Nu se adaugă un document separat de handoff: ownership-ul rămâne în FSM, Signal Engine și Module Interface, conform `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md`.
 
+Any otherwise-unchanged document in this list that receives a PATCH successor solely for normative reference repair must be replaced here by its final PATCH filename before promotion.
+
 ---
 
 ## 5. SUPPORTING ACTIVE/PROPOSED CANONICAL CONTRACTS
@@ -160,6 +164,8 @@ Implementarea stack-ului trebuie să respecte și:
 - `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md` — change governance.
 
 Supporting non-canonical audit/planning documents may guide reconciliation but cannot override active canonical truth.
+
+The exact version pins above are semantic-base references until promotion preflight resolves any required reference-only PATCH successors. Final promotion MUST update this manifest to the exact versions installed in `canonical/active`.
 
 ---
 
@@ -377,6 +383,8 @@ Root: `OBSERVABILITY_SPEC_v3.0.0.md`
 
 Signal engine cannot override distribution route truth.
 
+Before promotion, any reference-only PATCH successors created for these otherwise-unchanged authorities MUST replace the semantic-base filenames in this precedence section.
+
 ---
 
 ## 12. ROOT IMPLEMENTATION RULE
@@ -429,7 +437,7 @@ Nu pot fi primary implementation source după supersession.
 
 Un proposed document poate fi:
 - design material;
-- complete successor candidate;
+- complete semantic successor candidate;
 - review target.
 
 El devine binding numai după explicit promotion și active-index reconciliation.
@@ -440,15 +448,16 @@ El devine binding numai după explicit promotion și active-index reconciliation
 
 Pentru staged execution remediation, promotion trebuie să fie atomic la nivel documentar:
 1. finalize complete successor specs;
-2. finalize this complete root manifest;
-3. finalize complete Master Index successor;
-4. enumerate and prepare all active reference-only repairs;
-5. move/supersede old versions through governance;
-6. install new versions in `canonical/active`;
-7. repair all active references;
-8. validate unique authority and inventory;
-9. re-audit active canon;
-10. only then authorize a separate runtime code remediation.
+2. finalize this complete semantic root manifest;
+3. finalize complete inventory/semantic Master Index successor;
+4. enumerate and prepare all active reference-only PATCH successors;
+5. resolve the exact final PATCH filenames/versions in Root Stack and Master Index;
+6. move/supersede old versions through governance;
+7. install new versions in `canonical/active`;
+8. repair all active references;
+9. validate unique authority and inventory;
+10. re-audit active canon;
+11. only then authorize a separate runtime code remediation.
 
 No distribution/broker activation is implied.
 
@@ -495,4 +504,4 @@ Documentația canonică trebuie să fie:
 - mai rapid clarificată decât codul;
 - lipsită de ownership duplicat.
 
-Acest document este manifestul complet propus pentru strategia v2. El devine autoritate numai prin promotion explicit și re-audit.
+Acest document este manifestul complet semantic propus pentru strategia v2. El devine promotion-ready numai după final PATCH-reference version resolution și devine autoritate numai prin promotion explicit și re-audit.
