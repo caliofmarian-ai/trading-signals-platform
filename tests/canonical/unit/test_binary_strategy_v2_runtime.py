@@ -4,6 +4,7 @@ import copy
 import importlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -76,3 +77,92 @@ def test_runtime_uses_v2_evaluation_and_never_routes_it(monkeypatch: pytest.Monk
     assert len(errors) == 1
     assert "object has no attribute 'decision'" in errors[0]["error"]
     # Even a malformed V2 evaluation fails closed before distribution.
+
+
+def test_runtime_records_governed_execution_gate_without_distribution(monkeypatch: pytest.MonkeyPatch) -> None:
+    signal_engine = importlib.import_module("core.signal_engine")
+    market_client = importlib.import_module("runtime.market_client")
+    m1, m5 = _candles(220, "M1", 60), _candles(220, "M5", 300)
+    events: list[dict] = []
+    errors: list[dict] = []
+    calls: list[tuple] = []
+
+    decision = SimpleNamespace(
+        kind="OPEN_NOW",
+        signal_id="sig-v2-live-observability",
+        setup=SimpleNamespace(evaluated_ts=1_720_010_000, direction="BUY"),
+        score=SimpleNamespace(total=86.0),
+        to_dict=lambda: {"kind": "OPEN_NOW", "signal_id": "sig-v2-live-observability"},
+    )
+    fsm = SimpleNamespace(
+        outcome="OPEN_NOW",
+        reason_family="EXECUTION_READY",
+        execution_ready=True,
+        reasons=(),
+        explanation="Canonical OPEN_NOW candidate.",
+    )
+    evaluation = SimpleNamespace(
+        strategy_version="2.0.0",
+        canonical_spec="ALGO_SPEC_v2.0.0",
+        cycle_id="cycle-live-observability",
+        decision=decision,
+        fsm=fsm,
+        signal_handoff_ready=False,
+    )
+    persistent = SimpleNamespace(
+        accepted=True,
+        state_changed=False,
+        transition_event=None,
+        candidate_ready=True,
+        reason="SIGNAL_EVENT_CANDIDATE_READY",
+    )
+    execution_trace = {
+        "outcome": "DEFERRED",
+        "reason": "V2_DISTRIBUTION_NOT_ENABLED",
+        "signal_id": decision.signal_id,
+        "stage": "OPEN_NOW",
+        "execution_attempt_id": "binary-v2:sig-v2-live-observability:OPEN_NOW:1800000000",
+        "created_ts": 1_800_000_000,
+        "distribution_allowed": False,
+        "candidate": {"signal_id": decision.signal_id, "stage": "OPEN_NOW"},
+    }
+    execution = SimpleNamespace(
+        outcome="DEFERRED",
+        reason="V2_DISTRIBUTION_NOT_ENABLED",
+        distribution_allowed=False,
+        to_dict=lambda: execution_trace,
+    )
+
+    monkeypatch.setattr(signal_engine, "_load_settings", lambda: {"buffer_mode": "MEDIUM"})
+    monkeypatch.setattr(signal_engine, "_load_algo_params", lambda: {})
+    monkeypatch.setattr(signal_engine, "_load_active_symbols", lambda: ["EUR/USD"])
+    monkeypatch.setattr(signal_engine.fsm_runtime, "load_state", lambda: {})
+    monkeypatch.setattr(signal_engine.fsm_runtime, "reconcile_state", lambda state, now_ts, active_symbols: (state, []))
+    monkeypatch.setattr(market_client, "configured_symbols", lambda: None)
+    monkeypatch.setattr(market_client, "get_candles", lambda symbol, interval: list(reversed(m1 if interval == "1min" else m5)))
+    monkeypatch.setattr(signal_engine, "decide", lambda **kwargs: evaluation)
+    monkeypatch.setattr(signal_engine, "advance_persistent_fsm", lambda state, decision_arg, now_ts: persistent)
+
+    def fake_prepare(persistent_arg, decision_arg, *, buffer_mode, created_ts):
+        calls.append((persistent_arg, decision_arg, buffer_mode, created_ts))
+        return execution
+
+    monkeypatch.setattr(signal_engine, "prepare_signal_execution", fake_prepare)
+    monkeypatch.setattr(signal_engine.distribution_router, "route", lambda *_args: (_ for _ in ()).throw(AssertionError("distribution must remain blocked")))
+    monkeypatch.setattr(signal_engine.observability_logger, "log_event", events.append)
+    monkeypatch.setattr(signal_engine.observability_logger, "log_error", errors.append)
+
+    signal_engine.run_once(now_ts=1_800_000_000)
+
+    assert errors == []
+    assert calls == [(persistent, decision, "MEDIUM", 1_800_000_000)]
+    assert len(events) == 1
+    event = events[0]
+    assert event["event_type"] == "decision"
+    assert event["data"]["decision_kind"] == "OPEN_NOW"
+    assert event["data"]["signal_id"] == "sig-v2-live-observability"
+    assert event["data"]["debug"]["execution_outcome"] == "DEFERRED"
+    assert event["data"]["debug"]["execution_reason"] == "V2_DISTRIBUTION_NOT_ENABLED"
+    assert event["data"]["debug"]["distribution_allowed"] is False
+    assert event["data"]["debug"]["execution_gate"] == execution_trace
+    assert "strategy" not in event["data"]
