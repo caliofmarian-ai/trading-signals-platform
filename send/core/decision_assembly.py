@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from hashlib import sha256
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, Optional
 
 from .decision_object import (
     DecisionObject,
@@ -77,6 +77,7 @@ def assemble_decision(
     timeframe: str,
     cycle_id: str,
     source: str = "binary_strategy_v2",
+    opportunity_signal_id: Optional[str] = None,
 ) -> DecisionObject:
     """Create the standardized pre-FSM contract without making an FSM decision."""
 
@@ -94,6 +95,10 @@ def assemble_decision(
         raise DecisionAssemblyUnavailable("cycle_id is required")
     if corridor.direction != market.direction_bias:
         raise DecisionAssemblyUnavailable("market and corridor direction disagree")
+    if opportunity_signal_id is not None and (
+        not isinstance(opportunity_signal_id, str) or not opportunity_signal_id.strip()
+    ):
+        raise DecisionAssemblyUnavailable("opportunity_signal_id must be non-empty text")
 
     valid_structure = corridor.structure.feasibility_state == "VALID"
     feasible_time = time.temporally_feasible and time.context.time_state == "READY"
@@ -148,7 +153,7 @@ def assemble_decision(
     kind = _decision_kind(scoring)
     normalized_timeframe = timeframe.strip().upper()
     signal_id = (
-        _stable_signal_id(
+        opportunity_signal_id.strip() if opportunity_signal_id is not None else _stable_signal_id(
             symbol=market.symbol,
             timeframe=normalized_timeframe,
             candle_ts=market.evaluated_ts,

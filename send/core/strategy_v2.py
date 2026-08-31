@@ -79,6 +79,7 @@ def decide(
         timeframe=timeframe,
         cycle_id=resolved_cycle_id,
         source="binary_strategy_v2",
+        opportunity_signal_id=supplied_context.get("opportunity_signal_id"),
     )
     fsm = interpret_decision(decision, runtime_blockers=runtime_blockers)
     execution_time = derive_execution_time(decision, fsm, execution_calibration)

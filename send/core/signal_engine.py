@@ -32,6 +32,7 @@ from core import observability_logger
 from state_store import state_store as runtime_state_store
 
 from core.strategy_v2 import decide
+from core.v2_fsm_orchestrator import advance_persistent_fsm, current_opportunity_signal_id
 
 
 ACTIVE_SYMBOLS_PATH = config_path("active_symbols.json")
@@ -321,10 +322,25 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                 params=params,
                 buffer_mode=buffer_mode,
                 want_open_now=bool(effective_in_focus),
-                context={"decision_timeframe": "M1"},
+                context={
+                    "decision_timeframe": "M1",
+                    "opportunity_signal_id": current_opportunity_signal_id(state, symbol),
+                },
             )
             decision = evaluation.decision
             fsm = evaluation.fsm
+            persistent_fsm = advance_persistent_fsm(state, decision, now_ts=now_ts)
+            if persistent_fsm.state_changed:
+                state = persistent_fsm.next_state
+                fsm_runtime.save_state(state)
+            if persistent_fsm.transition_event is not None:
+                observability_logger.log_event(
+                    observability_logger.build_event(
+                        "fsm_transition",
+                        persistent_fsm.transition_event,
+                        source={"module": "signal_engine", "function": "run_once"},
+                    )
+                )
 
             ev = observability_logger.build_event(
                 "decision",
@@ -334,6 +350,8 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                     "strategy_version": evaluation.strategy_version,
                     "canonical_spec": evaluation.canonical_spec,
                     "decision_kind": fsm.outcome,
+                    "strategic_kind": decision.kind,
+                    "signal_id": decision.signal_id,
                     "cycle_id": evaluation.cycle_id,
                     "score_total": decision.score.total,
                     "buffer_mode": buffer_mode,
@@ -349,6 +367,12 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                         "execution_ready": fsm.execution_ready,
                         "reasons": list(fsm.reasons),
                         "explanation": fsm.explanation,
+                    },
+                    "persistent_fsm": {
+                        "accepted": persistent_fsm.accepted,
+                        "state_changed": persistent_fsm.state_changed,
+                        "candidate_ready": persistent_fsm.candidate_ready,
+                        "reason": persistent_fsm.reason,
                     },
                 },
                 source={"module": "signal_engine", "function": "run_once"},

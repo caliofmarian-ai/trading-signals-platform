@@ -140,6 +140,19 @@ def test_signal_identity_follows_real_opportunity_not_runtime_cycle_id(
     assert later.signal_id != first.signal_id
 
 
+def test_existing_fsm_opportunity_identity_survives_later_candles(
+    canonical_runtime_root: Path,
+) -> None:
+    stack = _stack(canonical_runtime_root)
+    decision = assemble_decision(
+        *stack,
+        timeframe="M1",
+        cycle_id="later-cycle",
+        opportunity_signal_id="sig-v2-existing-opportunity",
+    )
+    assert decision.signal_id == "sig-v2-existing-opportunity"
+
+
 @pytest.mark.parametrize(
     ("tier", "expected"),
     [
