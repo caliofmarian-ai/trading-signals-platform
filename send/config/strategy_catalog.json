@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0.0",
+  "catalog_id": "trading-strategy-catalog",
+  "selected_strategy_id": "binary_canonical",
+  "strategies": [
+    {
+      "id": "binary_canonical",
+      "name": "Binary Trading",
+      "trade_type": "BINARY_OPTIONS",
+      "implementation": "CANONICAL_STRATEGY_STACK_v1.0.0",
+      "availability": "AVAILABLE",
+      "description": "The canonical BinaryBot strategy for binary-trading decisions."
+    },
+    {
+      "id": "forex_future",
+      "name": "Forex Strategy",
+      "trade_type": "FOREX",
+      "implementation": "NOT_IMPLEMENTED",
+      "availability": "UNAVAILABLE",
+      "description": "Future objective for Forex trading and separately governed copy-trading use cases."
+    }
+  ]
+}

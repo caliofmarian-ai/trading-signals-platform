@@ -10,7 +10,8 @@ if str(SEND_DIR) not in sys.path:
     sys.path.insert(0, str(SEND_DIR))
 
 from core.admin_views import render_strategy_comparison
-from core.telegram_admin_ui import CALLBACK_PREFIX, decision_visibility_markup, strategy_comparison_markup
+from core.strategy_catalog import load_strategy_catalog, render_future_forex, render_strategy_choice
+from core.telegram_admin_ui import CALLBACK_PREFIX, decision_visibility_markup, strategy_choice_markup
 
 
 def _callbacks(markup: dict) -> set[str]:
@@ -44,15 +45,40 @@ def _snapshot(**overrides):
     return payload
 
 
-def test_decision_visibility_exposes_comparison_button() -> None:
-    assert f"{CALLBACK_PREFIX}STRATEGY_COMPARE" in _callbacks(decision_visibility_markup())
+def test_decision_visibility_exposes_choose_strategy_button() -> None:
+    assert f"{CALLBACK_PREFIX}STRATEGY_CHOOSE" in _callbacks(decision_visibility_markup())
+    assert f"{CALLBACK_PREFIX}STRATEGY_COMPARE" not in _callbacks(decision_visibility_markup())
 
 
-def test_comparison_page_has_refresh_back_and_home() -> None:
-    callbacks = _callbacks(strategy_comparison_markup())
-    assert f"{CALLBACK_PREFIX}STRATEGY_COMPARE" in callbacks
+def test_strategy_choice_page_has_selection_refresh_back_and_home() -> None:
+    callbacks = _callbacks(strategy_choice_markup())
+    assert f"{CALLBACK_PREFIX}STRATEGY_CHOOSE" in callbacks
+    assert f"{CALLBACK_PREFIX}STRATEGY_FOREX_FUTURE" in callbacks
     assert f"{CALLBACK_PREFIX}DECISION_VIS" in callbacks
     assert f"{CALLBACK_PREFIX}HOME" in callbacks
+
+
+def test_catalog_has_selected_binary_and_future_forex_strategy() -> None:
+    catalog = load_strategy_catalog()
+    assert len(catalog.strategies) == 2
+    assert catalog.selected.id == "binary_canonical"
+    assert catalog.selected.name == "Binary Trading"
+    assert catalog.selected.trade_type == "BINARY_OPTIONS"
+    assert catalog.selected.availability == "AVAILABLE"
+    forex = next(strategy for strategy in catalog.strategies if strategy.id == "forex_future")
+    assert forex.availability == "UNAVAILABLE"
+    text = render_strategy_choice(catalog)
+    assert "Selected: Binary Trading" in text
+    assert "Forex Strategy" in text
+    assert "Forex Strategy: NOT AVAILABLE YET" in text
+
+
+def test_future_forex_page_is_explicitly_blocked() -> None:
+    text = render_future_forex(load_strategy_catalog())
+    assert "Availability: NOT AVAILABLE YET" in text
+    assert "Selection: BLOCKED" in text
+    assert "copy-trading" in text
+    assert "No Forex decision logic" in text
 
 
 def test_current_comparison_is_explained_in_plain_language() -> None:
@@ -137,43 +163,44 @@ def test_unproven_shadow_isolation_is_not_presented_as_safe() -> None:
     assert "Safety: UNAVAILABLE" in text
 
 
-def test_navigation_action_reads_snapshot_and_returns_live_page(monkeypatch) -> None:
-    from core import bot_service, storage
+def test_choose_strategy_navigation_returns_catalog_page(monkeypatch) -> None:
+    from core import bot_service
 
     monkeypatch.setattr(bot_service, "_is_owner_private_for_message", lambda *_args: True)
-    monkeypatch.setattr(storage, "load_json", lambda *_args, **_kwargs: _snapshot())
-    monkeypatch.setattr(bot_service, "_build_status_snapshot", lambda: {})
-    monkeypatch.setattr(bot_service.time, "time", lambda: 1_800_000_004)
 
     result = bot_service._handle_admin_navigation_action(
-        "STRATEGY_COMPARE", 1, {"chat": {"id": 1}, "from": {"id": 1}}
+        "STRATEGY_CHOOSE", 1, {"chat": {"id": 1}, "from": {"id": 1}}
     )
 
-    assert result["text"].startswith("⚖️ Strategy Comparison")
-    assert "Current engine says: CONFIRM" in result["text"]
+    assert result["text"].startswith("🧭 Choose Strategy")
+    assert "Selected: Binary Trading" in result["text"]
     callbacks = _callbacks(result["reply_markup"])
-    assert f"{CALLBACK_PREFIX}STRATEGY_COMPARE" in callbacks
+    assert f"{CALLBACK_PREFIX}STRATEGY_CHOOSE" in callbacks
     assert f"{CALLBACK_PREFIX}DECISION_VIS" in callbacks
 
 
-def test_navigation_action_uses_runtime_progress_when_comparison_is_absent(monkeypatch) -> None:
-    from core import bot_service, storage
+def test_old_compare_callback_recovers_to_choose_strategy(monkeypatch) -> None:
+    from core import bot_service
 
     monkeypatch.setattr(bot_service, "_is_owner_private_for_message", lambda *_args: True)
-    monkeypatch.setattr(storage, "load_json", lambda *_args, **_kwargs: {})
-    monkeypatch.setattr(
-        bot_service,
-        "_build_status_snapshot",
-        lambda: {
-            "market_data_candle_counts": {"M1": 50, "M5": 12},
-            "market_data_minimum_candles": 201,
-            "market_data_persistence_state": "ACTIVE",
-        },
-    )
 
     result = bot_service._handle_admin_navigation_action(
         "STRATEGY_COMPARE", 1, {"chat": {"id": 1}, "from": {"id": 1}}
     )
 
-    assert "M1: 50/201 real candles — 151 still required" in result["text"]
-    assert "M5: 12/201 real candles — 189 still required" in result["text"]
+    assert result["text"].startswith("🧭 Choose Strategy")
+    assert "Selected: Binary Trading" in result["text"]
+
+
+def test_future_forex_callback_cannot_select_or_activate_it(monkeypatch) -> None:
+    from core import bot_service
+
+    monkeypatch.setattr(bot_service, "_is_owner_private_for_message", lambda *_args: True)
+    result = bot_service._handle_admin_navigation_action(
+        "STRATEGY_FOREX_FUTURE", 1, {"chat": {"id": 1}, "from": {"id": 1}}
+    )
+    assert result["text"].startswith("🌍 Forex Strategy")
+    assert "Selection: BLOCKED" in result["text"]
+    assert "No Forex decision logic" in result["text"]
+    callbacks = _callbacks(result["reply_markup"])
+    assert f"{CALLBACK_PREFIX}STRATEGY_CHOOSE" in callbacks
