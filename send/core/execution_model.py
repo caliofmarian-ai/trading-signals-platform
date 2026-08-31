@@ -68,6 +68,10 @@ class ExecutionTimeResult:
     explanation: str
 
 
+def _is_contract(value: object, name: str, fields: tuple[str, ...]) -> bool:
+    return type(value).__name__ == name and all(hasattr(value, field) for field in fields)
+
+
 def _unavailable(decision: DecisionObject, fsm: FSMInterpretation, explanation: str) -> ExecutionTimeResult:
     return ExecutionTimeResult(
         schema_version=SCHEMA_VERSION,
@@ -91,9 +95,13 @@ def derive_execution_time(
 ) -> ExecutionTimeResult:
     """Derive expiry evidence without activating downstream execution."""
 
-    if not isinstance(decision, DecisionObject):
+    if not isinstance(decision, DecisionObject) and not _is_contract(
+        decision, "DecisionObject", ("setup", "time")
+    ):
         raise TypeError("decision must be a DecisionObject")
-    if not isinstance(fsm, FSMInterpretation):
+    if not isinstance(fsm, FSMInterpretation) and not _is_contract(
+        fsm, "FSMInterpretation", ("symbol", "cycle_id", "outcome", "signal_handoff_ready")
+    ):
         raise TypeError("fsm must be an FSMInterpretation")
     if decision.setup.symbol != fsm.symbol or decision.setup.cycle_id != fsm.cycle_id:
         raise ExecutionModelError("decision and FSM evidence must describe the same cycle")
