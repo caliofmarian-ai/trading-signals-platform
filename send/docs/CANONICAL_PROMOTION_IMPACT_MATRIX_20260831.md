@@ -66,21 +66,17 @@ Execution rules:
 
 Repository exact-filename search against current `main` shows that promotion affects active documents beyond the structural successor files themselves.
 
-The lists below are **verified active consumers discovered during preflight**. The future active-promotion branch MUST rerun exact filename scans immediately before promotion. Any additional active consumer discovered at that time is an automatic blocker until classified and included.
+The lists below are verified active consumers discovered during preflight. The future active-promotion branch MUST rerun exact filename scans immediately before promotion. Any additional active consumer discovered at that time is an automatic blocker until classified and included.
 
 ### 4.1 Consumers of `FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
 
 Verified active consumers include:
-- `CANONICAL_STRATEGY_STACK_v1.0.0.md` — replaced structurally by root v2
+- `CANONICAL_STRATEGY_STACK_v1.0.0.md` — structural successor
 - `ALGO_SPEC_v2.0.0.md` — reference-only consumer
 - `RISK_MODEL_v2.0.0.md` — reference-only consumer
-- `OBSERVABILITY_SPEC_v2.0.0.md` — replaced structurally by Observability v3
-- `SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md` — replaced structurally by Signal Engine v3
-- `CANONICAL_MASTER_INDEX_v1.0.0.md` — replaced structurally by Master Index v2
-
-Promotion treatment:
-- structural consumers use their complete successors;
-- unchanged semantic consumers receive PATCH successors if active references must change.
+- `OBSERVABILITY_SPEC_v2.0.0.md` — structural successor
+- `SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md` — structural successor
+- `CANONICAL_MASTER_INDEX_v1.0.0.md` — structural successor
 
 ### 4.2 Consumers of `SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`
 
@@ -95,13 +91,13 @@ Verified active consumers include:
 ### 4.3 Consumers of `MODULE_INTERFACE_SPEC_v2.0.0.md`
 
 Verified active consumers include:
-- `CANON_BATCH_EVALUATION_v2.0.0.md` — supporting/governance record in active folder; not functional canonical authority
+- `CANON_BATCH_EVALUATION_v2.0.0.md` — supporting/governance record in active folder
 - `DEPLOYMENT_PROTOCOL_v2.0.0.md` — reference-only active consumer
 - `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md` — reference-only active consumer
 - `SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.0.md` — reference-only active consumer
 - `CANONICAL_MASTER_INDEX_v1.0.0.md` — structural successor
 - `STRATEGY_PARAMETER_CONTROL_SPEC_v2.0.0.md` — reference-only active consumer
-- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md` — reference-only active consumer where exact filename is normative/cross-linked
+- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md` — reference-only active consumer where the exact filename is normative/cross-linked
 - `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md` — reference-only active consumer
 - `AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.0.md` — reference-only active consumer
 
@@ -115,8 +111,6 @@ Verified active consumers include:
 - `FSM_DECISION_ENGINE_SPEC_v1.0.0.md` — structural successor
 - `CANONICAL_MASTER_INDEX_v1.0.0.md` — structural successor
 
-Additional exact active consumers discovered during promotion preflight must be patched or classified before promotion.
-
 ### 4.5 Consumers of `OBSERVABILITY_LOGGING_SPEC_v2.0.0.md`
 
 Verified active consumers include:
@@ -124,6 +118,8 @@ Verified active consumers include:
 - `ADMIN_TREE_MAP_v2.0.0.md` — reference-only active consumer
 - `TELEGRAM_UX_v2.0.0.md` — reference-only active consumer
 - `SECURITY_MODEL_v2.0.0.md` — reference-only active consumer
+- `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md` — reference-only active consumer
+- `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md` — reference-only active consumer
 - `CANONICAL_MASTER_INDEX_v1.0.0.md` — structural successor
 
 ### 4.6 Consumers of `EVENT_SCHEMA_SPEC_v2.0.0.md`
@@ -135,6 +131,7 @@ Verified active consumers include:
 - `OBSERVABILITY_SPEC_v2.0.0.md` — structural successor
 - `SYSTEM_INVARIANTS_v2.0.0.md` — reference-only active consumer
 - `OBSERVABILITY_LOGGING_SPEC_v2.0.0.md` — structural successor
+- `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md` — reference-only active consumer
 - `CANONICAL_MASTER_INDEX_v1.0.0.md` — structural successor
 
 ### 4.7 Consumers of `CANONICAL_STRATEGY_STACK_v1.0.0.md`
@@ -150,22 +147,46 @@ Verified active consumers include:
 - `DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
 - `CANONICAL_MASTER_INDEX_v1.0.0.md` — structural successor
 
-Unchanged semantic consumers require PATCH successors if their active normative references must point to root v2.
-
 ### 4.8 Consumers of `CANONICAL_MASTER_INDEX_v1.0.0.md`
 
-Repository search shows the active master is also referenced by supporting/runtime-knowledge surfaces such as repository README/index/audit material and the Owner Knowledge registry/test surfaces.
+Repository search shows the active master is also referenced by supporting/runtime-knowledge surfaces such as repository README/index/audit material and Owner Knowledge registry/test surfaces.
 
-These are **not part of this proposed canonical-successor PR**.
+These are not part of this proposed canonical-successor PR.
 
 During active promotion they require explicit classification:
 - active canonical consumer -> patch-version/reference repair;
 - supporting documentation -> reference repair may occur separately but must not claim authority;
-- config/test/runtime consumer -> later implementation/migration work only after the active canonical promotion sequence permits it.
+- config/test/runtime consumer -> later implementation/migration work only after active canonical promotion permits it.
 
-The active-promotion docs PR must not silently mix runtime/code changes into the canonical promotion.
+The active-promotion docs PR must not silently mix runtime/code changes into canonical promotion.
 
-## 5. Reference-Only Patch Candidates
+## 5. Distribution-Semantics Compatibility Finding
+
+`SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md` is semantically compatible with the proposed execution model because it defines delivery success as transport publish success and entitlement consumption only after successful OPEN_NOW publication.
+
+However, its order-of-operations text currently begins with the phrase:
+
+`For each emitted governed signal stage`
+
+Under proposed v3 execution semantics, `EMITTED` is a post-publication execution outcome. Therefore that phrase would become ambiguous/circular if retained unchanged.
+
+Required promotion-time non-structural clarification:
+
+`For each governed SignalEvent candidate released to distribution`
+
+or an equivalent wording that preserves all existing distribution behavior.
+
+This is a PATCH-level wording/reference repair only. It MUST NOT alter:
+- route eligibility;
+- route silence behavior;
+- entitlement limits;
+- successful-delivery counting;
+- PRE/CONFIRM/OPEN_NOW distribution policy;
+- outcome-route policy.
+
+`SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md` also directly references `OBSERVABILITY_LOGGING_SPEC_v2.0.0.md`, so a PATCH successor is required for reference alignment during promotion.
+
+## 6. Reference-Only Patch Candidates
 
 Based on verified active consumers, the promotion preflight must evaluate PATCH successors for at least:
 
@@ -177,6 +198,7 @@ Based on verified active consumers, the promotion preflight must evaluate PATCH 
 - `STRATEGY_PARAMETER_CONTROL_SPEC_v2.0.0.md`
 - `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md`
 - `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md`
+- `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md`
 - `AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.0.md`
 - `SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`
 - `ADMIN_TREE_MAP_v2.0.0.md`
@@ -186,29 +208,25 @@ Based on verified active consumers, the promotion preflight must evaluate PATCH 
 - `OUTCOME_TRACKING_SPEC_v2.0.0.md`
 - `TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
 - `DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
+- `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md`
 
 This list is a preflight minimum, not permission to patch all files blindly.
 
-For every candidate the promotion work must first inspect the exact occurrence and classify it:
+For every candidate the promotion work must inspect the exact occurrence and classify it:
 - normative active cross-reference -> PATCH successor required;
 - historical/version-history mention -> preserve or annotate, do not blindly replace;
 - compatibility/migration mention -> preserve according to its semantics;
 - unrelated text match -> no change.
 
-## 6. Supporting / Historical Search Results
+## 7. Supporting / Historical Search Results
 
-Exact filename searches also return:
-- root-level supporting documentation;
-- audit reports;
-- reconciliation records;
-- deprecated/backups;
-- superseded material.
+Exact filename searches also return root-level supporting documentation, audit reports, reconciliation records, deprecated/backups and superseded material.
 
 These are not active canonical authority and MUST NOT drive the active promotion design.
 
 Historical references should normally remain historical rather than being rewritten to pretend they originally referred to newer versions.
 
-## 7. Promotion Atomicity Requirements
+## 8. Promotion Atomicity Requirements
 
 The eventual active-promotion PR MUST:
 1. start from fresh current `main`;
@@ -218,27 +236,28 @@ The eventual active-promotion PR MUST:
 5. install all complete structural successors;
 6. move/preserve old structural versions under `canonical/superseded` with historical status;
 7. ensure only one active version owns each concern;
-8. activate complete Root Stack v2;
-9. activate complete Master Index v2;
+8. activate complete Root Stack v2 with exact final PATCH filenames resolved;
+9. activate complete Master Index v2 with exact final PATCH filenames resolved;
 10. validate 41 unique functional canonical specifications after promotion;
 11. verify no active canonical file has a normative reference to a superseded path/version unless explicitly historical/compatibility-labelled;
 12. perform a post-promotion canonical re-audit;
 13. keep runtime code and `send/schema/event_schema.json` unchanged in that PR.
 
-## 8. Hard Blockers
+## 9. Hard Blockers
 
 Promotion MUST stop if any of the following is true:
 - an active consumer still normatively points to a superseded authority;
 - old and new versions both claim Active Canonical authority;
 - a PATCH candidate requires semantic changes beyond reference repair;
 - Root Stack and Master Index disagree;
-- any successor still says it depends normatively on an old superseded version;
+- Root Stack or Master Index still names a pre-promotion base version after that consumer has received a PATCH successor;
+- any successor still depends normatively on an old superseded version;
 - Event Schema / Logging / Observability disagree on field names or outcome semantics;
 - Signal Engine and FSM disagree on readiness semantics;
 - distribution is implicitly activated;
 - runtime code is mixed into the docs-only promotion.
 
-## 9. No-Code Rule
+## 10. No-Code Rule
 
 This impact matrix and the current complete-successor package authorize documentation work only.
 
