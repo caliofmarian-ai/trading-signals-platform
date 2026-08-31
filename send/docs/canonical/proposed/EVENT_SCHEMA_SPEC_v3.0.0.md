@@ -2,20 +2,18 @@
 
 BinaryBot — Canonical Event Envelope, Correlation & Domain Schema Specification
 Version: 3.0.0
-Status: PROPOSED — NOT ACTIVE CANONICAL
+Status: PROPOSED DESIGN DELTA — NOT ACTIVE CANONICAL — NOT PROMOTION READY
 Owner: BinaryBot / DROPi Signals
 
-## Supersession Intent
+## Promotion Notice
 
-If promoted, this document is intended to supersede EVENT_SCHEMA_SPEC_v2.0.0.md.
+This file records a structural schema delta only. A promoted successor must be materialized as a complete self-contained EVENT_SCHEMA specification and must not depend normatively on a version that becomes Superseded.
 
-All v2.0.0 provisions not explicitly changed below are inherited unchanged. This proposed v3.0.0 exists because the new post-FSM execution-result family is a structural event-contract change and therefore requires major-version discipline under GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md.
-
-This proposal does not become authoritative until promoted through canonical governance and reflected in the canonical master index.
+The major version is proposed because introducing a new first-class execution-result event family is a structural event-contract change.
 
 ## 1. Preserved Core Principles
 
-The following v2 truths remain unchanged:
+The following active truths remain unchanged:
 - every materially relevant event must be structurally representable;
 - every event must be reconstructable in context;
 - no silent governed-state mutation is allowed;
@@ -24,14 +22,12 @@ The following v2 truths remain unchanged:
 - schema-invalid events are not trustworthy canonical evidence;
 - strategy, FSM, execution, distribution and outcome domains must remain semantically distinguishable.
 
-## 2. New Canonical Event Family: signal_execution_result
-
-This proposed version adds a dedicated signal-engine execution event family:
-
-- signal_execution_result
+## 2. Proposed Event Family: signal_execution_result
 
 Purpose:
-Represent the post-FSM signal-engine execution verdict before, during or after SignalEvent candidate construction, without misclassifying that truth as a strategy decision, FSM transition or distribution result.
+Represent signal-engine execution truth after FSM handoff without misclassifying that truth as a strategy decision, FSM transition or route publication result.
+
+The same execution_attempt_id may correlate more than one execution-result checkpoint when the execution lifecycle advances, for example a pre-distribution DEFERRED checkpoint followed later by a post-distribution final result.
 
 ## 3. Separation Rule
 
@@ -46,7 +42,7 @@ signal_execution_result must not replace or be confused with:
 - route_publish_attempt
 - route_publish_result
 
-A single logical opportunity may produce correlated events in several of these families because each family represents a different truth domain.
+Each family preserves a distinct truth domain.
 
 ## 4. Execution Outcome Enum
 
@@ -60,9 +56,17 @@ signal_execution_result.execution_outcome must support at least:
 
 These values describe signal-engine execution truth only.
 
-## 5. Required Correlation Fields
+## 5. Execution Phase
 
-A signal_execution_result event must contain enough context for deterministic reconstruction.
+Proposed required field:
+- execution_phase: PRE_DISTRIBUTION | POST_DISTRIBUTION
+
+PRE_DISTRIBUTION describes execution truth before route/publisher completion.
+POST_DISTRIBUTION describes the signal-engine result after downstream distribution evidence is available.
+
+A pre-distribution event may be the only event for an attempt while distribution remains intentionally disabled.
+
+## 6. Required Correlation Fields
 
 Required:
 - execution_attempt_id: string
@@ -78,17 +82,20 @@ Required when the execution attempt concerns an actionable lifecycle stage:
 Optional when no actionable signal identity exists:
 - setup_correlation_id or equivalent governed correlation identity
 
-## 6. Required Domain Payload
+## 7. Required Domain Payload
 
 Minimum required payload:
-- execution_outcome: enum
-- execution_reason: string
-- candidate_handoff_ready: boolean
+- execution_phase
+- execution_outcome
+- execution_reason
+- stage_handoff_ready: boolean
+- trade_execution_ready: boolean
 - signal_event_available: boolean
-- destination_class: string
+- destination_state: string
 
 Conditionally required:
-- payload_reference or candidate_reference when signal_event_available=true
+- candidate_reference or payload_reference when signal_event_available=true
+- distribution_reference(s) for POST_DISTRIBUTION outcomes derived from downstream distribution evidence
 
 Recommended structured evidence:
 - fsm_result summary/reference
@@ -96,38 +103,33 @@ Recommended structured evidence:
 - blocker/failure detail
 - candidate schema version
 
-## 7. destination_class Semantics
+## 8. destination_state Semantics
 
-Execution trace must not silently omit destination state.
-
-Before routing begins, destination_class should use the explicit semantic baseline:
-- PRE_DISTRIBUTION_UNRESOLVED
+Before routing begins:
+- destination_state = PRE_DISTRIBUTION_UNRESOLVED
 
 Meaning:
-- no distribution route has yet been evaluated;
+- no route has yet been evaluated;
 - no destination has been selected;
 - this is not a transport failure;
 - this is not publication authorization.
 
-After routing begins, distribution-domain events remain the authoritative source for concrete route/destination selection and publication result.
+After routing begins, signal_execution_result should reference downstream distribution evidence. Exact route, destination and transport truth remains owned by route/distribution events.
 
-## 8. candidate_handoff_ready Semantics
+## 9. Handoff Readiness Semantics
 
-candidate_handoff_ready=true means the post-FSM operational contract explicitly accepted the same actionable stage for signal-engine handoff.
+stage_handoff_ready=true means the post-FSM operational contract explicitly accepted the same actionable stage for signal-engine handoff.
 
-It must be false when the stage is blocked or suppressed by:
-- cooldown
-- watchlist/focus capacity without valid replacement
-- duplicate stage/candle suppression
-- identity continuity failure
-- invalid lifecycle path
-- FSM rejection/block
-- invariant failure
-- another explicit no-release outcome
+It must be false when the stage is blocked or suppressed by cooldown, watchlist/focus capacity, duplicate suppression, identity continuity failure, invalid lifecycle path, FSM rejection/block, invariant failure or another explicit no-release result.
 
-Normal function return or transition-event existence is not sufficient evidence of readiness.
+trade_execution_ready is distinct:
+- false for PRE;
+- false for CONFIRM;
+- may be true only for accepted OPEN_NOW.
 
-## 9. signal_event_available Semantics
+Normal function return or transition-event existence is not sufficient evidence of either readiness field.
+
+## 10. signal_event_available Semantics
 
 signal_event_available=true means a canonical SignalEvent candidate was successfully constructed from real evidence for the accepted stage.
 
@@ -139,38 +141,59 @@ It does not mean:
 - outcome registered
 - broker trade executed
 
-## 10. Decision Event Clarification
+SignalEvent construction alone must not result in EMITTED.
 
-The canonical decision-family names remain:
+## 11. Outcome Mapping Constraints
+
+### PRE_DISTRIBUTION
+
+If SignalEvent is available but distribution is intentionally not invoked, execution_outcome must be DEFERRED with an explicit reason.
+
+If no candidate can be formed because readiness/evidence is insufficient, NOT_EMITTED may apply.
+If an explicit rule blocks the path, BLOCKED may apply.
+If a flow rule intentionally skips the attempt, SKIPPED may apply.
+If a technical execution-layer failure occurs, FAILED may apply.
+
+EMITTED is forbidden in PRE_DISTRIBUTION phase.
+
+### POST_DISTRIBUTION
+
+EMITTED is permitted only when linked downstream distribution evidence proves at least one authorized publication succeeded.
+
+If multiple routes exist, exact per-route success/failure remains represented by route_publish_result events. signal_execution_result must link to those events rather than flattening route truth into invented detail.
+
+Mixed route outcomes may still yield execution_outcome=EMITTED when at least one authorized route published successfully, provided the linked distribution events preserve all partial failures/skips exactly.
+
+## 12. Decision Event Clarification
+
+Canonical decision-family names remain:
 - decision_evaluated
 - decision_promoted
 - decision_rejected
 - decision_no_signal
 
-A generic legacy event name such as decision may be retained only as a compatibility/migration concern in runtime schema implementation. It must not be treated as the primary canonical v3 decision family.
+A generic legacy event name such as decision may be retained only as a compatibility/migration concern in runtime implementation. It must not be treated as the primary canonical family.
 
-Execution outcome fields must not be hidden exclusively inside generic decision debug data as the only canonical execution evidence.
+Execution truth must not exist only inside generic decision debug data.
 
-## 11. Signal Lifecycle Event Clarification
-
-signal_emitted means a signal has been generated/emitted according to the signal-engine execution semantics defined by the active execution canon.
+## 13. Signal Lifecycle Event Clarification
 
 signal_stage_visible remains reserved for governed external visibility evidence.
 
-Where a SignalEvent candidate is built but downstream distribution is intentionally not invoked, signal_execution_result with DEFERRED is the appropriate execution evidence; signal_stage_visible must not be emitted.
+A SignalEvent candidate built while distribution is intentionally not invoked must not produce signal_stage_visible.
 
-## 12. Distribution Event Preservation
+The complete successor must reconcile the exact role of signal_emitted with signal_execution_result so that no event name can claim external delivery without downstream proof.
 
-The v2 distribution event families remain unchanged in authority intent:
+## 14. Distribution Event Preservation
+
+Distribution event families remain authoritative for route-level truth, including:
 - route_publish_attempt
 - route_publish_result
 - route_reset
 - route_state_changed
 - route_mapping_invalid
 
-Distribution events remain the source of route/destination publication truth.
-
-## 13. Stable Signal Identity
+## 15. Stable Signal Identity
 
 The same trade idea must preserve the same signal_id across:
 - PRE
@@ -180,28 +203,29 @@ The same trade idea must preserve the same signal_id across:
 - downstream distribution events
 - outcome/reconciliation events where applicable
 
-## 14. Dedup Observability
+## 16. Dedup Observability
 
-Dedup-related execution suppression must be observable.
-
-If the signal engine suppresses a duplicate actionable stage before distribution, signal_execution_result should use an outcome/reason combination that preserves the distinction between duplicate suppression and other non-emission causes.
+Engine-side duplicate suppression and distribution-side duplicate suppression must remain distinguishable and observable.
 
 Distribution-side dedup remains represented in distribution events.
 
-## 15. Migration Requirements
+## 17. Migration Requirements
 
-Promotion of v3.0.0 requires:
-1. runtime event schema to be updated in a separate code PR only after canonical promotion;
-2. legacy generic event families to be explicitly migrated or retained as compatibility aliases with documented status;
-3. observability logging mechanics to recognize signal_execution_result;
-4. tests proving schema validation for all execution outcomes;
-5. no historical event reinterpretation without explicit migration notes.
+Before active promotion:
+1. materialize a complete self-contained successor EVENT_SCHEMA specification;
+2. explicitly reconcile signal_emitted versus signal_execution_result semantics;
+3. define compatibility status for legacy generic runtime event families;
+4. update runtime schema only in a later code PR after canonical promotion;
+5. update observability logging mechanics only after promotion;
+6. add schema-validation tests for all execution phases/outcomes;
+7. do not reinterpret historical events silently;
+8. update the complete canonical master index/root references as required.
 
-## 16. No-Code / No-Distribution Rule
+## 18. No-Code / No-Distribution Rule
 
-This proposed document authorizes no runtime code change by itself and no distribution activation.
+This proposed delta authorizes no runtime code change and no distribution activation.
 
-Until promotion:
+Until active promotion:
 - EVENT_SCHEMA_SPEC_v2.0.0 remains authoritative;
-- runtime code must not claim compliance with v3.0.0;
+- runtime code must not claim compliance with this proposal;
 - PR #73 remains blocked.
