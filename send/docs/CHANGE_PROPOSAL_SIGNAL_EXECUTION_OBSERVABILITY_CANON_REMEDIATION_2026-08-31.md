@@ -12,9 +12,10 @@ APPROVAL_STATUS: OWNER APPROVED FOR CANONICAL DOCUMENT REMEDIATION ONLY
 
 ## TARGET_DOCS
 
-Primary authorities reviewed:
+Primary active authorities reviewed:
 - send/docs/canonical/active/CANONICAL_STRATEGY_STACK_v1.0.0.md
 - send/docs/canonical/active/CANONICAL_MASTER_INDEX_v1.0.0.md
+- send/docs/canonical/active/SYSTEM_ARCHITECTURE_MAP_v2.0.0.md
 - send/docs/canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md
 - send/docs/canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md
 - send/docs/canonical/active/OBSERVABILITY_SPEC_v2.0.0.md
@@ -33,7 +34,7 @@ Primary authorities reviewed:
 
 No code is authorized by this proposal.
 
-Future implementation surfaces may only be derived after proposed canonical material is promoted and re-audited.
+Future implementation surfaces may only be derived after the intended canonical truth is fully materialized, promoted and re-audited.
 
 ## RATIONALE
 
@@ -49,13 +50,45 @@ A fresh audit of PR #73 and merged PR #72 against the latest active canonical st
 8. EVENT_SCHEMA_SPEC_v2.0.0 does not define a dedicated post-FSM execution-result family for non-emitted execution outcomes.
 9. Runtime send/schema/event_schema.json still contains legacy/generic event families and is not the canonical authority.
 
+## DEEP RE-AUDIT CORRECTIONS
+
+A second audit against SYSTEM_ARCHITECTURE_MAP_v2.0.0 found additional governance constraints that refine the approved direction:
+
+1. No new canonical handoff document should become a separate authority. The concern can be absorbed by the already-owned FSM, signal-engine, module-interface and observability/event-schema domains. Creating a separate active handoff canon would duplicate ownership.
+2. A future replacement CANONICAL_MASTER_INDEX must remain a complete authoritative inventory. A partial index is not an acceptable successor.
+3. A future replacement root strategy manifest must remain a complete self-contained root manifest. A delta-only root document is not promotion-ready.
+4. Future successor canonical specs must be self-contained at promotion time. They must not depend normatively on versions that become Superseded.
+5. SignalEvent construction is not EMITTED. EMITTED requires downstream governed publication evidence. If a valid SignalEvent exists while distribution is intentionally not invoked, the signal-engine execution outcome is DEFERRED.
+
+These corrections narrow the remediation and prevent new canonical drift.
+
+## REFINED AUTHORITY MODEL
+
+The handoff concern stays inside existing primary homes:
+
+- FSM_DECISION_ENGINE_SPEC: owns actionable-stage acceptance/block/release semantics.
+- SIGNAL_ENGINE_EXECUTION_SPEC: owns SignalEvent construction gating and signal-engine execution outcomes.
+- MODULE_INTERFACE_SPEC: owns the typed/shared FSM-to-signal-engine interface contract.
+- OBSERVABILITY_SPEC / OBSERVABILITY_LOGGING_SPEC / EVENT_SCHEMA_SPEC: own execution-result observability policy, logging mechanics and schema.
+- SIGNAL_DISTRIBUTION_ARCHITECTURE / SIGNAL_DISTRIBUTION_SPEC: remain unchanged owners of route/destination/publication truth.
+
+No additional active canonical authority is required for the handoff itself.
+
 ## EXPECTED IMPACT
 
 - Make stage acceptance explicit and fail-closed.
-- Preserve PRE -> CONFIRM -> OPEN_NOW continuity without treating every FSM transition as publish eligibility.
+- Preserve PRE -> CONFIRM -> OPEN_NOW continuity without treating every FSM transition as handoff eligibility.
 - Define a dedicated semantic execution-result event before any runtime schema implementation.
-- Keep SignalEvent construction separate from distribution authorization.
+- Keep SignalEvent construction separate from distribution authorization and delivery success.
 - Keep distribution, Telegram, outcomes, broker execution and scan cadence unchanged.
+
+## EXECUTION OUTCOME CLARIFICATION
+
+- SignalEvent constructed + distribution intentionally not invoked -> DEFERRED.
+- SignalEvent construction alone must never produce EMITTED.
+- EMITTED is only valid when downstream governed publication evidence confirms at least one authorized publication succeeded.
+- Exact route-level success/failure remains distribution truth in route publication events.
+- NOT_EMITTED, BLOCKED, SKIPPED and FAILED must remain distinguishable according to execution cause.
 
 ## RISK
 
@@ -63,6 +96,8 @@ A fresh audit of PR #73 and merged PR #72 against the latest active canonical st
 - PRE/CONFIRM handoff without dedup/restart discipline could duplicate lifecycle events.
 - Event-schema migration could reinterpret historical logs if not versioned.
 - Internal SignalEvent construction could be confused with external publication authorization.
+- A new cross-layer canonical file could duplicate ownership if introduced unnecessarily.
+- Delta-only successor documents could depend on superseded sources and create ambiguous authority.
 
 ## BLAST_RADIUS
 
@@ -85,16 +120,21 @@ Excluded:
 
 ## VALIDATION METHOD
 
-Before promotion:
-1. Re-audit proposed documents against the current active root manifest and master index.
-2. Verify no contradiction with distribution architecture/spec or system invariants.
-3. Verify strategy/FSM/execution/distribution truth remain separated.
-4. Verify PRE/CONFIRM/OPEN_NOW identity continuity and dedup requirements remain intact.
-5. Verify no proposed wording itself activates distribution or broker execution.
+Before any promotion:
+1. Re-audit proposed material against the current active root manifest, architecture map and master index.
+2. Verify no duplicate canonical ownership is introduced.
+3. Verify no contradiction with distribution architecture/spec or system invariants.
+4. Verify strategy/FSM/execution/distribution truth remain separated.
+5. Verify PRE/CONFIRM/OPEN_NOW identity continuity and dedup requirements remain intact.
+6. Verify SignalEvent construction cannot be interpreted as external delivery success.
+7. Verify no proposed wording itself activates distribution or broker execution.
+8. Materialize complete self-contained successor documents before they are eligible for active promotion.
+9. Materialize a complete successor master index and root manifest when promotion changes version references.
 
 After future code implementation, only after promotion:
 - stage-acceptance tests
 - SignalEvent construction tests for PRE/CONFIRM/OPEN_NOW
+- blocked/no-op transition tests
 - stable signal_id tests
 - execution-result event-schema tests
 - no-distribution regression tests
@@ -106,6 +146,7 @@ After future code implementation, only after promotion:
 - Do not promote proposed docs if re-audit fails.
 - Current active canon remains authoritative until explicit promotion.
 - Runtime code remains unchanged during this docs phase.
+- Proposed documents may be corrected or discarded without changing active authority.
 
 ## DEPLOYMENT PLAN
 
@@ -113,10 +154,12 @@ None. Documentation phase only.
 
 ## SUCCESS CRITERIA
 
-- Proposed canon unambiguously defines accepted-stage handoff.
-- Proposed canon defines post-FSM execution-result semantics.
+- Proposed material unambiguously defines accepted-stage handoff within existing authority homes.
+- Proposed material defines post-FSM execution-result semantics.
 - Minimum execution trace is representable before routing exists.
-- SignalEvent creation does not equal distribution authorization.
+- SignalEvent creation does not equal distribution authorization or EMITTED.
+- No new duplicate active authority is introduced.
+- Any future promoted successor is self-contained.
 - PR #73 remains blocked until promotion and re-audit.
 
 ## FAILURE TRIGGERS
@@ -126,4 +169,6 @@ Stop and return to Owner review if:
 - execution observability blurs strategy/FSM/distribution truth;
 - migration would silently reinterpret historical evidence;
 - proposed docs implicitly authorize external delivery or broker execution;
-- active-version authority would become ambiguous.
+- active-version authority would become ambiguous;
+- a new document duplicates an existing architectural home;
+- a successor depends normatively on a document it supersedes.
