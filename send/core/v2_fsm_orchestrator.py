@@ -1,8 +1,8 @@
 """Persistent FSM boundary for Binary Strategy V2.
 
 PRE, CONFIRM, REJECT and NO_SIGNAL may update lifecycle evidence. OPEN_NOW
-remains a candidate until a later governed SignalEvent publisher confirms a
-successful handoff; this module never labels it as LIVE_SENT.
+becomes a candidate for the governed SignalEvent execution layer, but remains
+not LIVE_SENT until a later distribution step confirms a successful handoff.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def _runtime_input(decision: DecisionObject, state: Dict[str, Any]) -> Dict[str,
 def advance_persistent_fsm(
     state: Dict[str, Any], decision: DecisionObject, *, now_ts: int
 ) -> PersistentFSMResult:
-    """Apply safe lifecycle evidence without publishing an OPEN_NOW signal."""
+    """Apply lifecycle evidence and expose governed OPEN_NOW candidate readiness."""
 
     if not isinstance(decision, DecisionObject):
         raise TypeError("decision must be a DecisionObject")
@@ -82,7 +82,7 @@ def advance_persistent_fsm(
                 False, False, False, "CANONICAL_PRE_PATH_REQUIRED", state, None
             )
         return PersistentFSMResult(
-            True, False, True, "SIGNAL_EVENT_NOT_ENABLED", state, None
+            True, False, True, "SIGNAL_EVENT_CANDIDATE_READY", state, None
         )
 
     try:
