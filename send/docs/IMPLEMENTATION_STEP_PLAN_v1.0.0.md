@@ -297,6 +297,15 @@ MarketModel ↓ CorridorEngine ↓ TimeModel ↓ ScoringModel ↓ DecisionObject
 
 Strategy_v2 rămâne activ până la validare completă.
 
+Implementation status (2026-08-31):
+
+- implemented as a deterministic shadow orchestrator in `core/strategy_engine_v3.py`
+- runs Market Model, SR/Corridor, Time Model, Scoring, DecisionObject, FSM interpretation and Execution Model in one synchronized cycle
+- preserves one symbol, timestamp and cycle identity across every layer
+- legitimate WAIT, PREPARE and CONFIRM maturity bands remain reachable and are no longer mislabeled as degraded evidence
+- runtime blockers override downstream interpretation and all signal handoff remains disabled
+- `strategy_v2` remains the live engine; no Telegram, Signal Engine or broker integration is activated
+
 ---
 
 ## 12. STEP 115 — SIGNAL ENGINE CLEANUP

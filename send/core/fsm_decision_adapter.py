@@ -66,6 +66,13 @@ def _validate_consistency(decision: DecisionObject) -> None:
         raise FSMInterpretationError("BLOCKED score tier requires strategic hard blockers")
 
 
+def _is_decision_contract(value: object) -> bool:
+    return type(value).__name__ == "DecisionObject" and all(
+        hasattr(value, field)
+        for field in ("setup", "market_context", "structure", "time", "score", "strategic_flags", "reject")
+    )
+
+
 def interpret_decision(
     decision: DecisionObject,
     *,
@@ -77,7 +84,7 @@ def interpret_decision(
     family. This shadow adapter never authorizes a signal or broker action.
     """
 
-    if not isinstance(decision, DecisionObject):
+    if not isinstance(decision, DecisionObject) and not _is_decision_contract(decision):
         raise TypeError("decision must be a DecisionObject")
     blockers = _clean_runtime_blockers(runtime_blockers)
     _validate_consistency(decision)

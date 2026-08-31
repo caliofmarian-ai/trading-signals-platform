@@ -107,3 +107,26 @@ def test_assembly_is_deterministic_and_does_not_mutate_layers(canonical_runtime_
     second = assemble_decision(*stack, timeframe="M1", cycle_id="cycle-repeat")
     assert first == second
     assert stack[0].context.target_distance is None
+
+
+@pytest.mark.parametrize(
+    ("tier", "expected"),
+    [
+        ("BELOW_PRE", "WAIT"),
+        ("SCORE_PRE_BAND", "PREPARE"),
+        ("SCORE_CONFIRM_BAND", "CONFIRM"),
+    ],
+)
+def test_normal_maturity_bands_are_not_mislabeled_as_degraded(
+    canonical_runtime_root: Path, tier: str, expected: str
+) -> None:
+    from core.fsm_decision_adapter import interpret_decision
+
+    market, corridor, time, scoring = _stack(canonical_runtime_root)
+    scoring = replace(scoring, context=replace(scoring.context, tier=tier), eligible=True, hard_blockers=())
+    decision = assemble_decision(
+        market, corridor, time, scoring, timeframe="M1", cycle_id=f"cycle-{tier.lower()}"
+    )
+
+    assert decision.strategic_flags.degraded_setup is False
+    assert interpret_decision(decision).outcome == expected

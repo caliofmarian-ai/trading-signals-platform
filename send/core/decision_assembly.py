@@ -80,7 +80,9 @@ def assemble_decision(
     rejectable = not scoring.eligible
     low_confidence = scoring.context.tier == "BELOW_PRE"
     borderline = scoring.context.tier in {"SCORE_PRE_BAND", "SCORE_CONFIRM_BAND"}
-    degraded_setup = rejectable or low_confidence or borderline
+    # WAIT/PREPARE/CONFIRM are legitimate maturity stages, not degraded
+    # evidence. Strategic hard blockers are represented separately by REJECT.
+    degraded_setup = False
 
     blockers = tuple(scoring.hard_blockers)
     reject = RejectContext(
