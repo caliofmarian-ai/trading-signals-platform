@@ -40,6 +40,66 @@ ALGO_PARAMS_PATH = config_path("algo_params.json")
 TPS_METRICS_PATH = os.path.join(os.getenv("OBS_DIR", storage.root_path("observability")), "tps_metrics.jsonl")
 
 
+def _canonical_shadow_enabled() -> bool:
+    return os.getenv("CANONICAL_SHADOW_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _canonical_shadow_inputs_ready(
+    candles_m1: List[Dict[str, Any]],
+    candles_m5: List[Dict[str, Any]],
+    params: Dict[str, Any],
+) -> bool:
+    strategy = params.get("strategy_v2") if isinstance(params, dict) else None
+    if not isinstance(strategy, dict):
+        return False
+    try:
+        minimum_m1 = max(21, int(strategy["rsi_period"]) + 1)
+        minimum_m5 = max(15, int(strategy["ema_slow"]) + 1)
+    except (KeyError, TypeError, ValueError):
+        return False
+    required_blocks = (
+        "score_thresholds", "expiry_limits_minutes", "buffer_multipliers",
+        "spike_filters", "trend_time_adjust", "structure_factor",
+    )
+    return len(candles_m1) >= minimum_m1 and len(candles_m5) >= minimum_m5 and all(
+        isinstance(params.get(name), dict) for name in required_blocks
+    )
+
+
+def _observe_canonical_shadow(
+    candles_m1: List[Dict[str, Any]],
+    candles_m5: List[Dict[str, Any]],
+    params: Dict[str, Any],
+    decision: Dict[str, Any],
+    *,
+    now_ts: int,
+    buffer_mode: str,
+) -> None:
+    """Observe only; every failure is isolated from the live decision path."""
+    if not _canonical_shadow_enabled() or not _canonical_shadow_inputs_ready(candles_m1, candles_m5, params):
+        return
+    try:
+        from core.shadow_strategy_observer import observe_and_persist
+
+        observe_and_persist(
+            candles_m1,
+            candles_m5,
+            params,
+            decision,
+            observed_ts=now_ts,
+            buffer_mode=buffer_mode,
+            output_path=storage.root_path("observability", "canonical_shadow_snapshot.json"),
+        )
+    except Exception as exc:
+        observability_logger.log_error({
+            "severity": "WARNING",
+            "error_type": "canonical_shadow_observation_unavailable",
+            "message": str(exc),
+            "context": {"symbol": decision.get("symbol"), "candle_ts": decision.get("candle_ts")},
+            "source": {"module": "signal_engine", "function": "_observe_canonical_shadow"},
+        })
+
+
 def _load_active_symbols() -> List[str]:
     """
     Supports BOTH formats:
@@ -326,6 +386,15 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                 context={}
             )
             decision = _normalize_decision_for_fsm(decision, state)
+
+            _observe_canonical_shadow(
+                candles_m1,
+                candles_m5,
+                params,
+                decision,
+                now_ts=now_ts,
+                buffer_mode=buffer_mode,
+            )
 
             debug_payload = decision.get("debug") or {}
             threshold_block = debug_payload.get("thresholds") or {}

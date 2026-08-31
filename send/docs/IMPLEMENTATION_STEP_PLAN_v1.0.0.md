@@ -335,6 +335,15 @@ Pentru fiecare step:
 
 Numai după validare se activează noul modul.
 
+Shadow observability status (2026-08-31):
+
+- the complete canonical pipeline observes the same normalized candles already fetched by the live engine
+- no additional market-data request is made
+- only the latest comparison snapshot is atomically replaced in `observability/canonical_shadow_snapshot.json`
+- live and canonical stage, direction, score and time evidence are kept distinct and directly comparable
+- any shadow failure is isolated and cannot interrupt the live `strategy_v2` decision path
+- the observer can be disabled with `CANONICAL_SHADOW_ENABLED=false`; it never enables signal handoff
+
 ---
 
 ## 14. FEATURE FLAGS
