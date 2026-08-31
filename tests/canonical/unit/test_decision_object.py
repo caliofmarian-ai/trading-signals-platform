@@ -18,6 +18,8 @@ from core.decision_object import (
 
 def _valid_decision() -> DecisionObject:
     return DecisionObject(
+        kind="CONFIRM",
+        signal_id="sig-v2-test",
         setup=SetupContext("EUR/USD", "BUY", 1_800_000_000, "M1", "cycle-1", "FINNHUB"),
         market_context=MarketContext(1.101, 0.0002, 0.0006, "WITH_TREND", "NORMAL", "STABLE", 0.0012),
         structure=StructureContext(
@@ -50,7 +52,7 @@ def test_decision_object_exposes_all_canonical_semantic_families() -> None:
     payload = _valid_decision().to_dict()
 
     assert set(payload) == {
-        "setup", "market_context", "structure", "time", "score", "strategic_flags",
+        "kind", "signal_id", "setup", "market_context", "structure", "time", "score", "strategic_flags",
         "reject", "fsm_inputs", "explanations", "schema_version", "producer", "compatibility_mode",
     }
     assert payload["time"]["model_time_reach_ratio"] == pytest.approx(0.66)
@@ -67,6 +69,8 @@ def test_rejectable_decision_requires_explicit_reject_semantics() -> None:
     valid = _valid_decision()
     with pytest.raises(ValueError, match="reject semantics"):
         DecisionObject(
+            kind="REJECT",
+            signal_id=None,
             setup=valid.setup,
             market_context=valid.market_context,
             structure=valid.structure,

@@ -10,11 +10,11 @@ SCHEMA_VERSION = "1.0.0"
 ALLOWED_OUTCOMES = frozenset(
     {"REJECT", "WAIT", "PREPARE", "CONFIRM", "OPEN_NOW", "DEGRADED", "BLOCKED"}
 )
-_TIER_OUTCOMES = {
-    "BELOW_PRE": "WAIT",
-    "SCORE_PRE_BAND": "PREPARE",
-    "SCORE_CONFIRM_BAND": "CONFIRM",
-    "SCORE_OPEN_BAND": "OPEN_NOW",
+_DECISION_OUTCOMES = {
+    "NO_SIGNAL": "WAIT",
+    "PRE": "PREPARE",
+    "CONFIRM": "CONFIRM",
+    "OPEN_NOW": "OPEN_NOW",
 }
 
 
@@ -105,11 +105,11 @@ def interpret_decision(
         reasons = tuple(decision.reject.soft_blockers) or ("degraded_setup",)
         explanation = "The evidence is degraded, so no actionable stage is exposed."
     else:
-        outcome = _TIER_OUTCOMES.get(decision.score.tier, "DEGRADED")
+        outcome = _DECISION_OUTCOMES.get(decision.kind, "DEGRADED")
         if outcome == "DEGRADED":
             reason_family = "UNKNOWN_SCORE_TIER"
-            reasons = (decision.score.tier,)
-            explanation = "The score tier is not recognized by the canonical FSM adapter."
+            reasons = (decision.kind,)
+            explanation = "The decision kind is not recognized by the canonical FSM adapter."
         else:
             reason_family = "CANONICAL_SCORE_BAND"
             reasons = (decision.score.tier,)

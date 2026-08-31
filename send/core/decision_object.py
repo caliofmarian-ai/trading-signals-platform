@@ -7,6 +7,8 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 SCHEMA_VERSION = "1.0.0"
 ALLOWED_DIRECTIONS = frozenset({"BUY", "SELL", "NONE"})
+ALLOWED_DECISION_KINDS = frozenset({"NO_SIGNAL", "PRE", "CONFIRM", "OPEN_NOW", "REJECT"})
+ACTIONABLE_DECISION_KINDS = frozenset({"PRE", "CONFIRM", "OPEN_NOW"})
 ALLOWED_TIME_STATES = frozenset({"EARLY", "BUILDING", "READY", "CRITICAL", "LATE", "EXPIRED", "UNAVAILABLE"})
 ALLOWED_STRUCTURE_STATES = frozenset({"VALID", "CONSTRAINED", "DEGRADED", "CONFLICTED", "INVALID", "UNAVAILABLE"})
 
@@ -169,6 +171,8 @@ class RejectContext:
 
 @dataclass(frozen=True)
 class DecisionObject:
+    kind: str
+    signal_id: Optional[str]
     setup: SetupContext
     market_context: MarketContext
     structure: StructureContext
@@ -183,6 +187,18 @@ class DecisionObject:
     compatibility_mode: bool = False
 
     def __post_init__(self) -> None:
+        if self.kind not in ALLOWED_DECISION_KINDS:
+            raise ValueError("kind is not canonical")
+        if self.kind in ACTIONABLE_DECISION_KINDS:
+            _required_text(self.signal_id, "signal_id")
+            if self.setup.direction not in {"BUY", "SELL"}:
+                raise ValueError("an actionable decision requires BUY or SELL direction")
+        elif self.signal_id is not None:
+            raise ValueError("non-actionable decisions must not expose signal_id")
+        if self.strategic_flags.rejectable and self.kind != "REJECT":
+            raise ValueError("rejectable strategic evidence requires REJECT kind")
+        if self.kind == "REJECT" and not self.strategic_flags.rejectable:
+            raise ValueError("REJECT kind requires rejectable strategic evidence")
         _required_text(self.schema_version, "schema_version")
         _required_text(self.producer, "producer")
         if self.strategic_flags.rejectable and not (self.reject.reason or self.reject.hard_blockers):
