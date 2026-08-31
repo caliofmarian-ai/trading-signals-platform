@@ -242,6 +242,44 @@
       ]
     },
     {
+      "key": "strategy_selection",
+      "title": "Choose Strategy",
+      "identity": "The governed selection surface for installed trading-strategy families.",
+      "purpose": "It shows which trading strategy is currently selected, which canonical specification governs it, and which future strategies remain unavailable.",
+      "pipeline_position": "Strategy selection identifies the installed decision family before market analysis; it does not itself calculate a decision, send a signal, or execute a trade.",
+      "controls": [
+        "Inspect the currently selected strategy and its canonical version.",
+        "Inspect future strategy families without activating them.",
+        "Return to Decision Visibility or Admin."
+      ],
+      "consequences": [
+        "Opening or refreshing this page is read-only.",
+        "A future strategy can become selectable only after implementation, validation, and Owner approval."
+      ],
+      "limitations": [
+        "Selecting or displaying a strategy does not enable signal delivery or broker execution.",
+        "No strategy can guarantee that every trade will win or produce profit."
+      ],
+      "canonical_sources": [
+        "ALGO_SPEC_v2.0.0.md",
+        "ADMIN_CONTROL_SPEC_v2.0.0.md"
+      ],
+      "glossary": [
+        [
+          "AVAILABLE",
+          "The strategy family is installed and may be selected under its governed controls."
+        ],
+        [
+          "NOT AVAILABLE YET",
+          "The strategy is a recorded future objective and has no active decision or execution logic."
+        ]
+      ],
+      "public": false,
+      "panel_actions": [
+        "DECISION_VIS"
+      ]
+    },
+    {
       "key": "thresholds",
       "title": "Decision Thresholds",
       "identity": "Minimum governed score boundaries for progressive decision stages.",

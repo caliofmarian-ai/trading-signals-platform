@@ -55,6 +55,18 @@ def test_future_forex_page_is_explicitly_blocked() -> None:
     assert "No Forex decision logic" in text
 
 
+def test_strategy_pages_use_selection_explanation_not_parameter_explanation(monkeypatch) -> None:
+    from core import bot_service
+
+    monkeypatch.setattr(bot_service, "_is_owner_private_for_message", lambda *_args: True)
+    message = {"chat": {"id": 1}, "from": {"id": 1}}
+
+    for action in ("STRATEGY_CHOOSE", "STRATEGY_FOREX_FUTURE"):
+        result = bot_service._handle_admin_navigation_action(action, 1, message)
+        assert "governed selection surface for installed trading-strategy families" in result["text"]
+        assert "adjustable decision parameters" not in result["text"]
+
+
 def test_choose_strategy_navigation_returns_v2_catalog_page(monkeypatch) -> None:
     from core import bot_service
 

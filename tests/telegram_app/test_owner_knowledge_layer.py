@@ -40,6 +40,7 @@ EXPECTED_KNOWLEDGE_KEYS = {
     "operations",
     "engine",
     "strategy",
+    "strategy_selection",
     "thresholds",
     "sr_corridor",
     "spike_filter",
@@ -484,6 +485,7 @@ def test_only_public_knowledge_is_available_through_app_navigation():
         (lambda: telegram_admin_ui.admin_home_markup(role=ROLE_OWNER), "admin_home"),
         (telegram_admin_ui.operations_markup, "operations"),
         (telegram_admin_ui.decision_visibility_markup, "decision_visibility"),
+        (telegram_admin_ui.strategy_choice_markup, "strategy_selection"),
         (telegram_admin_ui.distribution_markup, "distribution"),
         (telegram_admin_ui.research_markup, "research_analytics"),
         (telegram_admin_ui.intelligence_markup, "intelligence"),
@@ -528,6 +530,9 @@ def test_role_aware_knowledge_does_not_expand_panel_visibility():
     assert telegram_admin_ui.knowledge_visible_for_role(ROLE_OWNER, "security_audit")
     assert telegram_admin_ui.knowledge_visible_for_role(ROLE_AFFILIATE_ADMIN, "affiliate")
     assert not telegram_admin_ui.knowledge_visible_for_role(ROLE_AFFILIATE_ADMIN, "strategy")
+    assert not telegram_admin_ui.knowledge_visible_for_role(
+        ROLE_AFFILIATE_ADMIN, "strategy_selection"
+    )
     assert telegram_admin_ui.knowledge_visible_for_role(ROLE_ANALYST, "research_analytics")
     assert not telegram_admin_ui.knowledge_visible_for_role(ROLE_ANALYST, "symbols_coverage")
     assert telegram_admin_ui.knowledge_visible_for_role(ROLE_STRATEGY_ADMIN, "thresholds")

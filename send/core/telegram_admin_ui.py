@@ -589,7 +589,7 @@ def strategy_choice_markup() -> dict[str, list[list[dict[str, str]]]]:
         [_btn("✅ Binary Trading", "STRATEGY_CHOOSE")],
         [_btn("🌍 Forex Strategy — Future", "STRATEGY_FOREX_FUTURE")],
         [_btn("🔄 Refresh", "STRATEGY_CHOOSE")],
-        [_knowledge_btn("strategy", "STRATEGY_CHOOSE")],
+        [_knowledge_btn("strategy_selection", "STRATEGY_CHOOSE")],
         [_btn("⬅️ Decision Visibility", "DECISION_VIS")],
         [_btn("⬅️ Admin", "HOME")],
     ])

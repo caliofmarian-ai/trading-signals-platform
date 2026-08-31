@@ -1205,7 +1205,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             )
         return {
             "text": _format_surface(
-                "strategy",
+                "strategy_selection",
                 "🧭 Choose Strategy",
                 _surface_current_state(content),
             ),
@@ -1220,7 +1220,11 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         except Exception:
             content = "Forex Strategy\n\nCurrent state\nAvailability: UNAVAILABLE"
         return {
-            "text": _format_surface("strategy", "🌍 Forex Strategy", _surface_current_state(content)),
+            "text": _format_surface(
+                "strategy_selection",
+                "🌍 Forex Strategy",
+                _surface_current_state(content),
+            ),
             "reply_markup": telegram_admin_ui.future_forex_strategy_markup(),
         }
 
