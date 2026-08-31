@@ -31,6 +31,7 @@ from core import distribution_router
 from core import observability_logger
 from state_store import state_store as runtime_state_store
 
+from core.signal_execution_gate import prepare_signal_execution
 from core.strategy_v2 import decide
 from core.v2_fsm_orchestrator import advance_persistent_fsm, current_opportunity_signal_id
 
@@ -342,39 +343,53 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                     )
                 )
 
+            execution = prepare_signal_execution(
+                persistent_fsm,
+                decision,
+                buffer_mode=buffer_mode,
+                created_ts=now_ts,
+            )
+            decision_debug = {
+                "strategy": "BINARY_STRATEGY_V2",
+                "strategy_version": evaluation.strategy_version,
+                "canonical_spec": evaluation.canonical_spec,
+                "strategic_kind": decision.kind,
+                "cycle_id": evaluation.cycle_id,
+                "direction": decision.setup.direction,
+                "strategy_signal_handoff_ready": evaluation.signal_handoff_ready,
+                "execution_outcome": execution.outcome,
+                "execution_reason": execution.reason,
+                "distribution_allowed": execution.distribution_allowed,
+                "decision_object": decision.to_dict(),
+                "fsm": {
+                    "outcome": fsm.outcome,
+                    "reason_family": fsm.reason_family,
+                    "execution_ready": fsm.execution_ready,
+                    "reasons": list(fsm.reasons),
+                    "explanation": fsm.explanation,
+                },
+                "persistent_fsm": {
+                    "accepted": persistent_fsm.accepted,
+                    "state_changed": persistent_fsm.state_changed,
+                    "candidate_ready": persistent_fsm.candidate_ready,
+                    "reason": persistent_fsm.reason,
+                },
+                "execution_gate": execution.to_dict(),
+            }
+            decision_data = {
+                "symbol": symbol,
+                "decision_kind": fsm.outcome,
+                "score_total": decision.score.total,
+                "buffer_mode": buffer_mode,
+                "candle_ts": decision.setup.evaluated_ts,
+                "debug": decision_debug,
+            }
+            if decision.signal_id is not None:
+                decision_data["signal_id"] = decision.signal_id
+
             ev = observability_logger.build_event(
                 "decision",
-                {
-                    "symbol": symbol,
-                    "strategy": "BINARY_STRATEGY_V2",
-                    "strategy_version": evaluation.strategy_version,
-                    "canonical_spec": evaluation.canonical_spec,
-                    "decision_kind": fsm.outcome,
-                    "strategic_kind": decision.kind,
-                    "signal_id": decision.signal_id,
-                    "cycle_id": evaluation.cycle_id,
-                    "score_total": decision.score.total,
-                    "buffer_mode": buffer_mode,
-                    "candle_ts": decision.setup.evaluated_ts,
-                    "direction": decision.setup.direction,
-                    "signal_handoff_ready": evaluation.signal_handoff_ready,
-                    "execution_outcome": "NOT_EMITTED",
-                    "execution_reason": "V2_SIGNAL_CONTRACT_NOT_ENABLED",
-                    "decision_object": decision.to_dict(),
-                    "fsm": {
-                        "outcome": fsm.outcome,
-                        "reason_family": fsm.reason_family,
-                        "execution_ready": fsm.execution_ready,
-                        "reasons": list(fsm.reasons),
-                        "explanation": fsm.explanation,
-                    },
-                    "persistent_fsm": {
-                        "accepted": persistent_fsm.accepted,
-                        "state_changed": persistent_fsm.state_changed,
-                        "candidate_ready": persistent_fsm.candidate_ready,
-                        "reason": persistent_fsm.reason,
-                    },
-                },
+                decision_data,
                 source={"module": "signal_engine", "function": "run_once"},
             )
             observability_logger.log_event(ev)
