@@ -179,8 +179,8 @@ class DecisionObject:
     fsm_inputs: Mapping[str, Any]
     explanations: Tuple[str, ...]
     schema_version: str = SCHEMA_VERSION
-    producer: str = "canonical_strategy_shadow"
-    compatibility_mode: bool = True
+    producer: str = "binary_strategy_v2"
+    compatibility_mode: bool = False
 
     def __post_init__(self) -> None:
         _required_text(self.schema_version, "schema_version")

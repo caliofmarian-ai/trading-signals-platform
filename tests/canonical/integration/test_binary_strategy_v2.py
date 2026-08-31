@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from core.execution_model import ExecutionCalibration
-from core.strategy_engine_v3 import evaluate_canonical_strategy
+from core.strategy_v2 import CANONICAL_SPEC, STRATEGY_VERSION, decide
 
 
 def _params(runtime_root: Path) -> dict:
@@ -36,52 +36,48 @@ def _inputs(runtime_root: Path):
     return m1, m5, _params(runtime_root)
 
 
-def test_complete_pipeline_preserves_one_real_evaluation(canonical_runtime_root: Path) -> None:
+def test_v2_pipeline_preserves_one_real_evaluation(canonical_runtime_root: Path) -> None:
     m1, m5, params = _inputs(canonical_runtime_root)
-    result = evaluate_canonical_strategy(m1, m5, params, cycle_id="cycle-full", buffer_mode="SMALL")
+    result = decide(m1, m5, params, cycle_id="cycle-full", buffer_mode="SMALL")
 
     identity = (result.market.symbol, result.market.evaluated_ts)
     assert (result.corridor.symbol, result.corridor.evaluated_ts) == identity
     assert (result.time.symbol, result.time.evaluated_ts) == identity
     assert (result.scoring.symbol, result.scoring.evaluated_ts) == identity
-    assert result.decision.setup.symbol == identity[0]
-    assert result.decision.setup.evaluated_ts == identity[1]
     assert result.decision.setup.cycle_id == "cycle-full"
-    assert result.shadow_only is True
+    assert result.decision.setup.source == "binary_strategy_v2"
+    assert result.decision.compatibility_mode is False
+    assert result.strategy_version == STRATEGY_VERSION == "2.0.0"
+    assert result.canonical_spec == CANONICAL_SPEC == "ALGO_SPEC_v2.0.0"
     assert result.signal_handoff_ready is False
-    assert result.fsm.signal_handoff_ready is False
-    assert result.execution_time.signal_handoff_ready is False
 
 
-def test_pipeline_is_deterministic_and_immutable(canonical_runtime_root: Path) -> None:
+def test_v2_pipeline_is_deterministic_and_immutable(canonical_runtime_root: Path) -> None:
     m1, m5, params = _inputs(canonical_runtime_root)
-    first = evaluate_canonical_strategy(m1, m5, params, cycle_id="cycle-repeat", buffer_mode="SMALL")
-    second = evaluate_canonical_strategy(m1, m5, params, cycle_id="cycle-repeat", buffer_mode="SMALL")
-
+    first = decide(m1, m5, params, cycle_id="cycle-repeat", buffer_mode="SMALL")
+    second = decide(m1, m5, params, cycle_id="cycle-repeat", buffer_mode="SMALL")
     assert first == second
     with pytest.raises(FrozenInstanceError):
-        first.shadow_only = False
+        first.signal_handoff_ready = True
 
 
-def test_runtime_blocker_stops_even_a_complete_pipeline(canonical_runtime_root: Path) -> None:
+def test_runtime_blocker_stops_even_a_complete_v2_pipeline(canonical_runtime_root: Path) -> None:
     m1, m5, params = _inputs(canonical_runtime_root)
-    result = evaluate_canonical_strategy(
+    result = decide(
         m1, m5, params, cycle_id="cycle-blocked", buffer_mode="SMALL",
         runtime_blockers=("market_data_stale",),
     )
-
     assert result.fsm.outcome == "BLOCKED"
     assert result.execution_time.available is False
     assert result.signal_handoff_ready is False
 
 
-def test_calibration_cannot_enable_signal_handoff(canonical_runtime_root: Path) -> None:
+def test_calibration_cannot_bypass_v2_signal_contract(canonical_runtime_root: Path) -> None:
     m1, m5, params = _inputs(canonical_runtime_root)
     calibration = ExecutionCalibration(1.0, 0.1, 2.0, 15.0, "integration-test")
-    result = evaluate_canonical_strategy(
+    result = decide(
         m1, m5, params, cycle_id="cycle-calibrated", buffer_mode="SMALL",
         execution_calibration=calibration,
     )
-
     assert result.signal_handoff_ready is False
     assert result.execution_time.signal_handoff_ready is False

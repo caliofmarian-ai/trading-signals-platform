@@ -7,7 +7,7 @@
       "id": "binary_canonical",
       "name": "Binary Trading",
       "trade_type": "BINARY_OPTIONS",
-      "implementation": "CANONICAL_STRATEGY_STACK_v1.0.0",
+      "implementation": "ALGO_SPEC_v2.0.0",
       "availability": "AVAILABLE",
       "description": "The canonical BinaryBot strategy for binary-trading decisions."
     },

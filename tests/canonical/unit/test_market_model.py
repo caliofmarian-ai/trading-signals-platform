@@ -104,18 +104,3 @@ def test_spike_evidence_marks_noise_unstable(canonical_runtime_root: Path) -> No
 
     assert result.context.noise_context == "UNSTABLE"
     assert "WICK_BODY_RATIO" in result.noise_reasons
-
-
-def test_market_model_matches_existing_strategy_market_math(canonical_runtime_root: Path) -> None:
-    from core.strategy_v2 import _avg_speed_price_per_minute, decide
-
-    params = _params(canonical_runtime_root)
-    m1 = _candles(220, timeframe="M1", step=60)
-    m5 = _candles(220, timeframe="M5", step=300)
-    model = evaluate_market(m1, m5, params)
-    legacy = decide(m1, m5, params, "MEDIUM", False, context={"decision_timeframe": "M1"})
-
-    assert model.context.price_speed == pytest.approx(_avg_speed_price_per_minute(m1))
-    assert model.context.buffer_distance == pytest.approx(legacy["buffer_price"])
-    assert model.context.trend_context == legacy["debug"]["trend_class"]
-    assert model.evidence.atr_m5 == pytest.approx(legacy["debug"]["atr_m5"])

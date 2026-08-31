@@ -53,7 +53,7 @@ def assemble_decision(
     *,
     timeframe: str,
     cycle_id: str,
-    source: str = "canonical_strategy_shadow",
+    source: str = "binary_strategy_v2",
 ) -> DecisionObject:
     """Create the standardized pre-FSM contract without making an FSM decision."""
 
@@ -142,6 +142,6 @@ def assemble_decision(
         reject=reject,
         fsm_inputs=fsm_inputs,
         explanations=explanations,
-        producer="canonical_decision_assembly",
-        compatibility_mode=True,
+        producer="binary_strategy_v2_decision_assembly",
+        compatibility_mode=False,
     )
