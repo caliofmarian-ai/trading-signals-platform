@@ -1190,27 +1190,38 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             "reply_markup": telegram_admin_ui.decision_visibility_markup(),
         }
 
-    if action == "STRATEGY_COMPARE":
-        # Read-only comparison of live strategy_v2 and the canonical shadow pipeline.
-        from core import storage as _storage
-        from core.admin_views import render_strategy_comparison
+    if action in {"STRATEGY_CHOOSE", "STRATEGY_COMPARE"}:
+        # STRATEGY_COMPARE remains only as recovery for buttons sent before the rename.
+        from core.strategy_catalog import load_strategy_catalog, render_strategy_choice
 
-        snapshot_path = _storage.root_path("observability", "canonical_shadow_snapshot.json")
-        snapshot = _storage.load_json(snapshot_path, default={})
-        status_snapshot = _build_status_snapshot()
+        try:
+            content = render_strategy_choice(load_strategy_catalog())
+        except Exception:
+            content = (
+                "Choose Strategy\n\n"
+                "Current selection\n"
+                "Strategy catalog: UNAVAILABLE\n"
+                "No strategy selection is presented because the catalog could not be validated."
+            )
         return {
             "text": _format_surface(
-                "decision_visibility",
-                "⚖️ Strategy Comparison",
-                _surface_current_state(
-                    render_strategy_comparison(
-                        snapshot if isinstance(snapshot, dict) else None,
-                        now_ts=int(time.time()),
-                        status_snapshot=status_snapshot,
-                    )
-                ),
+                "strategy",
+                "🧭 Choose Strategy",
+                _surface_current_state(content),
             ),
-            "reply_markup": telegram_admin_ui.strategy_comparison_markup(),
+            "reply_markup": telegram_admin_ui.strategy_choice_markup(),
+        }
+
+    if action == "STRATEGY_FOREX_FUTURE":
+        from core.strategy_catalog import load_strategy_catalog, render_future_forex
+
+        try:
+            content = render_future_forex(load_strategy_catalog())
+        except Exception:
+            content = "Forex Strategy\n\nCurrent state\nAvailability: UNAVAILABLE"
+        return {
+            "text": _format_surface("strategy", "🌍 Forex Strategy", _surface_current_state(content)),
+            "reply_markup": telegram_admin_ui.future_forex_strategy_markup(),
         }
 
     if action == "DISTRIBUTION":

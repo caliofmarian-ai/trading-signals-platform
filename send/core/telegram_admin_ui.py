@@ -58,6 +58,8 @@ _SAFE_KNOWLEDGE_RETURN_ACTIONS: frozenset[str] = frozenset({
     "DEBUG",
     "DECISION_VIS",
     "STRATEGY_COMPARE",
+    "STRATEGY_CHOOSE",
+    "STRATEGY_FOREX_FUTURE",
     "DISTRIBUTION",
     "RESEARCH",
     "REPORT",
@@ -136,6 +138,8 @@ CANONICAL_ADMIN_PARENT_MAP: dict[str, str] = {
     "OPERATIONS": "HOME",
     "DECISION_VIS": "HOME",
     "STRATEGY_COMPARE": "DECISION_VIS",
+    "STRATEGY_CHOOSE": "DECISION_VIS",
+    "STRATEGY_FOREX_FUTURE": "STRATEGY_CHOOSE",
     "DISTRIBUTION": "HOME",
     "RESEARCH": "HOME",
     "INTELLIGENCE": "HOME",
@@ -572,21 +576,35 @@ def decision_visibility_markup() -> dict[str, list[list[dict[str, str]]]]:
     Purpose: last decision, gate results, rejection reasons, score composition.
     """
     return _kb([
-        [_btn("⚖️ Compare Strategies", "STRATEGY_COMPARE")],
+        [_btn("🧭 Choose Strategy", "STRATEGY_CHOOSE")],
         [_btn("🔄 Refresh", "DECISION_VIS")],
         [_knowledge_btn("decision_visibility", "DECISION_VIS")],
         [_btn("⬅️ Admin", "HOME")],
     ])
 
 
-def strategy_comparison_markup() -> dict[str, list[list[dict[str, str]]]]:
-    """Read-only live-versus-canonical comparison navigation."""
+def strategy_choice_markup() -> dict[str, list[list[dict[str, str]]]]:
+    """Trading-strategy family selection navigation."""
     return _kb([
-        [_btn("🔄 Refresh Comparison", "STRATEGY_COMPARE")],
-        [_knowledge_btn("decision_visibility", "STRATEGY_COMPARE")],
+        [_btn("✅ Binary Trading", "STRATEGY_CHOOSE")],
+        [_btn("🌍 Forex Strategy — Future", "STRATEGY_FOREX_FUTURE")],
+        [_btn("🔄 Refresh", "STRATEGY_CHOOSE")],
+        [_knowledge_btn("strategy", "STRATEGY_CHOOSE")],
         [_btn("⬅️ Decision Visibility", "DECISION_VIS")],
         [_btn("⬅️ Admin", "HOME")],
     ])
+
+
+def future_forex_strategy_markup() -> dict[str, list[list[dict[str, str]]]]:
+    return _kb([
+        [_btn("⬅️ Choose Strategy", "STRATEGY_CHOOSE")],
+        [_btn("⬅️ Admin", "HOME")],
+    ])
+
+
+def strategy_comparison_markup() -> dict[str, list[list[dict[str, str]]]]:
+    """Compatibility alias for Telegram messages created before Choose Strategy."""
+    return strategy_choice_markup()
 
 
 def distribution_markup() -> dict[str, list[list[dict[str, str]]]]:
