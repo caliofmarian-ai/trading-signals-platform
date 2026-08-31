@@ -37,12 +37,13 @@ signal_execution_result must not replace or be confused with:
 - decision_rejected
 - decision_no_signal
 - fsm_transition
-- signal_emitted
 - signal_stage_visible
 - route_publish_attempt
 - route_publish_result
 
 Each family preserves a distinct truth domain.
+
+Legacy signal_emitted is addressed explicitly in Section 13 as a compatibility family, not as the primary v3 execution truth.
 
 ## 4. Execution Outcome Enum
 
@@ -178,11 +179,18 @@ Execution truth must not exist only inside generic decision debug data.
 
 ## 13. Signal Lifecycle Event Clarification
 
-signal_stage_visible remains reserved for governed external visibility evidence.
+The proposed v3 primary families are:
+- signal_execution_result for signal-engine execution truth;
+- signal_stage_visible for governed external lifecycle visibility;
+- route_publish_attempt / route_publish_result for exact route publication truth.
 
-A SignalEvent candidate built while distribution is intentionally not invoked must not produce signal_stage_visible.
+The legacy signal_emitted family becomes a compatibility-only event name in the v3 migration model. It must not be emitted as the primary v3 proof for new execution attempts after migration completes.
 
-The complete successor must reconcile the exact role of signal_emitted with signal_execution_result so that no event name can claim external delivery without downstream proof.
+Historical signal_emitted records remain readable as historical evidence under their original schema/version. They must not be silently reinterpreted as signal_execution_result or signal_stage_visible.
+
+A SignalEvent candidate built while distribution is intentionally not invoked must produce neither signal_stage_visible nor a new primary signal_emitted event.
+
+This removes the ambiguity between internal candidate construction and external delivery.
 
 ## 14. Distribution Event Preservation
 
@@ -201,6 +209,7 @@ The same trade idea must preserve the same signal_id across:
 - OPEN_NOW
 - signal_execution_result events for those stages
 - downstream distribution events
+- signal_stage_visible when external visibility occurs
 - outcome/reconciliation events where applicable
 
 ## 16. Dedup Observability
@@ -213,8 +222,8 @@ Distribution-side dedup remains represented in distribution events.
 
 Before active promotion:
 1. materialize a complete self-contained successor EVENT_SCHEMA specification;
-2. explicitly reconcile signal_emitted versus signal_execution_result semantics;
-3. define compatibility status for legacy generic runtime event families;
+2. encode signal_emitted as compatibility-only for new v3 behavior while preserving historical readability;
+3. define compatibility status for generic legacy runtime event families;
 4. update runtime schema only in a later code PR after canonical promotion;
 5. update observability logging mechanics only after promotion;
 6. add schema-validation tests for all execution phases/outcomes;
