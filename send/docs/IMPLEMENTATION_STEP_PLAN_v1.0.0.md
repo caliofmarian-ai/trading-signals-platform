@@ -274,6 +274,15 @@ confirm_expiry = model_expiry ± confirm_delta
 
 open_now_expiry = model_expiry × (1 - pressure_bias)
 
+Implementation status (2026-08-31):
+
+- implemented first as a deterministic shadow module in `core/execution_model.py`
+- consumes a synchronized `DecisionObject` and shadow FSM interpretation
+- CONFIRM exposes a calibrated min-max interval; OPEN_NOW may expose an exact value inside that interval
+- missing calibration remains explicitly unavailable because active canon does not define numeric defaults
+- does not round fractional expiry arbitrarily, publish signals, schedule telemetry or authorize broker execution
+- the existing mixed execution/publishing behavior remains unchanged until shadow comparison is complete
+
 ---
 
 ## 11. STEP 114 — STRATEGY ENGINE REBUILD
