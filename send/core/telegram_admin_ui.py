@@ -57,6 +57,7 @@ _SAFE_KNOWLEDGE_RETURN_ACTIONS: frozenset[str] = frozenset({
     "ENGINE",
     "DEBUG",
     "DECISION_VIS",
+    "STRATEGY_COMPARE",
     "DISTRIBUTION",
     "RESEARCH",
     "REPORT",
@@ -134,6 +135,7 @@ CANONICAL_ADMIN_PARENT_MAP: dict[str, str] = {
     "SPIKE": "STRATEGY",
     "OPERATIONS": "HOME",
     "DECISION_VIS": "HOME",
+    "STRATEGY_COMPARE": "DECISION_VIS",
     "DISTRIBUTION": "HOME",
     "RESEARCH": "HOME",
     "INTELLIGENCE": "HOME",
@@ -570,8 +572,19 @@ def decision_visibility_markup() -> dict[str, list[list[dict[str, str]]]]:
     Purpose: last decision, gate results, rejection reasons, score composition.
     """
     return _kb([
+        [_btn("⚖️ Compare Strategies", "STRATEGY_COMPARE")],
         [_btn("🔄 Refresh", "DECISION_VIS")],
         [_knowledge_btn("decision_visibility", "DECISION_VIS")],
+        [_btn("⬅️ Admin", "HOME")],
+    ])
+
+
+def strategy_comparison_markup() -> dict[str, list[list[dict[str, str]]]]:
+    """Read-only live-versus-canonical comparison navigation."""
+    return _kb([
+        [_btn("🔄 Refresh Comparison", "STRATEGY_COMPARE")],
+        [_knowledge_btn("decision_visibility", "STRATEGY_COMPARE")],
+        [_btn("⬅️ Decision Visibility", "DECISION_VIS")],
         [_btn("⬅️ Admin", "HOME")],
     ])
 
