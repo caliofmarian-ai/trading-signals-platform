@@ -116,22 +116,3 @@ def test_result_is_deterministic_and_deeply_immutable(canonical_runtime_root: Pa
     with pytest.raises(TypeError):
         first.context.components["context_trend"] = 0  # type: ignore[index]
     assert dict(asdict(first.context)["components"]) == dict(first.context.components)
-
-
-def test_matches_existing_strategy_score_math(canonical_runtime_root: Path) -> None:
-    from core.strategy_v2 import decide
-
-    params, m1, m5, market, corridor, time = _inputs(canonical_runtime_root)
-    result = evaluate_score(market, corridor, time, params)
-    legacy = decide(m1, m5, params, "SMALL", False, context={"decision_timeframe": "M1"})
-    legacy_scores = legacy["debug"]["scores"]
-
-    expected = {
-        "context_trend": legacy_scores["trend"],
-        "momentum_rsi": legacy_scores["rsi"],
-        "candle_body_expansion": legacy_scores["body"],
-        "structure_corridor": legacy_scores["structure"],
-        "time_feasibility": legacy_scores["feasibility"],
-    }
-    assert dict(result.context.components) == pytest.approx(expected)
-    assert result.context.total == pytest.approx(legacy_scores["total"])

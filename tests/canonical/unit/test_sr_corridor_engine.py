@@ -143,17 +143,3 @@ def test_corridor_is_deterministic_immutable_and_preserves_inputs(canonical_runt
     assert m5 == before
     with pytest.raises(FrozenInstanceError):
         first.direction = "SELL"  # type: ignore[misc]
-
-
-def test_matches_existing_strategy_structural_math(canonical_runtime_root: Path) -> None:
-    from core.strategy_v2 import decide
-
-    params, m1, m5, market = _inputs(canonical_runtime_root)
-    result = evaluate_corridor(m5, market, params)
-    legacy = decide(m1, m5, params, "MEDIUM", False, context={"decision_timeframe": "M1"})
-    legacy_sr = legacy["debug"]["sr"]
-
-    assert result.structure.support == pytest.approx(legacy_sr["nearest_support"])
-    assert result.structure.resistance == pytest.approx(legacy_sr["nearest_resistance"])
-    assert result.structure.available_distance == pytest.approx(legacy_sr["available_space"])
-    assert result.evidence.required_distance == pytest.approx(legacy["debug"]["required_space"])

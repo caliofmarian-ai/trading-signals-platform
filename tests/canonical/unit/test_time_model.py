@@ -128,14 +128,3 @@ def test_time_result_is_deterministic_and_immutable(canonical_runtime_root: Path
     assert first == second
     with pytest.raises(FrozenInstanceError):
         first.temporally_feasible = False  # type: ignore[misc]
-
-
-def test_matches_existing_strategy_time_math(canonical_runtime_root: Path) -> None:
-    from core.strategy_v2 import decide
-
-    params, m1, m5, market, corridor = _inputs(canonical_runtime_root)
-    result = evaluate_time(market, corridor, params)
-    legacy = decide(m1, m5, params, "SMALL", False, context={"decision_timeframe": "M1"})
-
-    assert result.context.t_needed_adjusted == pytest.approx(legacy["debug"]["expiry"]["t_needed_adj"])
-    assert result.context.model_expiry == pytest.approx(legacy["debug"]["expiry"]["selected"])

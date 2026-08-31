@@ -23,10 +23,10 @@ def make_signal_event(signal_id: str = "sig-001", stage: str = "OPEN_NOW", **ove
     return event
 
 
-def make_candles(symbol: str = "EURUSD", timeframe: str = "M1") -> list[dict[str, Any]]:
+def make_candles(symbol: str = "EURUSD", timeframe: str = "M1", count: int = 30) -> list[dict[str, Any]]:
     """Build canonical newest-first candles (``candles[0]`` is newest)."""
     candles = []
-    for i in range(30):
+    for i in range(count):
         ts = 1720000000 + i * 60
         base = 1.1000 + (i * 0.0002)
         candles.append(

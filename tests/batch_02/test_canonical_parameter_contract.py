@@ -179,35 +179,6 @@ def test_score_thresholds_has_one_canonical_path(tmp_path):
 # TEST 5: score_thresholds has one representation end-to-end
 # ---------------------------------------------------------------------------
 
-def test_score_thresholds_end_to_end_representation():
-    """score_thresholds keys in config, loader, and strategy must align."""
-    pl = _import_params_loader()
-    params = pl.load_algo_params(str(SEND_ROOT / "config" / "algo_params.json"))
-
-    # Loader returns canonical uppercase keys.
-    st = params["score_thresholds"]
-    assert "PRE" in st
-    assert "CONFIRM" in st
-    assert "OPEN" in st
-
-    # strategy_v2.decide() reads exactly these uppercase keys.
-    strat = _import_strategy()
-    candles_1m = [
-        {"open": 1.1, "high": 1.12, "low": 1.09, "close": 1.11, "ts": 1000 + i}
-        for i in reversed(range(30))
-    ]
-    candles_5m = [
-        {"open": 1.1, "high": 1.12, "low": 1.09, "close": 1.11, "ts": 5000 + i * 5}
-        for i in reversed(range(60))
-    ]
-    result = strat.decide(candles_1m, candles_5m, params, buffer_mode="MEDIUM", want_open_now=False)
-    # Strategy ran successfully — thresholds were consumed from canonical shape.
-    assert "kind" in result
-    assert result["debug"]["thresholds"]["PRE"] == st["PRE"]
-    assert result["debug"]["thresholds"]["CONFIRM"] == st["CONFIRM"]
-    assert result["debug"]["thresholds"]["OPEN"] == st["OPEN"]
-
-
 # ---------------------------------------------------------------------------
 # TEST 6: Unknown parameters are rejected
 # ---------------------------------------------------------------------------
@@ -794,35 +765,6 @@ def test_failed_reload_preserves_last_valid_state(tmp_path):
 # TEST 22: Strategy evaluation receives updated canonical parameter values
 # ---------------------------------------------------------------------------
 
-def test_strategy_uses_canonical_score_thresholds(tmp_path):
-    """Passing custom score_thresholds to strategy_v2.decide() must affect decision kind."""
-    strat = _import_strategy()
-
-    # Build candles that will generate a score above default thresholds.
-    # Use flat trend (ema_fast ~ ema_slow) with RSI bias toward BUY.
-    candles_1m = [
-        {"open": 1.10 + 0.0001 * i, "high": 1.11 + 0.0001 * i,
-         "low": 1.09 + 0.0001 * i, "close": 1.105 + 0.0001 * i,
-         "ts": 1000 + i, "symbol": "EURUSD"}
-        for i in reversed(range(30))
-    ]
-    candles_5m = [
-        {"open": 1.10, "high": 1.12, "low": 1.09, "close": 1.11, "ts": 5000 + i * 5}
-        for i in reversed(range(60))
-    ]
-
-    # With very low thresholds, most setups should reach CONFIRM or above.
-    low_thr_params = _canonical_params()
-    low_thr_params["score_thresholds"] = {"PRE": 1, "CONFIRM": 2, "OPEN": 3}
-    low_thr_params["expiry_limits_minutes"]["max"] = 15
-    low_thr_params["buffer_multipliers"]["MEDIUM"] = 0.55
-
-    result = strat.decide(candles_1m, candles_5m, low_thr_params, "MEDIUM", True)
-    # The debug block must show the custom thresholds
-    assert result["debug"]["thresholds"]["PRE"] == 1
-    assert result["debug"]["thresholds"]["CONFIRM"] == 2
-
-
 # ---------------------------------------------------------------------------
 # TEST 23: Parameter module imports produce no network calls or side effects
 # ---------------------------------------------------------------------------
@@ -886,38 +828,3 @@ def test_batch_01_core_imports_still_side_effect_free(monkeypatch):
 # ---------------------------------------------------------------------------
 # TEST 25: No unrelated strategy behavior changes
 # ---------------------------------------------------------------------------
-
-def test_strategy_v2_decide_produces_deterministic_output():
-    """
-    strategy_v2.decide() must return a deterministic result for identical inputs,
-    and must not have changed its output contract.
-    """
-    strat = _import_strategy()
-
-    candles_1m = [
-        {"open": 1.1000, "high": 1.1020, "low": 1.0980, "close": 1.1010,
-         "ts": 1000 + i, "symbol": "EURUSD"}
-        for i in reversed(range(30))
-    ]
-    candles_5m = [
-        {"open": 1.1000, "high": 1.1030, "low": 1.0970, "close": 1.1010,
-         "ts": 5000 + i * 5}
-        for i in reversed(range(60))
-    ]
-    params = _canonical_params()
-
-    result1 = strat.decide(candles_1m, candles_5m, params, "MEDIUM", False)
-    result2 = strat.decide(candles_1m, candles_5m, params, "MEDIUM", False)
-
-    # Deterministic
-    assert result1["kind"] == result2["kind"]
-    assert result1["score_total"] == result2["score_total"]
-
-    # Contract keys still present
-    required_keys = {"kind", "signal_id", "symbol", "timeframe", "direction",
-                     "score_total", "buffer_mode", "buffer_price", "expiry_minutes",
-                     "want_open_now", "gates", "debug", "candle_ts"}
-    assert required_keys.issubset(set(result1.keys()))
-
-    # kind must be one of the canonical values
-    assert result1["kind"] in {"OPEN_NOW", "CONFIRM", "PRE", "NO_SIGNAL", "REJECT"}

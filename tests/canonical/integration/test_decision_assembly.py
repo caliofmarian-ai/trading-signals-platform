@@ -79,7 +79,8 @@ def test_decision_serializes_to_plain_json_ready_evidence(canonical_runtime_root
     payload = decision.to_dict()
 
     encoded = json.dumps(payload, sort_keys=True)
-    assert '"producer": "canonical_decision_assembly"' in encoded
+    assert '"producer": "binary_strategy_v2_decision_assembly"' in encoded
+    assert payload["compatibility_mode"] is False
     assert isinstance(payload["score"]["components"], dict)
     assert isinstance(payload["fsm_inputs"], dict)
     assert isinstance(payload["reject"]["hard_blockers"], list)

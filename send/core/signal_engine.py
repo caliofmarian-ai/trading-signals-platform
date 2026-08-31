@@ -40,66 +40,6 @@ ALGO_PARAMS_PATH = config_path("algo_params.json")
 TPS_METRICS_PATH = os.path.join(os.getenv("OBS_DIR", storage.root_path("observability")), "tps_metrics.jsonl")
 
 
-def _canonical_shadow_enabled() -> bool:
-    return os.getenv("CANONICAL_SHADOW_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _canonical_shadow_inputs_ready(
-    candles_m1: List[Dict[str, Any]],
-    candles_m5: List[Dict[str, Any]],
-    params: Dict[str, Any],
-) -> bool:
-    strategy = params.get("strategy_v2") if isinstance(params, dict) else None
-    if not isinstance(strategy, dict):
-        return False
-    try:
-        minimum_m1 = max(21, int(strategy["rsi_period"]) + 1)
-        minimum_m5 = max(15, int(strategy["ema_slow"]) + 1)
-    except (KeyError, TypeError, ValueError):
-        return False
-    required_blocks = (
-        "score_thresholds", "expiry_limits_minutes", "buffer_multipliers",
-        "spike_filters", "trend_time_adjust", "structure_factor",
-    )
-    return len(candles_m1) >= minimum_m1 and len(candles_m5) >= minimum_m5 and all(
-        isinstance(params.get(name), dict) for name in required_blocks
-    )
-
-
-def _observe_canonical_shadow(
-    candles_m1: List[Dict[str, Any]],
-    candles_m5: List[Dict[str, Any]],
-    params: Dict[str, Any],
-    decision: Dict[str, Any],
-    *,
-    now_ts: int,
-    buffer_mode: str,
-) -> None:
-    """Observe only; every failure is isolated from the live decision path."""
-    if not _canonical_shadow_enabled() or not _canonical_shadow_inputs_ready(candles_m1, candles_m5, params):
-        return
-    try:
-        from core.shadow_strategy_observer import observe_and_persist
-
-        observe_and_persist(
-            candles_m1,
-            candles_m5,
-            params,
-            decision,
-            observed_ts=now_ts,
-            buffer_mode=buffer_mode,
-            output_path=storage.root_path("observability", "canonical_shadow_snapshot.json"),
-        )
-    except Exception as exc:
-        observability_logger.log_error({
-            "severity": "WARNING",
-            "error_type": "canonical_shadow_observation_unavailable",
-            "message": str(exc),
-            "context": {"symbol": decision.get("symbol"), "candle_ts": decision.get("candle_ts")},
-            "source": {"module": "signal_engine", "function": "_observe_canonical_shadow"},
-        })
-
-
 def _load_active_symbols() -> List[str]:
     """
     Supports BOTH formats:
@@ -375,111 +315,45 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
             candle_adapter.validate(candles_m1)
             candle_adapter.validate(candles_m5)
 
-            want_open_now = bool(effective_in_focus)
-
-            decision = decide(
+            evaluation = decide(
                 candles_m1=candles_m1,
                 candles_m5=candles_m5,
                 params=params,
                 buffer_mode=buffer_mode,
-                want_open_now=want_open_now,
-                context={}
+                want_open_now=bool(effective_in_focus),
+                context={"decision_timeframe": "M1"},
             )
-            decision = _normalize_decision_for_fsm(decision, state)
-
-            _observe_canonical_shadow(
-                candles_m1,
-                candles_m5,
-                params,
-                decision,
-                now_ts=now_ts,
-                buffer_mode=buffer_mode,
-            )
-
-            debug_payload = decision.get("debug") or {}
-            threshold_block = debug_payload.get("thresholds") or {}
+            decision = evaluation.decision
+            fsm = evaluation.fsm
 
             ev = observability_logger.build_event(
                 "decision",
                 {
                     "symbol": symbol,
-                    "decision_kind": decision.get("kind"),
-                    "signal_id": decision.get("signal_id"),
-                    "score_total": decision.get("score_total"),
-                    "buffer_mode": decision.get("buffer_mode"),
-                    "expiry_minutes": decision.get("expiry_minutes"),
-                    "candle_ts": decision.get("candle_ts"),
-                    "gates": decision.get("gates"),
-                    "debug": debug_payload,
-                    "threshold_pre": threshold_block.get("PRE"),
-                    "threshold_confirm": threshold_block.get("CONFIRM"),
-                    "threshold_open": threshold_block.get("OPEN"),
-                    "threshold_source": debug_payload.get("threshold_source"),
-                    "threshold_config_error": debug_payload.get("threshold_config_error"),
+                    "strategy": "BINARY_STRATEGY_V2",
+                    "strategy_version": evaluation.strategy_version,
+                    "canonical_spec": evaluation.canonical_spec,
+                    "decision_kind": fsm.outcome,
+                    "cycle_id": evaluation.cycle_id,
+                    "score_total": decision.score.total,
+                    "buffer_mode": buffer_mode,
+                    "candle_ts": decision.setup.evaluated_ts,
+                    "direction": decision.setup.direction,
+                    "signal_handoff_ready": evaluation.signal_handoff_ready,
+                    "execution_outcome": "NOT_EMITTED",
+                    "execution_reason": "V2_SIGNAL_CONTRACT_NOT_ENABLED",
+                    "decision_object": decision.to_dict(),
+                    "fsm": {
+                        "outcome": fsm.outcome,
+                        "reason_family": fsm.reason_family,
+                        "execution_ready": fsm.execution_ready,
+                        "reasons": list(fsm.reasons),
+                        "explanation": fsm.explanation,
+                    },
                 },
                 source={"module": "signal_engine", "function": "run_once"},
             )
             observability_logger.log_event(ev)
-
-            _log_tps_metrics(decision, now_ts)
-
-            state, transition_info = fsm_runtime.apply_transition(state, decision, now_ts)
-            fsm_runtime.save_state(state)
-
-            if transition_info:
-                ev = observability_logger.build_event(
-                    "fsm_transition",
-                    transition_info,
-                    source={"module": "signal_engine", "function": "run_once"},
-                )
-                observability_logger.log_event(ev)
-
-            if decision.get("kind") in ("PRE", "CONFIRM", "OPEN_NOW"):
-                event = _make_signal_event(decision, now_ts)
-
-                if decision.get("kind") == "OPEN_NOW":
-                    try:
-                        tps_row = _extract_tps_metrics(decision, now_ts)
-                        if isinstance(tps_row, dict):
-                            event["TPS"] = tps_row.get("TPS")
-                            event["space_to_buffer_ratio"] = tps_row.get("space_to_buffer_ratio")
-                            event["trade_space_margin_atr"] = tps_row.get("trade_space_margin_atr")
-                            event["time_to_buffer_ratio"] = tps_row.get("time_to_buffer_ratio")
-                            event["directional_speed_ratio"] = tps_row.get("directional_speed_ratio")
-                            event["movement_stress"] = tps_row.get("movement_stress")
-                    except Exception:
-                        pass
-
-                    try:
-                        telemetry = _load_trade_temporal_telemetry()
-                        telemetry.register_open_now_trade(event, now_ts)
-                    except Exception as reg_err:
-                        try:
-                            observability_logger.log_warning(
-                                warn_type="OPEN_NOW_TELEMETRY_REGISTER_FAILED",
-                                message="Failed to register OPEN_NOW trade in temporal telemetry",
-                                context={
-                                    "symbol": event.get("symbol"),
-                                    "signal_id": event.get("signal_id"),
-                                    "error": str(reg_err),
-                                },
-                                source={"module": "signal_engine", "function": "run_once"},
-                            )
-                        except Exception:
-                            pass
-
-                distribution_router.route(event, now_ts)
-
-                if decision.get("kind") == "OPEN_NOW":
-                    state, close_event = fsm_runtime.complete_open_now(state, decision, now_ts)
-                    fsm_runtime.save_state(state)
-                    observability_logger.log_event(
-                        observability_logger.build_event(
-                            "fsm_transition",
-                            close_event,
-                            source={"module": "signal_engine", "function": "run_once"},
-                        )
-                    )
 
         except Exception as e:
             if isinstance(e, MarketDataRateLimitError):
