@@ -1197,6 +1197,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
 
         snapshot_path = _storage.root_path("observability", "canonical_shadow_snapshot.json")
         snapshot = _storage.load_json(snapshot_path, default={})
+        status_snapshot = _build_status_snapshot()
         return {
             "text": _format_surface(
                 "decision_visibility",
@@ -1205,6 +1206,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
                     render_strategy_comparison(
                         snapshot if isinstance(snapshot, dict) else None,
                         now_ts=int(time.time()),
+                        status_snapshot=status_snapshot,
                     )
                 ),
             ),

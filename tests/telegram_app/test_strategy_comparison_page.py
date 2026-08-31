@@ -77,6 +77,52 @@ def test_missing_invalid_and_stale_snapshots_remain_explicit() -> None:
     assert "New strategy says" not in stale
 
 
+def test_missing_comparison_shows_real_collection_progress() -> None:
+    text = render_strategy_comparison(
+        None,
+        now_ts=1_800_000_000,
+        status_snapshot={
+            "market_data_candle_counts": {"M1": 37, "M5": 9},
+            "market_data_minimum_candles": 201,
+            "market_data_persistence_state": "ACTIVE",
+        },
+    )
+    assert "M1: 37/201 real candles — 164 still required" in text
+    assert "M5: 9/201 real candles — 192 still required" in text
+    assert "Persistent history: ACTIVE" in text
+    assert "Action required: none" in text
+
+
+def test_missing_comparison_does_not_invent_collection_progress() -> None:
+    text = render_strategy_comparison(None, now_ts=1_800_000_000, status_snapshot={})
+    assert "History progress: UNAVAILABLE" in text
+    assert "M1:" not in text
+
+
+def test_invalid_boolean_or_negative_counts_remain_unavailable() -> None:
+    for counts in ({"M1": True, "M5": 9}, {"M1": 37, "M5": -1}):
+        text = render_strategy_comparison(
+            None,
+            now_ts=1_800_000_000,
+            status_snapshot={
+                "market_data_candle_counts": counts,
+                "market_data_minimum_candles": 201,
+            },
+        )
+        assert "History progress: UNAVAILABLE" in text
+        assert "real candles" not in text
+
+    boolean_minimum = render_strategy_comparison(
+        None,
+        now_ts=1_800_000_000,
+        status_snapshot={
+            "market_data_candle_counts": {"M1": 1, "M5": 1},
+            "market_data_minimum_candles": True,
+        },
+    )
+    assert "History progress: UNAVAILABLE" in boolean_minimum
+
+
 def test_future_comparison_time_is_blocked() -> None:
     text = render_strategy_comparison(_snapshot(), now_ts=1_799_999_999)
     assert "Comparison: UNAVAILABLE" in text
@@ -96,6 +142,7 @@ def test_navigation_action_reads_snapshot_and_returns_live_page(monkeypatch) -> 
 
     monkeypatch.setattr(bot_service, "_is_owner_private_for_message", lambda *_args: True)
     monkeypatch.setattr(storage, "load_json", lambda *_args, **_kwargs: _snapshot())
+    monkeypatch.setattr(bot_service, "_build_status_snapshot", lambda: {})
     monkeypatch.setattr(bot_service.time, "time", lambda: 1_800_000_004)
 
     result = bot_service._handle_admin_navigation_action(
@@ -107,3 +154,26 @@ def test_navigation_action_reads_snapshot_and_returns_live_page(monkeypatch) -> 
     callbacks = _callbacks(result["reply_markup"])
     assert f"{CALLBACK_PREFIX}STRATEGY_COMPARE" in callbacks
     assert f"{CALLBACK_PREFIX}DECISION_VIS" in callbacks
+
+
+def test_navigation_action_uses_runtime_progress_when_comparison_is_absent(monkeypatch) -> None:
+    from core import bot_service, storage
+
+    monkeypatch.setattr(bot_service, "_is_owner_private_for_message", lambda *_args: True)
+    monkeypatch.setattr(storage, "load_json", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        bot_service,
+        "_build_status_snapshot",
+        lambda: {
+            "market_data_candle_counts": {"M1": 50, "M5": 12},
+            "market_data_minimum_candles": 201,
+            "market_data_persistence_state": "ACTIVE",
+        },
+    )
+
+    result = bot_service._handle_admin_navigation_action(
+        "STRATEGY_COMPARE", 1, {"chat": {"id": 1}, "from": {"id": 1}}
+    )
+
+    assert "M1: 50/201 real candles — 151 still required" in result["text"]
+    assert "M5: 12/201 real candles — 189 still required" in result["text"]

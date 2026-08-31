@@ -149,18 +149,52 @@ def render_strategy_comparison(
     *,
     now_ts: int,
     maximum_age_seconds: int = 15,
+    status_snapshot: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Render the latest shadow comparison in owner-readable language."""
     if not isinstance(snapshot, dict) or not snapshot:
-        return _lines([
+        lines = [
             "Strategy Comparison",
             "",
             "Current state",
             "Comparison: NOT AVAILABLE YET",
             "Meaning: the bot has not produced a complete comparison file yet.",
-            "This normally means that real history is still collecting or Railway has only recently restarted.",
-            "Action required: none. Refresh after the real M1 and M5 history is complete.",
-        ])
+        ]
+        status = status_snapshot if isinstance(status_snapshot, dict) else {}
+        counts = status.get("market_data_candle_counts")
+        minimum = status.get("market_data_minimum_candles")
+        if (
+            isinstance(counts, dict)
+            and isinstance(minimum, int)
+            and not isinstance(minimum, bool)
+            and minimum > 0
+            and isinstance(counts.get("M1"), int)
+            and not isinstance(counts.get("M1"), bool)
+            and counts["M1"] >= 0
+            and isinstance(counts.get("M5"), int)
+            and not isinstance(counts.get("M5"), bool)
+            and counts["M5"] >= 0
+        ):
+            m1_count = counts["M1"]
+            m5_count = counts["M5"]
+            m1_missing = max(0, minimum - m1_count)
+            m5_missing = max(0, minimum - m5_count)
+            lines.extend([
+                "",
+                "Real-history progress",
+                f"M1: {m1_count}/{minimum} real candles — {m1_missing} still required.",
+                f"M5: {m5_count}/{minimum} real candles — {m5_missing} still required.",
+                "Comparison starts only after both histories reach the requirement.",
+            ])
+        else:
+            lines.extend([
+                "History progress: UNAVAILABLE — the runtime did not report valid candle counts.",
+            ])
+        persistence = status.get("market_data_persistence_state")
+        if isinstance(persistence, str) and persistence.strip():
+            lines.append(f"Persistent history: {persistence.strip()}.")
+        lines.append("Action required: none. Collection and safety blocking are automatic.")
+        return _lines(lines)
 
     required = {
         "observed_ts", "symbol", "live_kind", "canonical_outcome",
