@@ -1190,6 +1190,27 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             "reply_markup": telegram_admin_ui.decision_visibility_markup(),
         }
 
+    if action == "STRATEGY_COMPARE":
+        # Read-only comparison of live strategy_v2 and the canonical shadow pipeline.
+        from core import storage as _storage
+        from core.admin_views import render_strategy_comparison
+
+        snapshot_path = _storage.root_path("observability", "canonical_shadow_snapshot.json")
+        snapshot = _storage.load_json(snapshot_path, default={})
+        return {
+            "text": _format_surface(
+                "decision_visibility",
+                "⚖️ Strategy Comparison",
+                _surface_current_state(
+                    render_strategy_comparison(
+                        snapshot if isinstance(snapshot, dict) else None,
+                        now_ts=int(time.time()),
+                    )
+                ),
+            ),
+            "reply_markup": telegram_admin_ui.strategy_comparison_markup(),
+        }
+
     if action == "DISTRIBUTION":
         # Distribution Control panel: route status, channel readiness.
         # Source: ADMIN_TREE_MAP_v2.0.0.md §6.5; ADMIN_CONTROL_SPEC_v2.0.0.md §9
