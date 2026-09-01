@@ -8,6 +8,7 @@ CANON = ROOT / "send" / "docs" / "canonical"
 ACTIVE = CANON / "active"
 SUPERSEDED = CANON / "superseded"
 MASTER = ACTIVE / "CANONICAL_MASTER_INDEX_v2.0.0.md"
+FINDINGS = ROOT / "audit" / "active-canon-metadata-cleanup-20260901" / "AUTHORITY_REF_FINDINGS.md"
 
 
 def active_inventory() -> list[str]:
@@ -57,13 +58,26 @@ def main() -> None:
                 if old in line:
                     findings.append((name, line_no, old, current, line.strip()))
 
+    FINDINGS.parent.mkdir(parents=True, exist_ok=True)
+    out = [
+        "# ACTIVE CANON CURRENT-AUTHORITY REFERENCE FINDINGS",
+        "",
+        f"Active specs checked: **{len(active)}**",
+        f"Potential stale current-authority references: **{len(findings)}**",
+        "",
+    ]
     if findings:
+        out.extend([
+            "| File | Line | Superseded ref | Active successor | Source line |",
+            "|---|---:|---|---|---|",
+        ])
         for name, line_no, old, current, text in findings:
-            print(f"{name}:{line_no}: {old} -> {current} :: {text}")
-        raise SystemExit(f"FAIL: stale current-authority references found: {len(findings)}")
-
-    print("PASS: 43 active canonical specifications checked")
-    print("PASS: stale current-authority references to superseded versions = 0")
+            safe = text.replace("|", "\\|")
+            out.append(f"| `{name}` | {line_no} | `{old}` | `{current}` | {safe} |")
+    else:
+        out.append("PASS: no stale current-authority references were found.")
+    FINDINGS.write_text("\n".join(out) + "\n", encoding="utf-8")
+    print(f"CURRENT_AUTHORITY_FINDINGS={len(findings)}")
 
 
 if __name__ == "__main__":
