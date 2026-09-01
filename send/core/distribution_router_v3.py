@@ -5,16 +5,15 @@ exact-stage handoff. It owns route evaluation, entitlement, destination state,
 deduplication and publisher invocation. It never recalculates strategy,
 Trade Physics or FSM truth and it never executes broker trades.
 
-The legacy ``core.distribution_router`` module remains available as an explicit
-migration adapter for older analytics/tests. This module emits the v3 primary
-event families while also writing the legacy ``tier_publish``/``tier_reset``
-adapters required by existing readers during migration.
+Model Time is not an external expiry authority. OPEN_NOW publication requires
+an explicit governed Execution Time value carried by SignalEvent.
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime
+from math import isfinite
 import os
 import time
 from typing import Any, Dict, Mapping, Optional
@@ -73,6 +72,78 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
+def _safe_positive_float(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if isfinite(number) and number > 0 else None
+
+
+def _format_minutes(value: float) -> str:
+    return f"{float(value):.6f}".rstrip("0").rstrip(".")
+
+
+def _validate_open_now_execution_time(event: Dict[str, Any], stage: str) -> Optional[float]:
+    """Validate the sole trader-facing expiry authority at Distribution boundary."""
+
+    if stage != "OPEN_NOW":
+        return None
+    if event.get("execution_time_available") is not True:
+        raise ValueError("OPEN_NOW requires governed Execution Time")
+
+    exact = _safe_positive_float(event.get("open_now_expiry_minutes"))
+    if exact is None:
+        raise ValueError("OPEN_NOW exact execution expiry is missing or invalid")
+    confirm_min = _safe_positive_float(event.get("confirm_expiry_min_minutes"))
+    confirm_max = _safe_positive_float(event.get("confirm_expiry_max_minutes"))
+    if confirm_min is None or confirm_max is None or confirm_min > confirm_max:
+        raise ValueError("OPEN_NOW requires a valid CONFIRM execution interval")
+    if not confirm_min <= exact <= confirm_max:
+        raise ValueError("OPEN_NOW execution expiry is outside CONFIRM interval")
+
+    source = str(event.get("execution_calibration_source") or "").strip()
+    if not source:
+        raise ValueError("OPEN_NOW execution calibration source is required")
+
+    compatibility = event.get("expiry_minutes")
+    if compatibility is not None:
+        alias = _safe_positive_float(compatibility)
+        if alias is None or alias != exact:
+            raise ValueError("expiry_minutes conflicts with governed OPEN_NOW expiry")
+    return exact
+
+
+def _render_signal_text(event: Dict[str, Any], tier: str) -> str:
+    """Render lifecycle text without presenting Model Time as external expiry."""
+
+    stage = str(event.get("stage") or "")
+    symbol = str(event.get("symbol") or "")
+    direction = str(event.get("direction") or "")
+    score = event.get("score_total")
+    buffer_value = event.get("buffer_price", event.get("buffer_distance"))
+    parts = [
+        f"[{tier}] {stage}",
+        f"{symbol} {direction}".strip(),
+        f"Score: {score}",
+        f"Buffer: {buffer_value}",
+    ]
+
+    if stage == "OPEN_NOW":
+        exact = _safe_positive_float(event.get("open_now_expiry_minutes"))
+        if exact is not None:
+            parts.append(f"Expiry: {_format_minutes(exact)}m")
+    elif stage == "CONFIRM" and event.get("execution_time_available") is True:
+        low = _safe_positive_float(event.get("confirm_expiry_min_minutes"))
+        high = _safe_positive_float(event.get("confirm_expiry_max_minutes"))
+        if low is not None and high is not None:
+            parts.append(f"Execution window: {_format_minutes(low)}-{_format_minutes(high)}m")
+
+    return " | ".join(parts)
+
+
 def _parse_limit(value: Any, default: Optional[int]) -> Optional[int]:
     if value is None or value == "":
         return default
@@ -94,7 +165,7 @@ def _load_effective_config() -> Dict[str, Any]:
     enabled = {tier: True for tier in TIERS}
     feedback_capable = {tier: tier == "ELITE" for tier in TIERS}
 
-    raw = legacy._load_channel_config_file()  # migration-compatible config source
+    raw = legacy._load_channel_config_file()
     route_cfgs = raw.get("routes") if isinstance(raw, dict) else None
     if isinstance(route_cfgs, dict):
         for tier in TIERS:
@@ -102,19 +173,14 @@ def _load_effective_config() -> Dict[str, Any]:
             if not isinstance(route_cfg, dict):
                 continue
             enabled[tier] = bool(route_cfg.get("enabled", True))
-            feedback_capable[tier] = bool(
-                route_cfg.get("feedback_capable", tier == "ELITE")
-            )
+            feedback_capable[tier] = bool(route_cfg.get("feedback_capable", tier == "ELITE"))
             if not os.getenv(f"{tier}_CHANNEL_ID"):
                 route_destination = _safe_int(route_cfg.get("destination_id"))
                 if route_destination is not None:
                     channels[tier] = route_destination
             if not os.getenv(f"{tier}_LIMIT") and "daily_open_now_limit" in route_cfg:
-                limits[tier] = _parse_limit(
-                    route_cfg.get("daily_open_now_limit"), DEFAULT_LIMITS[tier]
-                )
+                limits[tier] = _parse_limit(route_cfg.get("daily_open_now_limit"), DEFAULT_LIMITS[tier])
 
-    # Canonical baseline wins when no governed override is present.
     if not os.getenv("FREE_LIMIT"):
         raw_free = None
         if isinstance(raw, dict):
@@ -200,12 +266,9 @@ def _maybe_daily_reset(
     state["last_reset_london_date"] = today
     state["open_signals_today"] = {tier: 0 for tier in TIERS}
     for tier in TIERS:
-        state["tier_state"][tier] = (
-            "ACTIVE" if _route_is_configured(cfg, tier) else "DISABLED"
-        )
+        state["tier_state"][tier] = "ACTIVE" if _route_is_configured(cfg, tier) else "DISABLED"
     legacy.save_state(state)
 
-    # Primary v3 reset/state evidence.
     for tier in TIERS:
         prior = str(before.get("tier_state", {}).get(tier) or "ACTIVE")
         after = str(state["tier_state"].get(tier) or "ACTIVE")
@@ -224,7 +287,6 @@ def _maybe_daily_reset(
         )
         _log_route_state_change(tier, prior, after, "DAILY_RESET")
 
-    # Explicit v2 migration adapter retained for existing analytics/readers.
     adapter = observability_logger.build_event(
         "tier_reset",
         {
@@ -406,10 +468,7 @@ def _visibility_event(
             "destination_id": int(destination_id),
             "message_id": message_id,
         },
-        correlation={
-            "signal_id": str(event["signal_id"]),
-            "stage": str(event["stage"]),
-        },
+        correlation={"signal_id": str(event["signal_id"]), "stage": str(event["stage"])},
         source_function="route",
     )
 
@@ -441,11 +500,7 @@ def _record_summary_result(
 
 
 def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
-    """Evaluate and publish one governed SignalEvent candidate.
-
-    Returns a distribution summary that Signal Engine can use for the
-    POST_DISTRIBUTION execution checkpoint. Broker execution is never invoked.
-    """
+    """Evaluate and publish one governed SignalEvent candidate."""
 
     event = _event_dict(candidate)
     now_ts = int(now_ts or time.time())
@@ -491,8 +546,24 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
         summary["block_reason"] = "INVALID_SIGNAL_EVENT"
         return summary
 
+    try:
+        open_now_expiry = _validate_open_now_execution_time(event, stage)
+    except ValueError as exc:
+        observability_logger.log_warning(
+            warn_type="distribution_execution_time_invalid",
+            message="Distribution blocked OPEN_NOW with invalid or unavailable Execution Time",
+            context={"signal_id": signal_id, "stage": stage, "reason": str(exc)},
+            source={"module": "distribution_router_v3", "function": "route"},
+        )
+        summary["blocked"] = True
+        summary["block_reason"] = "EXECUTION_TIME_INVALID"
+        return summary
+
     event["stage"] = stage
     event["signal_id"] = signal_id
+    if open_now_expiry is not None:
+        event["expiry_minutes"] = open_now_expiry
+
     cfg = _load_effective_config()
     state = legacy.load_state()
     state = _sync_config_states(state, cfg)
@@ -523,7 +594,6 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
                 "thread_id": admin_topic_id,
                 "is_tier": False,
                 "applies_limits": False,
-                # Community/member buttons belong to the ELITE member route, not admin mirror.
                 "feedback_enabled": False,
             }
         )
@@ -539,9 +609,7 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
         destination_kind = "tier_channel" if is_tier else "admin_topic"
         limit = cfg["limits"].get(tier) if is_tier else None
         counter_before = int(state["open_signals_today"].get(tier, 0))
-        route_state_before = (
-            str(state["tier_state"].get(tier) or "ACTIVE") if is_tier else "ACTIVE"
-        )
+        route_state_before = str(state["tier_state"].get(tier) or "ACTIVE") if is_tier else "ACTIVE"
         dedup_scope = tier if is_tier else route_name
         dedup_key = legacy.tier_dedup_key(dedup_scope, signal_id, stage)
         was_duplicate = legacy.tier_dedup_check(state, dedup_scope, signal_id, stage)
@@ -832,7 +900,7 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
             was_duplicate=False,
         )
 
-        text = legacy.render_signal_text(event, tier if is_tier else "ADMIN")
+        text = _render_signal_text(event, tier if is_tier else "ADMIN")
         feedback_enabled = bool(feedback_available and stage == "OPEN_NOW")
         reply_markup = legacy.build_feedback_markup(signal_id) if feedback_enabled else None
         route_state_after = route_state_before
@@ -919,7 +987,7 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
                         elite_chat_id=int(chat_id),
                         open_message_id=int(message_id),
                         open_now_ts=int(event.get("created_ts") or now_ts),
-                        expiry_minutes=int(event.get("expiry_minutes") or 0),
+                        expiry_minutes=float(open_now_expiry),
                         symbol=event.get("symbol"),
                         direction=event.get("direction"),
                         timeframe=event.get("timeframe"),
