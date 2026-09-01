@@ -1,107 +1,10 @@
-...F...F..................................................FF............ [100%]
+..........................................................FF............ [100%]
 =================================== FAILURES ===================================
-_____________ test_live_price_updates_current_m1_m5_from_real_tick _____________
-
-tmp_path = PosixPath('/tmp/pytest-of-runner/pytest-0/test_live_price_updates_curren0')
-
-    def test_live_price_updates_current_m1_m5_from_real_tick(tmp_path):
-        module = importlib.import_module("runtime.twelvedata_market_data")
-        now_ts = 1_800_000_120
-        feed = module.TwelveDataRealtimeFeed(
-            symbol="EUR/USD",
-            token="secret",
-            minimum_candles=2,
-            clock=lambda: now_ts,
-            store_path=tmp_path / "candles.json",
-            http_get=_history_http(now_ts, []),
-            persist_interval_seconds=1,
-        )
-        feed._ensure_history()
-        feed._stream_started = True
-    
-        feed.ingest_message(
-            {"event": "price", "symbol": "EUR/USD", "timestamp": now_ts, "price": "1.1234"}
-        )
-        feed.ingest_message(
-            {"event": "price", "symbol": "EUR/USD", "timestamp": now_ts + 1, "price": "1.1238"}
-        )
-    
->       m1 = feed.get_candles("1min")[0]
-             ^^^^^^^^^^^^^^^^^^^^^^^^
-
-tests/canonical/unit/test_twelvedata_live_stream.py:129: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-
-self = <runtime.twelvedata_market_data.TwelveDataRealtimeFeed object at 0x7fcd12893a10>
-timeframe = '1min'
-
-    def get_candles(self, timeframe: str) -> List[Dict[str, Any]]:
-        code, _seconds, _interval = timeframe_code(timeframe)
-        self._ensure_history()
-        self.start()
-        with self._lock:
-            candles = [dict(row) for row in self._candles[code]]
-            last_price_ts = self._last_price_ts
-            stream_state = self._stream_state
-            stream_error = self._stream_error
-        if stream_state in {"SUBSCRIPTION_FAILED", "ERROR"} and last_price_ts is None:
-            raise TwelveDataStreamingUnavailable(
-                stream_error or "Twelve Data WebSocket is unavailable"
-            )
-        if len(candles) < self.minimum_candles:
-            raise TwelveDataInsufficientHistory(
-                f"Twelve Data {code} history is insufficient: "
-                f"{len(candles)}/{self.minimum_candles} real candles"
-            )
-        if last_price_ts is None:
-            raise TwelveDataMarketDataUnavailable(
-                "Twelve Data live price has not been received yet"
-            )
-        age_seconds = int(self.clock()) - int(last_price_ts)
-        if age_seconds < 0 or age_seconds > self.freshness_seconds:
->           raise TwelveDataStaleMarketData(
-                f"Twelve Data live price is stale: age={age_seconds}s, "
-                f"limit={self.freshness_seconds}s"
-            )
-E           runtime.twelvedata_market_data.TwelveDataStaleMarketData: Twelve Data live price is stale: age=-1s, limit=10s
-
-send/runtime/twelvedata_market_data.py:499: TwelveDataStaleMarketData
-___________________ test_corrupt_store_is_reported_not_used ____________________
-
-tmp_path = PosixPath('/tmp/pytest-of-runner/pytest-0/test_corrupt_store_is_reported0')
-
-    def test_corrupt_store_is_reported_not_used(tmp_path):
-        module = importlib.import_module("runtime.twelvedata_market_data")
-        store = tmp_path / "candles.json"
-        store.write_text(json.dumps({"provider": "TWELVE_DATA", "candles": {}}), encoding="utf-8")
-    
->       feed = module.TwelveDataRealtimeFeed(
-            symbol="EUR/USD", token="secret", minimum_candles=2, store_path=store
-        )
-
-tests/canonical/unit/test_twelvedata_live_stream.py:207: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-send/runtime/twelvedata_market_data.py:151: in __init__
-    self._load_store()
-send/runtime/twelvedata_market_data.py:165: in _load_store
-    or normalize_symbol(payload.get("symbol")) != self.symbol
-       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-
-symbol = None
-
-    def normalize_symbol(symbol: str) -> str:
-        value = str(symbol or "").strip().upper().replace("_", "/")
-        if not value or "/" not in value:
->           raise TwelveDataConfigurationError(f"Invalid Twelve Data symbol: {symbol!r}")
-E           runtime.twelvedata_market_data.TwelveDataConfigurationError: Invalid Twelve Data symbol: None
-
-send/runtime/twelvedata_market_data.py:55: TwelveDataConfigurationError
 _____________ test_startup_notification_sequencing_in_railway_path _____________
 
 canonical_runtime_root = PosixPath('/tmp/pytest-of-runner/pytest-0/test_startup_notification_sequ0/runtime')
-fresh_imports = <function fresh_imports.<locals>._fresh at 0x7fcd12923380>
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fcd11376450>
+fresh_imports = <function fresh_imports.<locals>._fresh at 0x7f13b920db20>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f13b91987a0>
 
     def test_startup_notification_sequencing_in_railway_path(
         canonical_runtime_root: Path,
@@ -133,7 +36,7 @@ tests/canonical/conftest.py:83: in _fresh
     ???
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
-name = 'scripts', import_ = <function _gcd_import at 0x7fcd140b80e0>
+name = 'scripts', import_ = <function _gcd_import at 0x7f13bb9a00e0>
 
 >   ???
 E   ModuleNotFoundError: No module named 'scripts'
@@ -142,8 +45,8 @@ E   ModuleNotFoundError: No module named 'scripts'
 ______________ test_startup_blocked_notification_in_railway_path _______________
 
 canonical_runtime_root = PosixPath('/tmp/pytest-of-runner/pytest-0/test_startup_blocked_notificat0/runtime')
-fresh_imports = <function fresh_imports.<locals>._fresh at 0x7fcd128de480>
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fcd113763f0>
+fresh_imports = <function fresh_imports.<locals>._fresh at 0x7f13b920c400>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f13b9198140>
 
     def test_startup_blocked_notification_in_railway_path(
         canonical_runtime_root: Path,
@@ -175,16 +78,14 @@ tests/canonical/conftest.py:83: in _fresh
     ???
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
-name = 'scripts', import_ = <function _gcd_import at 0x7fcd140b80e0>
+name = 'scripts', import_ = <function _gcd_import at 0x7f13bb9a00e0>
 
 >   ???
 E   ModuleNotFoundError: No module named 'scripts'
 
 <frozen importlib._bootstrap>:1324: ModuleNotFoundError
 =========================== short test summary info ============================
-FAILED tests/canonical/unit/test_twelvedata_live_stream.py::test_live_price_updates_current_m1_m5_from_real_tick - runtime.twelvedata_market_data.TwelveDataStaleMarketData: Twelve Data live price is stale: age=-1s, limit=10s
-FAILED tests/canonical/unit/test_twelvedata_live_stream.py::test_corrupt_store_is_reported_not_used - runtime.twelvedata_market_data.TwelveDataConfigurationError: Invalid Twelve Data symbol: None
 FAILED tests/canonical/unit/test_telegram_runtime_remediation.py::test_startup_notification_sequencing_in_railway_path - ModuleNotFoundError: No module named 'scripts'
 FAILED tests/canonical/unit/test_telegram_runtime_remediation.py::test_startup_blocked_notification_in_railway_path - ModuleNotFoundError: No module named 'scripts'
-4 failed, 68 passed in 5.08s
+2 failed, 70 passed in 4.92s
 EXIT_CODE=1
