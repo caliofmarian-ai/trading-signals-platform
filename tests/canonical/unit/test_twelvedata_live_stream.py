@@ -319,3 +319,37 @@ def test_focus_stream_subscription_failure_is_fail_closed_while_wide_can_use_cac
     status = importlib.import_module("runtime.runtime_status").read_status()
     assert status["market_data_state"] == "MARKET_DATA_UNAVAILABLE"
     assert status["market_data_stream_state"] == "UNAVAILABLE"
+
+
+def test_local_rest_budget_fails_closed_before_provider_request(
+    canonical_runtime_root, fresh_imports, monkeypatch
+):
+    monkeypatch.setenv("MARKET_DATA_PROVIDER", "TWELVE_DATA")
+    monkeypatch.setenv("TWELVE_DATA_API_KEY", "secret")
+    monkeypatch.setenv("TWELVE_DATA_REST_REQUESTS_PER_MINUTE", "2")
+    market = fresh_imports("runtime.market_client")
+    calls = []
+
+    class _Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"values": []}
+
+    monkeypatch.setattr(
+        market.requests,
+        "get",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or _Response(),
+    )
+
+    market.fetch_klines("EUR/USD", "1min")
+    market.fetch_klines("EUR/USD", "5min")
+    with pytest.raises(market.MarketDataRateLimitError, match="local REST budget exhausted"):
+        market.fetch_klines("GBP/USD", "1min")
+
+    assert len(calls) == 2
+    status = importlib.import_module("runtime.runtime_status").read_status()
+    assert status["market_data_rate_limit_state"] == "LOCAL_BUDGET_EXHAUSTED"
+    assert status["market_data_rest_requests_last_minute"] == 2
+    assert status["market_data_rest_requests_per_minute_limit"] == 2
