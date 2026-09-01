@@ -287,7 +287,7 @@ def render_intelligence_panel(recent_events: Optional[List[Dict[str, Any]]] = No
         ])
         return _lines(lines)
 
-    decisions = [e for e in events if e.get("event_type") in ("decision", "signal_decision")]
+    decisions = [e for e in events if e.get("event_type") in ("decision", "signal_decision", "decision_evaluated")]
     rejects = [e for e in events if e.get("event_type") in ("reject", "signal_reject")]
     all_kinds = [str(e.get("data", {}).get("decision_kind", "") or "").upper() for e in events if isinstance(e.get("data"), dict)]
     open_now_count = sum(1 for k in all_kinds if k == "OPEN_NOW")
@@ -312,6 +312,12 @@ def render_intelligence_panel(recent_events: Optional[List[Dict[str, Any]]] = No
             or data.get("reject_reason")
             or (data.get("gates", {}) or {}).get("sr_gate", {}).get("reason")
         )
+        if not reason:
+            decision_object = data.get("decision_object") if isinstance(data.get("decision_object"), dict) else {}
+            reject = decision_object.get("reject") if isinstance(decision_object.get("reject"), dict) else {}
+            blockers = reject.get("hard_blockers")
+            if isinstance(blockers, list) and blockers:
+                reason = ", ".join(str(item) for item in blockers)
         if reason:
             reject_reasons[str(reason)] = reject_reasons.get(str(reason), 0) + 1
 
