@@ -46,9 +46,11 @@ Acceptance:
 
 ### R-002 — Objective Trade Temporal Telemetry completion
 Severity: CRITICAL
-Status: IN PROGRESS
-PR: #101 (Draft until final audit/CI completion)
+Status: CLOSED
+PR: #101
+Merged main commit: `ceba3c983936d68d9429a0c28d59b7e179bd0b0a`
 Depends on: R-001 — SATISFIED
+Validation: 983 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed.
 
 Problem:
 - OPEN trade telemetry is registered, but objective expiry and post-expiry prices/results remain placeholders.
@@ -68,8 +70,10 @@ Acceptance:
 
 ### R-003 — Truth-source separation in outcomes and analytics
 Severity: CRITICAL
-Status: PENDING
-Depends on: R-002
+Status: IN PROGRESS
+Issue: #102
+PR: #103 (Draft until final audit/CI completion)
+Depends on: R-002 — SATISFIED
 
 Problem:
 - community self-reports are currently aggregated into a generic `win_rate` that can be mistaken for strategy performance.
@@ -345,4 +349,5 @@ The repository-wide remediation program is complete only when:
 - 2026-09-01: remediation program created; R-001 started on branch `remediation/audit-2026-09-01-r001-execution-time`.
 - 2026-09-01: R-001 merged through PR #100; main advanced to `480303bc1e52c3610c0e9ffab3e539fcad358c16`; Issue #98 closed automatically.
 - 2026-09-01: R-002 started on branch `remediation/audit-2026-09-01-r002-objective-telemetry`; PR #101 opened Draft.
-- 2026-09-01: R-002 current CI evidence on head prior to this plan update: provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 980 passed.
+- 2026-09-01: R-002 merged through PR #101; main advanced to `ceba3c983936d68d9429a0c28d59b7e179bd0b0a`; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 983 passed.
+- 2026-09-01: R-003 started on branch `remediation/audit-2026-09-01-r003-truth-source-separation`; Issue #102 and Draft PR #103 created.
