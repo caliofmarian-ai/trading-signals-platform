@@ -33,7 +33,7 @@ def _base_channel_config() -> Dict[str, Any]:
         "ELITE_CHANNEL_ID": 1004,
         "ADMIN_GROUP_ID": 2001,
         "SIGNALS_LIVE_TOPIC_ID": 3001,
-        "FREE_LIMIT": 5,
+        "FREE_LIMIT": 6,
         "BASIC_LIMIT": 20,
         "PRO_LIMIT": 50,
         "ELITE_LIMIT": None,

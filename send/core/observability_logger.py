@@ -26,7 +26,7 @@ except Exception:
     telegram_publisher = None
 
 
-SCHEMA_VERSION = os.getenv("EVENT_SCHEMA_VERSION", "2.0.0")
+SCHEMA_VERSION = os.getenv("EVENT_SCHEMA_VERSION", "3.0.0")
 SERVICE_NAME = os.getenv("SERVICE_NAME", "binarybot")
 ENV_NAME = os.getenv("BOT_ENV", "prod")
 BOT_VERSION = os.getenv("BOT_VERSION", "0.0.0")

@@ -305,7 +305,7 @@ def validate_dist_state(raw: Any) -> Dict[str, Any]:
 
     for tier in ("FREE", "BASIC", "PRO", "ELITE"):
         state = str(tier_state.get(tier) or "ACTIVE").upper()
-        if state not in {"ACTIVE", "SILENT"}:
+        if state not in {"ACTIVE", "SILENT", "DISABLED"}:
             raise StateValidationError(f"Distribution tier_state[{tier}] is unsupported: {state}")
         tier_state[tier] = state
         open_signals_today[tier] = _safe_int(open_signals_today.get(tier), f"Distribution open_signals_today[{tier}]") or 0

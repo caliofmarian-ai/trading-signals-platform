@@ -19,7 +19,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from core import candle_adapter
-from core import distribution_router  # compatibility surface only; run_once does not invoke routing
+from core import distribution_router_v3 as distribution_router
 from core import fsm_runtime
 from core import observability_logger
 from core.decision_object import ACTIONABLE_DECISION_KINDS
@@ -192,11 +192,77 @@ def _log_signal_execution(decision, persistent_fsm, execution) -> None:
     observability_logger.log_event(event)
 
 
-def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, scheduler_stage=None) -> None:
-    """Run one real-market strategy/FSM/execution-candidate cycle.
 
-    Distribution, Telegram publication, outcome registration and broker execution
-    are intentionally not invoked by this function in the current activation.
+def _log_post_distribution(decision, persistent_fsm, execution, summary: Dict[str, Any]) -> None:
+    published_count = int(summary.get("published_count", 0))
+    failed_count = int(summary.get("failed_count", 0))
+    blocked = bool(summary.get("blocked"))
+
+    if blocked:
+        outcome = "BLOCKED"
+        reason = str(summary.get("block_reason") or "DISTRIBUTION_BLOCKED")
+        destination_state = "DISTRIBUTION_BLOCKED"
+    elif published_count > 0:
+        outcome = "EMITTED"
+        reason = "AUTHORIZED_PUBLICATION_SUCCEEDED"
+        destination_state = "PUBLISHED"
+    elif failed_count > 0:
+        outcome = "FAILED"
+        reason = "ROUTE_PUBLICATION_FAILED"
+        destination_state = "ROUTES_EVALUATED_NO_PUBLICATION"
+    else:
+        outcome = "SKIPPED"
+        reason = "NO_AUTHORIZED_ROUTE_PUBLISHED"
+        destination_state = "ROUTES_EVALUATED_NO_PUBLICATION"
+
+    decision_dict = decision.to_dict()
+    data = {
+        "execution_phase": "POST_DISTRIBUTION",
+        "execution_outcome": outcome,
+        "execution_reason": reason,
+        "stage_handoff_ready": execution.stage_handoff_ready,
+        "trade_execution_ready": execution.trade_execution_ready,
+        "signal_event_available": execution.candidate is not None,
+        "destination_state": destination_state,
+        "candidate_schema_version": execution.candidate.schema_version if execution.candidate is not None else None,
+        "fsm_handoff": {
+            "requested_stage": persistent_fsm.requested_stage,
+            "accepted_stage": persistent_fsm.accepted_stage,
+            "signal_id": persistent_fsm.signal_id,
+            "prior_state": persistent_fsm.prior_state,
+            "resulting_state": persistent_fsm.resulting_state,
+            "state_changed": persistent_fsm.state_changed,
+            "reason": persistent_fsm.reason,
+            "reason_family": persistent_fsm.reason_family,
+            "stage_handoff_ready": persistent_fsm.stage_handoff_ready,
+            "trade_execution_ready": persistent_fsm.trade_execution_ready,
+        },
+        "trade_physics": _trade_physics_dict(decision_dict) or None,
+        "publication_evidence": {
+            "published": list(summary.get("publication_evidence") or []),
+            "route_results": list(summary.get("route_results") or []),
+        },
+    }
+    event = _build_v3_event(
+        "signal_execution_result",
+        data,
+        correlation={
+            "execution_attempt_id": execution.execution_attempt_id,
+            "setup_correlation_id": execution.setup_correlation_id,
+            "signal_id": decision.signal_id,
+            "symbol": decision.setup.symbol,
+            "timeframe": decision.setup.timeframe,
+            "stage": decision.kind,
+        },
+    )
+    observability_logger.log_event(event)
+
+
+def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, scheduler_stage=None) -> None:
+    """Run one real-market strategy/FSM/candidate/distribution cycle.
+
+    Governed SignalEvent candidates may be routed to Telegram. Broker execution
+    remains disabled and is never invoked by this function.
     """
 
     del scheduler_stage
@@ -301,6 +367,33 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                     created_ts=now_ts,
                 )
                 _log_signal_execution(decision, persistent_fsm, execution)
+                if execution.distribution_allowed and execution.candidate is not None:
+                    try:
+                        distribution_summary = distribution_router.route(
+                            execution.candidate, now_ts=now_ts
+                        )
+                    except Exception as distribution_exc:
+                        observability_logger.log_error(
+                            {
+                                "event_type": "error",
+                                "module": "signal_engine",
+                                "symbol": symbol,
+                                "error": str(distribution_exc),
+                                "trace": "",
+                            }
+                        )
+                        distribution_summary = {
+                            "published_count": 0,
+                            "failed_count": 1,
+                            "skipped_count": 0,
+                            "blocked": False,
+                            "block_reason": None,
+                            "route_results": [],
+                            "publication_evidence": [],
+                        }
+                    _log_post_distribution(
+                        decision, persistent_fsm, execution, distribution_summary
+                    )
 
         except Exception as exc:
             if isinstance(exc, MarketDataRateLimitError):

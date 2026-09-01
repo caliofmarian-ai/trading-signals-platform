@@ -85,7 +85,7 @@ def test_ready_pre_builds_lifecycle_candidate_but_not_trade_ready() -> None:
     )
 
     assert result.outcome == "DEFERRED"
-    assert result.reason == "DISTRIBUTION_NOT_INVOKED"
+    assert result.reason == "DISTRIBUTION_ROUTER_READY"
     assert result.execution_phase == "PRE_DISTRIBUTION"
     assert result.destination_state == "PRE_DISTRIBUTION_UNRESOLVED"
     assert result.stage_handoff_ready is True
@@ -93,7 +93,7 @@ def test_ready_pre_builds_lifecycle_candidate_but_not_trade_ready() -> None:
     assert result.signal_event_available is True
     assert result.candidate is not None
     assert result.candidate.stage == "PRE"
-    assert result.distribution_allowed is False
+    assert result.distribution_allowed is True
 
 
 def test_ready_confirm_builds_lifecycle_candidate_but_not_trade_ready() -> None:
@@ -112,6 +112,7 @@ def test_ready_confirm_builds_lifecycle_candidate_but_not_trade_ready() -> None:
     assert result.candidate.stage == "CONFIRM"
     assert result.stage_handoff_ready is True
     assert result.trade_execution_ready is False
+    assert result.distribution_allowed is True
 
 
 def test_ready_open_now_builds_candidate_and_is_trade_ready_but_still_deferred() -> None:
@@ -126,8 +127,8 @@ def test_ready_open_now_builds_candidate_and_is_trade_ready_but_still_deferred()
     )
 
     assert result.outcome == "DEFERRED"
-    assert result.reason == "DISTRIBUTION_NOT_INVOKED"
-    assert result.distribution_allowed is False
+    assert result.reason == "DISTRIBUTION_ROUTER_READY"
+    assert result.distribution_allowed is True
     assert result.stage_handoff_ready is True
     assert result.trade_execution_ready is True
     assert result.candidate is not None
@@ -208,7 +209,7 @@ def test_execution_trace_is_canonical_and_contains_no_delivery_side_effects() ->
     assert trace["execution_attempt_id"] == "binary-v2:sig-v2-execution-gate:OPEN_NOW:162"
     assert trace["setup_correlation_id"] == "cycle-160"
     assert trace["candidate"]["distribution_enabled"] is False
-    assert trace["distribution_allowed"] is False
+    assert trace["distribution_allowed"] is True
     assert event_data["execution_phase"] == "PRE_DISTRIBUTION"
     assert event_data["execution_outcome"] == "DEFERRED"
     assert event_data["destination_state"] == "PRE_DISTRIBUTION_UNRESOLVED"

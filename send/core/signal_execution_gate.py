@@ -2,8 +2,8 @@
 
 This module consumes explicit FSMExecutionHandoff truth. It can construct
 PRE/CONFIRM/OPEN_NOW SignalEvent candidates only after exact-stage acceptance.
-Distribution remains deliberately disabled; therefore a valid candidate is
-classified as PRE_DISTRIBUTION / DEFERRED, never EMITTED.
+A valid exact-stage candidate may authorize Distribution Router invocation.
+The pre-distribution checkpoint remains DEFERRED and can never claim EMITTED.
 """
 
 from __future__ import annotations
@@ -61,7 +61,10 @@ class SignalExecutionGateResult:
         if self.destination_state != PRE_DISTRIBUTION_DESTINATION_STATE:
             raise ValueError("pre-distribution destination state is unresolved")
         if self.distribution_allowed:
-            raise ValueError("distribution cannot be enabled by the pre-distribution execution gate")
+            if self.candidate is None or not self.stage_handoff_ready:
+                raise ValueError("distribution requires an available handoff-ready candidate")
+            if self.outcome != "DEFERRED":
+                raise ValueError("distribution authorization requires a DEFERRED pre-distribution checkpoint")
         if self.signal_event_available != (self.candidate is not None):
             raise ValueError("signal_event_available must match candidate presence")
         if self.candidate is not None:
@@ -116,6 +119,7 @@ def _base_result(
     outcome: str,
     reason: str,
     candidate: Optional[SignalEvent] = None,
+    distribution_allowed: bool = False,
 ) -> SignalExecutionGateResult:
     return SignalExecutionGateResult(
         outcome=outcome,
@@ -131,7 +135,7 @@ def _base_result(
         signal_event_available=candidate is not None,
         destination_state=PRE_DISTRIBUTION_DESTINATION_STATE,
         candidate=candidate,
-        distribution_allowed=False,
+        distribution_allowed=distribution_allowed,
     )
 
 
@@ -142,7 +146,7 @@ def prepare_signal_execution(
     buffer_mode: str,
     created_ts: int,
 ) -> SignalExecutionGateResult:
-    """Prepare a traceable exact-stage execution verdict without distribution."""
+    """Prepare a traceable exact-stage pre-distribution verdict."""
 
     if not isinstance(persistent_fsm, PersistentFSMResult):
         raise TypeError("persistent_fsm must be a PersistentFSMResult")
@@ -219,6 +223,7 @@ def prepare_signal_execution(
         decision,
         created_ts=created_ts,
         outcome="DEFERRED",
-        reason="DISTRIBUTION_NOT_INVOKED",
+        reason="DISTRIBUTION_ROUTER_READY",
         candidate=candidate,
+        distribution_allowed=True,
     )
