@@ -82,21 +82,37 @@ def test_current_wick_is_not_misclassified_as_a_structural_barrier(
     assert result.structure.available_distance > 0.000005
 
 
-def test_required_room_comes_from_buffer_and_versioned_multiplier(canonical_runtime_root: Path) -> None:
+def test_required_room_is_exactly_canonical_buffer_distance(canonical_runtime_root: Path) -> None:
     params, _, m5, market = _inputs(canonical_runtime_root)
     result = evaluate_corridor(m5, market, params)
 
-    assert result.evidence.required_distance == pytest.approx(
-        market.context.buffer_distance * params["sr_required_multiplier"]
-    )
+    assert result.evidence.required_distance == pytest.approx(market.context.buffer_distance)
     assert result.evidence.room_ratio == pytest.approx(
         result.structure.available_distance / result.evidence.required_distance
     )
 
 
+def test_legacy_sr_multiplier_cannot_change_hard_structural_gate(canonical_runtime_root: Path) -> None:
+    params, _, m5, market = _inputs(canonical_runtime_root)
+    baseline = evaluate_corridor(m5, market, params)
+
+    low = copy.deepcopy(params)
+    low["sr_required_multiplier"] = 0.1
+    high = copy.deepcopy(params)
+    high["sr_required_multiplier"] = 10.0
+
+    low_result = evaluate_corridor(m5, market, low)
+    high_result = evaluate_corridor(m5, market, high)
+
+    assert low_result.evidence.required_distance == pytest.approx(market.context.buffer_distance)
+    assert high_result.evidence.required_distance == pytest.approx(market.context.buffer_distance)
+    assert low_result.structure.feasibility_state == baseline.structure.feasibility_state
+    assert high_result.structure.feasibility_state == baseline.structure.feasibility_state
+
+
 def test_numerically_equal_room_is_not_falsely_constrained(canonical_runtime_root: Path) -> None:
     params, _, m5, market = _inputs(canonical_runtime_root)
-    required = market.context.buffer_distance * params["sr_required_multiplier"]
+    required = market.context.buffer_distance
     resistance = market.context.latest_price + required - 1e-16
     for candle in m5:
         candle["open"] = market.context.latest_price
@@ -144,11 +160,13 @@ def test_invalid_or_partial_evidence_is_rejected(canonical_runtime_root: Path) -
         evaluate_corridor(invalid, market, params)
 
 
-def test_missing_sr_parameter_is_not_defaulted(canonical_runtime_root: Path) -> None:
+def test_sr_multiplier_is_not_required_for_v3_hard_gate(canonical_runtime_root: Path) -> None:
     params, _, m5, market = _inputs(canonical_runtime_root)
-    del params["sr_required_multiplier"]
-    with pytest.raises(CorridorUnavailable, match="sr_required_multiplier configuration is required"):
-        evaluate_corridor(m5, market, params)
+    params.pop("sr_required_multiplier", None)
+
+    result = evaluate_corridor(m5, market, params)
+
+    assert result.evidence.required_distance == pytest.approx(market.context.buffer_distance)
 
 
 def test_corridor_is_deterministic_immutable_and_preserves_inputs(canonical_runtime_root: Path) -> None:
