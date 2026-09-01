@@ -108,11 +108,21 @@ def render_debug_last(
         return "Signal Debug\n\nNo recent decision found."
 
     data = decision_event.get("data", {}) if isinstance(decision_event, dict) else {}
+    decision_object = data.get("decision_object") if isinstance(data.get("decision_object"), dict) else {}
+    setup = decision_object.get("setup") if isinstance(decision_object.get("setup"), dict) else {}
+    market = decision_object.get("market_context") if isinstance(decision_object.get("market_context"), dict) else {}
+    structure = decision_object.get("structure") if isinstance(decision_object.get("structure"), dict) else {}
+    time_context = decision_object.get("time") if isinstance(decision_object.get("time"), dict) else {}
+    score = decision_object.get("score") if isinstance(decision_object.get("score"), dict) else {}
+    trade_physics = score.get("trade_physics") if isinstance(score.get("trade_physics"), dict) else {}
+    reject = decision_object.get("reject") if isinstance(decision_object.get("reject"), dict) else {}
     debug = data.get("debug", {}) if isinstance(data.get("debug"), dict) else {}
     gates = data.get("gates", {}) if isinstance(data.get("gates"), dict) else {}
     sr_gate = gates.get("sr_gate", {}) if isinstance(gates.get("sr_gate"), dict) else {}
 
     reject_reason = (
+        reject.get("reason")
+        or
         sr_gate.get("reason")
         or data.get("rejected_reason")
         or data.get("reject_reason")
@@ -123,12 +133,64 @@ def render_debug_last(
         "Signal Debug",
         "",
         *([f"Evidence: {availability}", ""] if availability else []),
-        f"PAIR: {_clean(data.get('symbol'))}",
-        f"TIMEFRAME: {_clean(debug.get('tf'))}",
-        f"SCORE: {_clean(data.get('score_total'))}",
+        f"PAIR: {_clean(decision_event.get('symbol') or setup.get('symbol') or data.get('symbol'))}",
+        f"TIMEFRAME: {_clean(decision_event.get('timeframe') or setup.get('timeframe') or debug.get('tf'))}",
+        f"DIRECTION: {_clean(data.get('direction') or setup.get('direction'))}",
+        f"SCORE: {_clean(data.get('score_total') if data.get('score_total') is not None else score.get('total'))}",
+        f"SCORE TIER: {_clean(data.get('score_tier') or score.get('tier'))}",
         f"RESULT: {_clean(data.get('decision_kind'))}",
         f"REASON: {_clean(reject_reason)}",
     ]
+
+    components = score.get("components") if isinstance(score.get("components"), dict) else {}
+    if components:
+        lines.extend(["", "Score Composition"])
+        for key, value in components.items():
+            lines.append(f"{key}: {_clean(value)}")
+
+    if structure:
+        lines.extend([
+            "",
+            "S/R Corridor",
+            f"Feasibility: {_clean(structure.get('feasibility_state'))}",
+            f"Available distance: {_clean(structure.get('available_distance'))}",
+            f"Required distance: {_clean(structure.get('required_distance'))}",
+        ])
+
+    if time_context:
+        lines.extend([
+            "",
+            "Time Model",
+            f"State: {_clean(time_context.get('time_state'))}",
+            f"Time needed: {_clean(time_context.get('t_needed'))}",
+            f"Adjusted time needed: {_clean(time_context.get('t_needed_adjusted'))}",
+            f"Model reach ratio: {_clean(time_context.get('model_time_reach_ratio'))}",
+        ])
+
+    if trade_physics:
+        lines.extend([
+            "",
+            "Trade Physics",
+            f"Readiness: {_clean(trade_physics.get('readiness_state'))}",
+            f"TPS: {_clean(trade_physics.get('TPS'))}",
+            f"S/T/P/V: {_clean(trade_physics.get('S'))} / {_clean(trade_physics.get('T'))} / {_clean(trade_physics.get('P'))} / {_clean(trade_physics.get('V'))}",
+            f"Space ratio: {_clean(trade_physics.get('space_to_buffer_ratio'))}",
+            f"Time ratio: {_clean(trade_physics.get('time_to_buffer_ratio'))}",
+        ])
+
+    blockers = reject.get("hard_blockers")
+    if isinstance(blockers, list):
+        lines.extend(["", "Hard Blockers"])
+        lines.extend([f"- {item}" for item in blockers] or ["NONE"])
+
+    if market:
+        lines.extend([
+            "",
+            "Market Model",
+            f"Trend: {_clean(market.get('trend_context'))}",
+            f"Volatility: {_clean(market.get('volatility_state'))}",
+            f"Noise: {_clean(market.get('noise_context'))}",
+        ])
 
     if sr_gate:
         lines.extend(
