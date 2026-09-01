@@ -38,12 +38,6 @@ jobs:
           if text.count(old) != 1:
               raise SystemExit('expected live tick test block not found exactly once')
           test.write_text(text.replace(old, new), encoding='utf-8')
-
-          workflow = Path('.github/workflows/twelvedata-feature-ci.yml')
-          text = workflow.read_text(encoding='utf-8')
-          text = text.replace('PYTHONPATH=send python -m py_compile', 'PYTHONPATH=.:send python -m py_compile')
-          text = text.replace('PYTHONPATH=send pytest -q', 'PYTHONPATH=.:send pytest -q')
-          workflow.write_text(text, encoding='utf-8')
           PY
       - name: Validate syntax
         run: PYTHONPATH=.:send python -m py_compile send/runtime/twelvedata_market_data.py send/runtime/market_client.py
@@ -51,7 +45,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add send/runtime/twelvedata_market_data.py tests/canonical/unit/test_twelvedata_live_stream.py .github/workflows/twelvedata-feature-ci.yml
+          git add send/runtime/twelvedata_market_data.py tests/canonical/unit/test_twelvedata_live_stream.py
           git diff --cached --quiet && exit 1
           git commit -m "Fix Twelve Data feature validation [skip ci]"
           git push origin HEAD:feature/twelvedata-live-stream-foundation
