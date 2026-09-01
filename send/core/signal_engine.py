@@ -152,6 +152,34 @@ def _log_decision_evaluated(evaluation, buffer_mode: str) -> None:
         correlation=correlation,
     )
     observability_logger.log_event(event)
+    try:
+        from runtime import runtime_status
+
+        status = runtime_status.read_status()
+        previous_count = status.get("strategy_evaluation_count", 0)
+        if isinstance(previous_count, bool) or not isinstance(previous_count, int):
+            previous_count = 0
+        reject = decision_dict.get("reject")
+        hard_blockers = reject.get("hard_blockers", []) if isinstance(reject, dict) else []
+        trade_physics = _trade_physics_dict(decision_dict)
+        runtime_status.update_status(
+            strategy_evaluation_count=previous_count + 1,
+            last_strategy_evaluation_ts=int(time.time()),
+            last_strategy_symbol=decision.setup.symbol,
+            last_strategy_candle_ts=decision.setup.evaluated_ts,
+            last_strategy_decision_kind=decision.kind,
+            last_strategy_score_total=decision.score.total,
+            last_strategy_score_tier=decision.score.tier,
+            last_strategy_tps=trade_physics.get("TPS"),
+            last_strategy_hard_blockers=list(hard_blockers),
+        )
+    except Exception as exc:
+        observability_logger.log_warning(
+            warn_type="STRATEGY_STATUS_UPDATE_FAILED",
+            message="Strategy evaluation was logged but runtime status projection failed",
+            context={"error": str(exc)},
+            source={"module": "signal_engine", "function": "_log_decision_evaluated"},
+        )
 
 
 def _log_fsm_handoff(decision, persistent_fsm) -> None:
