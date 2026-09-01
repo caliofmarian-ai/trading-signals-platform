@@ -91,6 +91,12 @@ def _should_start_telegram_thread() -> bool:
     return False
 
 
+def _preserve_blocked_startup_state() -> None:
+    """Prevent a blocked boot from being rewritten as a graceful shutdown at atexit."""
+    global _SHUTDOWN_MARKED
+    _SHUTDOWN_MARKED = True
+
+
 def _mark_graceful_shutdown() -> None:
     global _SHUTDOWN_MARKED
     if _SHUTDOWN_MARKED:
@@ -161,7 +167,12 @@ def _block_for_preflight_failure(start_info, exc: Exception) -> bool:
             "result": "UNSAFE_BLOCKED",
             "blocked": True,
             "restart_count": int(start_info["restart_count"]),
-            "blocked_operations": ["engine_start", "scheduler_loop", "telemetry_market_loop"],
+            "blocked_operations": [
+                "engine_start",
+                "telegram_poll",
+                "scheduler_loop",
+                "telemetry_market_loop",
+            ],
         },
         source={"module": "system_boot", "function": "start_system"},
     ))
@@ -174,6 +185,7 @@ def _block_for_preflight_failure(start_info, exc: Exception) -> bool:
         "source": {"module": "system_boot", "function": "start_system"},
     })
     send_control_notification("STARTUP BLOCKED", "Critical startup preflight failed.")
+    _preserve_blocked_startup_state()
     return False
 
 
@@ -268,6 +280,7 @@ def start_system() -> bool | None:
             "source": {"module": "system_boot", "function": "start_system"},
         })
         send_control_notification("STARTUP BLOCKED", "Runtime state validation failed during boot.")
+        _preserve_blocked_startup_state()
         return False
 
     if start_info["crash_loop"]:
@@ -303,6 +316,7 @@ def start_system() -> bool | None:
             "source": {"module": "system_boot", "function": "start_system"},
         })
         send_control_notification("STARTUP BLOCKED", "Runtime boot blocked by restart guard.")
+        _preserve_blocked_startup_state()
         return False
 
     log_event(build_event(
