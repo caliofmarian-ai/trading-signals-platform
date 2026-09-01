@@ -288,6 +288,9 @@ def _log_post_distribution(decision, persistent_fsm, execution, summary: Dict[st
         "execution_reason": reason,
         "stage_handoff_ready": execution.stage_handoff_ready,
         "trade_execution_ready": execution.trade_execution_ready,
+        "execution_time_available": execution.execution_time_available,
+        "execution_calibration_source": execution.execution_calibration_source,
+        "execution_time_explanation": execution.execution_time_explanation,
         "signal_event_available": execution.candidate is not None,
         "destination_state": destination_state,
         "candidate_schema_version": execution.candidate.schema_version if execution.candidate is not None else None,
@@ -432,6 +435,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                     decision,
                     buffer_mode=buffer_mode,
                     created_ts=now_ts,
+                    execution_time=evaluation.execution_time,
                 )
                 _log_signal_execution(decision, persistent_fsm, execution)
                 if execution.distribution_allowed and execution.candidate is not None:
