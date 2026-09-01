@@ -14,6 +14,7 @@ def update_symbol_replacement_score(symbol: str, score: float, now_ts: int):
 
 from core.storage import config_path
 
+import importlib
 import time
 from typing import Any, Dict, List, Optional
 
@@ -64,6 +65,12 @@ def _load_settings() -> Dict[str, Any]:
 
 def _load_algo_params() -> Dict[str, Any]:
     return storage.load_json(ALGO_PARAMS_PATH, default={})
+
+
+def _load_trade_temporal_telemetry():
+    """Compatibility import hook only; loading does not register or emit telemetry."""
+
+    return importlib.import_module("core.trade_temporal_telemetry")
 
 
 def _build_v3_event(
