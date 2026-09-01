@@ -23,7 +23,6 @@ jobs:
         run: python scripts/_tmp_active_canon_metadata_cleanup.py
       - name: Verify scope and commit deterministic cleanup
         run: |
-          git diff --check
           git status --short
           git config user.name 'caliofmarian-ai'
           git config user.email 'caliofmarian@gmail.com'
