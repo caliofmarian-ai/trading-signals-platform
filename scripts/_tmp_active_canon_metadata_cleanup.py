@@ -44,8 +44,9 @@ def _replace_known_paths(text: str, active_names: set[str], superseded_names: se
 
     for name in sorted(active_names, key=len, reverse=True):
         candidates = (
-            (f"send/docs/canonical/proposed/{name}", f"send/docs/canonical/active/{name}"),
             (f"/opt/binarybot/docs/canonical/proposed/{name}", f"/opt/binarybot/docs/canonical/active/{name}"),
+            (f"send/docs/canonical/proposed/{name}", f"send/docs/canonical/active/{name}"),
+            (f"canonical/proposed/{name}", f"canonical/active/{name}"),
         )
         for old, new in candidates:
             count = text.count(old)
@@ -53,11 +54,11 @@ def _replace_known_paths(text: str, active_names: set[str], superseded_names: se
                 text = text.replace(old, new)
                 proposed_to_active += count
 
-    # A reference to a predecessor that no longer exists under active is a path defect.
     for name in sorted(superseded_names - active_names, key=len, reverse=True):
         candidates = (
-            (f"send/docs/canonical/active/{name}", f"send/docs/canonical/superseded/{name}"),
             (f"/opt/binarybot/docs/canonical/active/{name}", f"/opt/binarybot/docs/canonical/superseded/{name}"),
+            (f"send/docs/canonical/active/{name}", f"send/docs/canonical/superseded/{name}"),
+            (f"canonical/active/{name}", f"canonical/superseded/{name}"),
         )
         for old, new in candidates:
             count = text.count(old)
@@ -103,7 +104,6 @@ def cleanup_file(path: Path, active_names: set[str], superseded_names: set[str])
             lines[supersession_i] = f"Supersedes: {value}  " + newline
         changes.append("supersession intent -> supersedes")
 
-    # Repair only authority-phase wording in the opening metadata/authority block.
     stale_markers = (
         "until explicit promotion",
         "until explicit active promotion",
@@ -141,8 +141,6 @@ def cleanup_file(path: Path, active_names: set[str], superseded_names: set[str])
         changes.append(f"predecessor status wording -> superseded ({predecessor_repair_count})")
 
     updated = "".join(lines)
-
-    # Reference cleanup is exact and filename-bound: only known active/superseded files move paths.
     updated, proposed_refs, superseded_refs = _replace_known_paths(updated, active_names, superseded_names)
     if proposed_refs:
         changes.append(f"known active references proposed -> active ({proposed_refs})")
@@ -154,7 +152,6 @@ def cleanup_file(path: Path, active_names: set[str], superseded_names: set[str])
     if len(old_lines) != len(new_lines):
         raise SystemExit(f"{path.name}: cleanup changed line count")
 
-    # Preamble status/path must now be unambiguous.
     status_i_after = _field_index(new_lines, ("Status:", "**Status:**"))
     if status_i_after is None or "ACTIVE CANONICAL" not in new_lines[status_i_after].upper():
         raise SystemExit(f"{path.name}: active status not established")
@@ -165,12 +162,10 @@ def cleanup_file(path: Path, active_names: set[str], superseded_names: set[str])
     if path_i_after is not None and "canonical/proposed/" in new_lines[path_i_after]:
         raise SystemExit(f"{path.name}: canonical Path field still points to proposed")
 
-    # No promoted active filename may still be referenced through proposed paths anywhere.
     for name in active_names:
         if f"canonical/proposed/{name}" in updated:
             raise SystemExit(f"{path.name}: active authority still referenced as proposed: {name}")
 
-    # Opening authority block must no longer claim predecessor authority pending promotion.
     for line in new_lines[:90]:
         low = line.strip().lower()
         if any(marker in low for marker in stale_markers) and (
