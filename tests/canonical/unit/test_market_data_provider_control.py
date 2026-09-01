@@ -7,8 +7,6 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SEND_ROOT = REPO_ROOT / "send"
 if str(SEND_ROOT) not in sys.path:
@@ -66,6 +64,14 @@ def _env(tmp_path: Path, *, twelve_key: str = "td-test-key") -> dict[str, str]:
         "FINNHUB_API_KEY": "fh-test-key",
         "TWELVE_DATA_API_KEY": twelve_key,
     }
+
+
+class _FakeFeed:
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
 
 
 def test_telegram_selection_is_exclusive_and_finnhub_locks_symbols(tmp_path):
@@ -165,3 +171,34 @@ def test_symbols_markup_changes_with_active_provider(tmp_path):
         assert any("✅ Twelve Data" in text for text in texts)
         assert any("GBP/USD" in text for text in texts)
         assert any("BTC/USD" in text for text in texts)
+
+
+def test_switch_stops_inactive_provider_streams_and_clears_stale_twelve_cache(tmp_path):
+    env = _env(tmp_path)
+    _purge()
+    with patch.dict(os.environ, env, clear=False):
+        from core.market_data_provider_control import set_active_provider
+        from runtime import market_client
+
+        finnhub_feed = _FakeFeed()
+        twelve_feed_a = _FakeFeed()
+        twelve_feed_b = _FakeFeed()
+        market_client._FINNHUB_FEED = finnhub_feed
+        market_client._TWELVE_DATA_FEEDS = {
+            "EUR/USD": twelve_feed_a,
+            "GBP/USD": twelve_feed_b,
+        }
+        market_client._TWELVE_DATA_REST_CACHE = {
+            ("EUR/USD", "1min"): {"fetched_ts": 1, "candles": []}
+        }
+
+        set_active_provider("FINNHUB", selected_by=OWNER_ID)
+        assert twelve_feed_a.stopped is True
+        assert twelve_feed_b.stopped is True
+        assert market_client._TWELVE_DATA_FEEDS == {}
+        assert market_client._TWELVE_DATA_REST_CACHE == {}
+        assert finnhub_feed.stopped is False
+
+        set_active_provider("TWELVE_DATA", selected_by=OWNER_ID)
+        assert finnhub_feed.stopped is True
+        assert market_client._FINNHUB_FEED is None
