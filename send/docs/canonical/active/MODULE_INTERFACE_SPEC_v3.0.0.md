@@ -1,10 +1,10 @@
 # MODULE_INTERFACE_SPEC_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE CONSOLIDATED SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: canonical module ownership, shared contracts and interfaces across strategy, Trade Physics, FSM, Signal Engine, Distribution, Telemetry, Outcome, Analytics and Intelligence  
-Supersession Intent: `MODULE_INTERFACE_SPEC_v2.0.0.md`
+Supersedes: `MODULE_INTERFACE_SPEC_v2.0.0.md`  
 
 Linked proposed/current authorities:
 - Root Strategy Stack successor
@@ -28,7 +28,7 @@ Linked proposed/current authorities:
 
 This is the complete proposed successor for module ownership/interface truth.
 
-Until explicit promotion, `MODULE_INTERFACE_SPEC_v2.0.0.md` remains active.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 The major version consolidates:
 - explicit FSM execution handoff semantics;

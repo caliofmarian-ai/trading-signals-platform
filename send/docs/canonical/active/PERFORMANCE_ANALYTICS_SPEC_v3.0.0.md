@@ -1,8 +1,8 @@
 # PERFORMANCE_ANALYTICS_SPEC_v3.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/PERFORMANCE_ANALYTICS_SPEC_v3.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/PERFORMANCE_ANALYTICS_SPEC_v3.0.0.md  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Multi-truth performance analytics, Trade Physics effectiveness, model calibration, drift, segmentation, evidence for research/governance
 
@@ -13,7 +13,7 @@ Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 ## 0. PROMOTION STATUS
 
-Until explicit promotion, v2.0.0 remains authoritative. This document does not authorize code or strategy mutation.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 ---
 

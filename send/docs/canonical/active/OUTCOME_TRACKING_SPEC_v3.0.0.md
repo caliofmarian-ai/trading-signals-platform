@@ -1,10 +1,10 @@
 # OUTCOME_TRACKING_SPEC_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: operational/admin outcome reconciliation and Trade Physics training-label lineage support  
-Supersession Intent: `OUTCOME_TRACKING_SPEC_v2.0.0.md`
+Supersedes: `OUTCOME_TRACKING_SPEC_v2.0.0.md`  
 
 Linked proposed/current authorities:
 - Root Strategy Stack successor
@@ -23,7 +23,7 @@ Linked proposed/current authorities:
 
 ## 0. Authority and promotion status
 
-This is a complete proposed successor. Until explicit promotion, v2.0.0 remains active.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 The major version reflects a structural expansion of reconciliation lineage so operational outcomes remain distinguishable from market labels while still being usable safely by Trade Physics analytics and intelligence.
 

@@ -1,8 +1,8 @@
 # AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v3.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v3.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v3.0.0.md  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Governed strategy evolution, Trade Physics/model recommendations, staging, approval, rollback, bounded authority
 

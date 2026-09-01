@@ -2,9 +2,9 @@
 
 BinaryBot — Admin Operations & Governed Control Procedures  
 Version: 2.0.1  
-Status: PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: /opt/binarybot/docs/canonical/proposed/ADMIN_OPERATIONS_SPEC_v2.0.1.md  
-Supersession Intent: `ADMIN_OPERATIONS_SPEC_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: /opt/binarybot/docs/canonical/active/ADMIN_OPERATIONS_SPEC_v2.0.1.md  
+Supersedes: `ADMIN_OPERATIONS_SPEC_v2.0.0.md`  
 
 Linked Documents:
 - ADMIN_CONTROL_SPEC_v2.0.1.md
@@ -34,7 +34,7 @@ The patch only:
 - updates this document's version/status/path metadata;
 - makes no permission, action-class, freeze, restart, recovery, mutation, or governance-policy change.
 
-Until explicit active promotion, `ADMIN_OPERATIONS_SPEC_v2.0.0.md` remains authoritative.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 ---
 

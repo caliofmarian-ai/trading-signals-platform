@@ -1,10 +1,10 @@
 # OBSERVABILITY_SPEC_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE CONSOLIDATED SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: observability policy for strategy, Trade Physics, FSM, signal execution, distribution, telemetry, outcomes and governed intelligence evidence  
-Supersession Intent: `OBSERVABILITY_SPEC_v2.0.0.md`
+Supersedes: `OBSERVABILITY_SPEC_v2.0.0.md`  
 
 Linked proposed/current authorities:
 - Root Strategy Stack successor
@@ -28,7 +28,7 @@ Linked proposed/current authorities:
 
 This is the complete proposed successor for observability policy.
 
-Until explicit promotion, `OBSERVABILITY_SPEC_v2.0.0.md` remains active.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 The major version consolidates:
 - explicit post-FSM signal-execution observability;

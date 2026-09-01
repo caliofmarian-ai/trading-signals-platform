@@ -2,11 +2,11 @@
 
 **Document ID:** HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON  
 **Version:** 1.0.1  
-**Status:** PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANON  
+**Status:** ACTIVE CANONICAL
 **Domain:** Admin Surface / Human Comprehension / Operational Memory  
 **Primary Surface:** Telegram  
 **Authority Root:** `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md`  
-**Supersession Intent:** `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md`
+**Supersedes:** `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md`
 
 ---
 
@@ -16,7 +16,7 @@ This successor preserves the complete human-comprehension, operational-memory, e
 
 The patch only updates normative canonical references and version/status metadata. It does not add a new UI capability, permission, truth domain, control, or explanation requirement.
 
-Until explicit active promotion, `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md` remains authoritative.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 ---
 

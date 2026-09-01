@@ -2,15 +2,15 @@
 
 **Canonical Name:** ADMIN_SURFACE_AND_CONTROL_PLANE_CANON  
 **Version:** 2.0.1  
-**Status:** PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
+**Status:** ACTIVE CANONICAL
 **Owner:** BinaryBot / DROPi Signals  
-**Canonical Path:** `send/docs/canonical/proposed/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md`  
+**Canonical Path:** `send/docs/canonical/active/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md`  
 **Governance Record:** canonical-reconciliation-01 (OWNER-007 = A)  
-**Supersession Intent:** `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md`  
+**Supersedes:** `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md`
 **Scope:** Canonical root manifest for the admin/control-plane specification cluster. Defines the human/operator control plane: Owner authority, hierarchical admin layers, Telegram admin interface relation, observability consumption, affiliate/admin segmentation, and separation between truth, control, execution, delivery and governance surfaces.
 
 **Predecessor / Superseded Documents:**
-- `send/docs/canonical/active/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md` — active predecessor until explicit promotion of this patch successor.
+- `send/docs/canonical/superseded/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md` — superseded predecessor after the executed 2026-09-01 promotion of this patch successor.
 - `send/docs/canonical/proposed/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v1.0.0.md` — proposed historical source.
 
 ---
@@ -26,7 +26,7 @@ The patch:
 
 It does not change Owner authority, admin roles, permissions, control-plane hierarchy, distribution policy, strategy truth, or publication entitlement.
 
-Until explicit active promotion, `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md` remains authoritative.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 ---
 
@@ -65,18 +65,18 @@ The following documents are subordinate members of this cluster. They govern the
 
 Depends on:
 
-- `send/docs/canonical/proposed/CANONICAL_STRATEGY_STACK_v2.0.0.md`
-- `send/docs/canonical/proposed/ALGO_SPEC_v3.0.0.md`
-- `send/docs/canonical/proposed/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`
-- `send/docs/canonical/proposed/FSM_DECISION_ENGINE_SPEC_v2.0.0.md`
-- `send/docs/canonical/proposed/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
-- `send/docs/canonical/proposed/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`
-- `send/docs/canonical/proposed/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `send/docs/canonical/proposed/SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md`
-- `send/docs/canonical/proposed/OBSERVABILITY_SPEC_v3.0.0.md`
-- `send/docs/canonical/proposed/GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md`
-- `send/docs/canonical/proposed/AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.1.md`
-- `send/docs/canonical/proposed/SECURITY_MODEL_v2.0.1.md`
+- `send/docs/canonical/active/CANONICAL_STRATEGY_STACK_v2.0.0.md`
+- `send/docs/canonical/active/ALGO_SPEC_v3.0.0.md`
+- `send/docs/canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`
+- `send/docs/canonical/active/FSM_DECISION_ENGINE_SPEC_v2.0.0.md`
+- `send/docs/canonical/active/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
+- `send/docs/canonical/active/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`
+- `send/docs/canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
+- `send/docs/canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md`
+- `send/docs/canonical/active/OBSERVABILITY_SPEC_v3.0.0.md`
+- `send/docs/canonical/active/GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md`
+- `send/docs/canonical/active/AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.1.md`
+- `send/docs/canonical/active/SECURITY_MODEL_v2.0.1.md`
 
 ---
 

@@ -1,9 +1,9 @@
 # AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.1
 
 Version: 2.0.1  
-Status: PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: /opt/binarybot/docs/canonical/proposed/AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.1.md  
-Supersession Intent: `AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: /opt/binarybot/docs/canonical/active/AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.1.md  
+Supersedes: `AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.0.md`  
 
 Linked Documents:
 - SYSTEM_INVARIANTS_v3.0.0.md
@@ -52,7 +52,7 @@ This successor preserves the complete affiliate participation, attribution, comm
 
 The patch only updates normative references and version/status/path metadata. It does not grant new affiliate authority, change attribution rules, alter commission semantics, or modify signal/distribution ownership.
 
-Until explicit active promotion, `AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.0.md` remains authoritative.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 ---
 

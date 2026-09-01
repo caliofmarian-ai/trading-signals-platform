@@ -1,8 +1,8 @@
 # TRADE_PHYSICS_MODEL_SPEC_v1.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md  
 Version: 1.0.0  
-Status: PROPOSED CURRENT-SCOPE CANON — NOT ACTIVE  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Change ID: 20260901-TRADE-PHYSICS-01  
 Scope: Deterministic Trade Physics mathematics, physical-feasibility scoring, canonical Trade Physics feature contract, and separation between deterministic TPS and learned probability

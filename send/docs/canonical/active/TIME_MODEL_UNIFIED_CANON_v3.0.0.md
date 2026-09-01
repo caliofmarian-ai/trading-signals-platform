@@ -1,8 +1,8 @@
 # TIME_MODEL_UNIFIED_CANON_v3.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/TIME_MODEL_UNIFIED_CANON_v3.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/TIME_MODEL_UNIFIED_CANON_v3.0.0.md  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Unified Model Time, Execution Time, Telemetry Time, directional-speed time feasibility, Trade Physics time handoff, DecisionObject time contract
 
@@ -10,12 +10,12 @@ Supersession intent: `TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 Linked documents:
-- `canonical/proposed/ALGO_SPEC_v3.0.0.md`
-- `canonical/proposed/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
-- `canonical/proposed/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md` until successor promotion
-- `canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md` until successor promotion
-- `canonical/active/TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md`
+- `canonical/active/ALGO_SPEC_v3.0.0.md`
+- `canonical/active/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
+- `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
+- `canonical/superseded/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md` until successor promotion
+- `canonical/superseded/FSM_DECISION_ENGINE_SPEC_v1.0.0.md` until successor promotion
+- `canonical/superseded/TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md`
 
 ---
 

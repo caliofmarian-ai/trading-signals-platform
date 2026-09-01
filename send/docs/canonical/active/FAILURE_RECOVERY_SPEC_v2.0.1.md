@@ -2,9 +2,9 @@
 
 BinaryBot — Failure Recovery, Restart Safety, State Restoration & Degraded-Mode Governance  
 Version: 2.0.1  
-Status: PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: /opt/binarybot/docs/canonical/proposed/FAILURE_RECOVERY_SPEC_v2.0.1.md  
-Supersession Intent: `FAILURE_RECOVERY_SPEC_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: /opt/binarybot/docs/canonical/active/FAILURE_RECOVERY_SPEC_v2.0.1.md  
+Supersedes: `FAILURE_RECOVERY_SPEC_v2.0.0.md`  
 
 Linked Documents:
 - SYSTEM_INVARIANTS_v3.0.0.md
@@ -28,7 +28,7 @@ This successor preserves all recovery-state, restoration, backup, dedup, degrade
 
 The patch only updates normative references and version/status/path metadata. It introduces no new recovery state and changes no restart or failure-handling policy.
 
-Until explicit active promotion, `FAILURE_RECOVERY_SPEC_v2.0.0.md` remains authoritative.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 ---
 

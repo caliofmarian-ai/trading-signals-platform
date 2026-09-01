@@ -2,9 +2,9 @@
 
 BinaryBot — Signal Distribution, Entitlement Routing & Delivery Governance Specification  
 Version: 2.0.1  
-Status: PROPOSED COMPLETE PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: `send/docs/canonical/proposed/SIGNAL_DISTRIBUTION_SPEC_v2.0.1.md`  
-Supersession Intent: `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: `send/docs/canonical/active/SIGNAL_DISTRIBUTION_SPEC_v2.0.1.md`  
+Supersedes: `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md`  
 
 ---
 

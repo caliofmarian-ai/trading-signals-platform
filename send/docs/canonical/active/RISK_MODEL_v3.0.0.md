@@ -2,9 +2,9 @@
 
 Canonical Name: RISK_MODEL  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
-Supersession Intent: `RISK_MODEL_v2.0.0.md`  
+Supersedes: `RISK_MODEL_v2.0.0.md`  
 Scope: strategy risk filtering, physical-feasibility protection, instability defense, lifecycle risk constraints and capital-protection discipline
 
 Linked proposed/current authorities:
@@ -26,7 +26,7 @@ Linked proposed/current authorities:
 
 ## 0. Authority and promotion status
 
-Until explicit atomic canonical promotion, `RISK_MODEL_v2.0.0.md` remains active.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 This v3 successor exists because the active v2 document contains legacy parallel strategy mathematics (`buffer_price` and its own `t_needed` formula) that would conflict with the approved Time Model and Trade Physics successor graph.
 

@@ -1,9 +1,9 @@
 # SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.1
 
 Version: 2.0.1  
-Status: PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: /opt/binarybot/docs/canonical/proposed/SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.1.md  
-Supersession Intent: `SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: /opt/binarybot/docs/canonical/active/SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.1.md  
+Supersedes: `SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.0.md`  
 
 Linked Documents:
 - SYSTEM_INVARIANTS_v3.0.0.md
@@ -52,7 +52,7 @@ This successor preserves the commercial tier, monetization, premium-feature, aff
 
 The patch only updates normative references, version/status/path metadata, and terminology needed to keep the commercial description aligned with the promoted strategy/execution graph. It does not alter tier limits, pricing, signal quality, entitlement policy, distribution routing, or strategy behavior.
 
-Until explicit active promotion, `SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.0.md` remains authoritative.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 ---
 

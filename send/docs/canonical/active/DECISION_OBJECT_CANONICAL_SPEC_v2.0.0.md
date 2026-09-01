@@ -1,8 +1,8 @@
 # DECISION_OBJECT_CANONICAL_SPEC_v2.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md  
 Version: 2.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Official strategic output contract between strategy/scoring and FSM, including complete current Trade Physics evidence
 
@@ -10,19 +10,19 @@ Supersession intent: `DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 Linked proposed/current documents:
-- `canonical/proposed/ALGO_SPEC_v3.0.0.md`
-- `canonical/proposed/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
-- `canonical/proposed/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`
-- `canonical/proposed/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md` until successor promotion
-- `canonical/active/OBSERVABILITY_SPEC_v2.0.0.md` until successor promotion
-- `canonical/active/DECISION_AUDIT_SPEC_v2.0.0.md` until successor promotion
+- `canonical/active/ALGO_SPEC_v3.0.0.md`
+- `canonical/active/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
+- `canonical/active/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`
+- `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
+- `canonical/superseded/FSM_DECISION_ENGINE_SPEC_v1.0.0.md` until successor promotion
+- `canonical/superseded/OBSERVABILITY_SPEC_v2.0.0.md` until successor promotion
+- `canonical/superseded/DECISION_AUDIT_SPEC_v2.0.0.md` until successor promotion
 
 ---
 
 ## 0. PROMOTION STATUS
 
-This is a proposed complete successor. Until explicit promotion, v1.0.0 remains authoritative and no runtime code change is authorized by this document.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 ---
 

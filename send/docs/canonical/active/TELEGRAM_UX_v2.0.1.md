@@ -2,9 +2,9 @@
 
 BinaryBot — Telegram Experience, Routing & Interaction Specification  
 Version: 2.0.1  
-Status: PROPOSED COMPLETE PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: `send/docs/canonical/proposed/TELEGRAM_UX_v2.0.1.md`  
-Supersession Intent: `TELEGRAM_UX_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: `send/docs/canonical/active/TELEGRAM_UX_v2.0.1.md`  
+Supersedes: `TELEGRAM_UX_v2.0.0.md`  
 
 Linked Documents:
 - ADMIN_CONTROL_SPEC_v2.0.1.md
@@ -29,7 +29,7 @@ Linked Documents:
 
 ## 0. Patch status
 
-Until explicit atomic promotion, `TELEGRAM_UX_v2.0.0.md` remains active.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 This v2.0.1 successor preserves Telegram UX behavior and repairs canonical references/truth-source wording for the staged-execution + Trade Physics graph.
 

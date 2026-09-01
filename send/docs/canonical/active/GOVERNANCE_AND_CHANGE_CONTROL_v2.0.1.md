@@ -1,9 +1,9 @@
 # GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1
 
 Version: 2.0.1  
-Status: PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: /opt/binarybot/docs/canonical/proposed/GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md  
-Supersession Intent: `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: /opt/binarybot/docs/canonical/active/GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md  
+Supersedes: `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md`  
 
 Linked Documents:
 - SYSTEM_INVARIANTS_v3.0.0.md
@@ -46,7 +46,7 @@ This successor preserves the complete governance framework of v2.0.0: authority 
 
 The patch only updates normative references and version/status/path metadata and removes non-canonical formatting artifacts. No governance burden is weakened or expanded.
 
-Until explicit active promotion, `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md` remains authoritative.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 ---
 

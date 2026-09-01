@@ -2,16 +2,16 @@
 
 **Canonical Name:** SECURITY_MODEL  
 **Version:** 2.0.1  
-**Status:** PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
+**Status:** ACTIVE CANONICAL
 **Owner:** BinaryBot / DROPi Signals  
-**Canonical Path:** `send/docs/canonical/proposed/SECURITY_MODEL_v2.0.1.md`  
+**Canonical Path:** `send/docs/canonical/active/SECURITY_MODEL_v2.0.1.md`  
 **Governance Record:** canonical-reconciliation-01 (OWNER-006 = A)  
-**Supersession Intent:** `SECURITY_MODEL_v2.0.0.md`
+**Supersedes:** `SECURITY_MODEL_v2.0.0.md`
 
 **Authority:** This document is the canonical security architecture and threat-protection authority for BinaryBot / DROPi Signals. It does not override domain owners for role definitions, outcome-window policy, strategy, Trade Physics, distribution, or observability schemas.
 
 **Predecessor / Superseded Documents:**  
-- `send/docs/canonical/active/SECURITY_MODEL_v2.0.0.md` — active predecessor until explicit promotion.  
+- `send/docs/canonical/superseded/SECURITY_MODEL_v2.0.0.md` — superseded predecessor after the executed 2026-09-01 promotion.  
 - `send/docs/SECURITY_MODEL.md` — root-level historical source.  
 
 **Linked Documents:**  
@@ -44,7 +44,7 @@ The patch:
 
 These are ownership/reference corrections, not new permission or outcome policy.
 
-Until explicit active promotion, `SECURITY_MODEL_v2.0.0.md` remains authoritative.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 ---
 

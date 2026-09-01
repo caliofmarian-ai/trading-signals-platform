@@ -2,9 +2,9 @@
 
 BinaryBot — Destination Configuration, Route Mapping & Delivery Parameter Specification  
 Version: 2.0.1  
-Status: PROPOSED COMPLETE PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: `send/docs/canonical/proposed/CHANNEL_CONFIG_SPEC_v2.0.1.md`  
-Supersession Intent: `CHANNEL_CONFIG_SPEC_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: `send/docs/canonical/active/CHANNEL_CONFIG_SPEC_v2.0.1.md`  
+Supersedes: `CHANNEL_CONFIG_SPEC_v2.0.0.md`  
 
 Linked Documents:
 - SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.1.md
@@ -26,7 +26,7 @@ Linked Documents:
 
 ## 0. Patch status
 
-Until explicit atomic promotion, `CHANNEL_CONFIG_SPEC_v2.0.0.md` remains active.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 This v2.0.1 successor is a reference/terminology repair only. It preserves the route/destination configuration semantics of v2.0.0.
 

@@ -1,10 +1,10 @@
 # SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE CONSOLIDATED SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: post-FSM signal execution, SignalEvent candidate construction, execution outcomes, distribution handoff, execution observability, Trade Physics downstream boundary  
-Supersession Intent: `SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`
+Supersedes: `SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`  
 
 Linked proposed/current authorities:
 - Root Strategy Stack successor
@@ -32,7 +32,7 @@ It incorporates:
 - staged execution / post-FSM observability remediation;
 - the Trade Physics ownership boundary required by current-scope integration.
 
-Until explicit promotion, `SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md` remains active.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 Merge of this proposal does not authorize runtime changes, distribution activation, Telegram publication, outcome creation, or broker execution.
 

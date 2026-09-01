@@ -1,10 +1,10 @@
 # OBSERVABILITY_LOGGING_SPEC_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE CONSOLIDATED SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: implementation-level structured logging for strategy, Trade Physics, FSM, signal execution, distribution, telemetry, outcome and governance evidence  
-Supersession Intent: `OBSERVABILITY_LOGGING_SPEC_v2.0.0.md`
+Supersedes: `OBSERVABILITY_LOGGING_SPEC_v2.0.0.md`  
 
 Linked proposed/current authorities:
 - `EVENT_SCHEMA_SPEC_v3.0.0.md`
@@ -24,7 +24,7 @@ Linked proposed/current authorities:
 
 This is the complete proposed implementation-level logging contract.
 
-Until explicit promotion, v2 remains active.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 It consolidates:
 - explicit `signal_execution_result` logging;

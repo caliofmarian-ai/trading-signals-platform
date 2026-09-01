@@ -1,8 +1,8 @@
 # ALGO_SPEC_v3.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/ALGO_SPEC_v3.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/ALGO_SPEC_v3.0.0.md  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Strategic market model, corridor-first decision pipeline, classical scoring, current Trade Physics integration, DecisionObject production contract
 
@@ -15,14 +15,14 @@ Governance basis:
 - merged governance PR #78
 
 Linked proposed/current documents:
-- `canonical/active/CANONICAL_STRATEGY_STACK_v1.0.0.md` until successor promotion
-- `canonical/active/TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
-- `canonical/active/SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`
-- `canonical/proposed/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md` until successor promotion
-- `canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
-- `canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`
-- `canonical/active/OBSERVABILITY_SPEC_v2.0.0.md`
+- `canonical/superseded/CANONICAL_STRATEGY_STACK_v1.0.0.md` until successor promotion
+- `canonical/superseded/TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
+- `canonical/superseded/SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`
+- `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
+- `canonical/superseded/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md` until successor promotion
+- `canonical/superseded/FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
+- `canonical/superseded/SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`
+- `canonical/superseded/OBSERVABILITY_SPEC_v2.0.0.md`
 
 ---
 
@@ -30,7 +30,7 @@ Linked proposed/current documents:
 
 This document is a complete proposed successor, not an amendment to the active file.
 
-Until explicit promotion:
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 - `ALGO_SPEC_v2.0.0.md` remains authoritative;
 - this document does not authorize runtime changes;

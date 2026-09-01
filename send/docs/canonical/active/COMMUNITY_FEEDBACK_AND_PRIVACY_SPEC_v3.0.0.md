@@ -2,9 +2,9 @@
 
 Canonical Name: COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
-Supersession Intent: `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v2.0.0.md`  
+Supersedes: `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v2.0.0.md`  
 Scope: community/self-reported feedback, member execution experience, private member statistics, optional leaderboard, privacy, and reconciliation with objective/operational truth
 
 Linked proposed/current authorities:
@@ -25,7 +25,7 @@ Linked proposed/current authorities:
 
 ## 0. Authority and promotion status
 
-Until explicit atomic canonical promotion, `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v2.0.0.md` remains active.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 This v3 successor is required because v2 describes Admin Outcome as the single canonical truth used for strategy evaluation. The current proposed canonical graph separates:
 - objective market truth;

@@ -1,10 +1,10 @@
 # TRADE_TEMPORAL_TELEMETRY_SPEC_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: post-executable market truth, temporal checkpoints, Trade Physics feature/outcome lineage  
-Supersession Intent: `TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md`
+Supersedes: `TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md`  
 
 Linked proposed/current authorities:
 - `CANONICAL_STRATEGY_STACK` successor
@@ -23,7 +23,7 @@ Linked proposed/current authorities:
 
 ## 0. Authority and promotion status
 
-This is a complete proposed successor. Until explicit promotion, v2.0.0 remains active.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 The major version is justified by structural expansion of the telemetry contract to make Trade Physics feature snapshots, feature-version lineage, label provenance, and learned-probability separation first-class current-scope requirements.
 

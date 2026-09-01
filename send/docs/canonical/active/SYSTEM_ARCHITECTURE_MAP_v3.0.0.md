@@ -1,10 +1,10 @@
 # SYSTEM_ARCHITECTURE_MAP_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: top-level system architecture, layer ownership, current-scope Trade Physics, staged execution and evidence/intelligence flow  
-Supersession Intent: `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md`
+Supersedes: `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md`  
 
 Linked proposed/current authorities:
 - `CANONICAL_STRATEGY_STACK_v2.0.0.md`
@@ -30,7 +30,7 @@ Linked proposed/current authorities:
 
 This document is a complete proposed successor for the top-level system architecture map.
 
-Until explicit promotion, `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md` remains active.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 The major version is required because the architecture now explicitly includes:
 - deterministic Trade Physics inside the runtime strategy path;

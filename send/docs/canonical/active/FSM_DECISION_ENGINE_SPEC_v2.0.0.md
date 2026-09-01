@@ -1,10 +1,10 @@
 # FSM_DECISION_ENGINE_SPEC_v2.0.0
 
 Version: 2.0.0  
-Status: PROPOSED COMPLETE CONSOLIDATED SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: operational lifecycle interpretation between DecisionObject and Signal Engine, including exact-stage handoff semantics  
-Supersession Intent: `FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
+Supersedes: `FSM_DECISION_ENGINE_SPEC_v1.0.0.md`  
 
 Linked proposed/current authorities:
 - Root Strategy Stack successor
@@ -23,7 +23,7 @@ Linked proposed/current authorities:
 
 This is the complete proposed successor for FSM decision truth.
 
-Until explicit promotion, `FSM_DECISION_ENGINE_SPEC_v1.0.0.md` remains active.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 The major version is required because the post-FSM handoff contract becomes explicit and distinguishes lifecycle-stage release from final trade-execution readiness.
 

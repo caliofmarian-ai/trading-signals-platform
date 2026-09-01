@@ -1,10 +1,10 @@
 # TEST_PLAN_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: canonical validation protocol for strategy, Trade Physics, staged execution, evidence, telemetry, learned models and production readiness  
-Supersession Intent: `TEST_PLAN_v2.0.0.md`
+Supersedes: `TEST_PLAN_v2.0.0.md`  
 
 Linked proposed/current authorities:
 - `SYSTEM_INVARIANTS_v3.0.0.md`
@@ -34,7 +34,7 @@ Linked proposed/current authorities:
 
 This is a complete proposed validation successor.
 
-Until explicit promotion, `TEST_PLAN_v2.0.0.md` remains active.
+Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 The major version adds required validation for:
 - deterministic Trade Physics calculations;
