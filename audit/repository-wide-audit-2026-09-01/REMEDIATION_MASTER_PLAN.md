@@ -94,11 +94,12 @@ Acceptance:
 
 ### R-004 — Research/intelligence input sanitation before autonomy
 Severity: CRITICAL FOR FUTURE AUTONOMY
-Status: IN PROGRESS
-Issue: #104
-PR: #105 (Draft until final audit completion)
+Status: CLOSED
+Issue: #104 — CLOSED
+PR: #105
+Merged main commit: `a05710aafb1dba0d88ee11c926766bb6506a1bb2`
 Depends on: R-003 — SATISFIED
-Current validation: 998 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; GitHub Actions run 33561964658 SUCCESS.
+Validation: 998 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; final GitHub Actions run 33562146134 SUCCESS.
 
 Problem:
 - offline research/intelligence modules consume analytics derived from community outcomes; adaptive parameter and optimizer code also contains legacy-schema assumptions.
@@ -118,7 +119,11 @@ Acceptance:
 
 ### R-005 — FSM OPEN_NOW idempotency
 Severity: HIGH
-Status: PENDING
+Status: IN PROGRESS
+Issue: #106
+PR: #107 (Draft until final audit completion)
+Depends on: R-004 — SATISFIED
+Current validation: 1002 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; GitHub Actions run 33563918504 SUCCESS.
 
 Required outcome:
 - duplicate same-opportunity/same-stage/same-candle OPEN_NOW is observed but not re-released;
@@ -358,3 +363,5 @@ The repository-wide remediation program is complete only when:
 - 2026-09-01: R-003 started on branch `remediation/audit-2026-09-01-r003-truth-source-separation`; Issue #102 and Draft PR #103 created.
 - 2026-09-01: R-003 merged through PR #103; main advanced to `60b1e885ee01126d4b99e8aaa5cc34d995c6ce8e`; Issue #102 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 991 passed.
 - 2026-09-01: R-004 started on branch `remediation/audit-2026-09-01-r004-intelligence-input-sanitation`; Issue #104 and Draft PR #105 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 998 passed, GitHub Actions run 33561964658 SUCCESS.
+- 2026-09-01: R-004 merged through PR #105; main advanced to `a05710aafb1dba0d88ee11c926766bb6506a1bb2`; Issue #104 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 998 passed.
+- 2026-09-01: R-005 started on branch `remediation/audit-2026-09-01-r005-fsm-open-now-idempotency`; Issue #106 and Draft PR #107 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1002 passed, GitHub Actions run 33563918504 SUCCESS.
