@@ -1,0 +1,61 @@
+name: PR86 Final Canonical Runtime Validation
+
+on:
+  push:
+    branches:
+      - feature/trade-physics-staged-execution-runtime
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest
+      - name: Compile changed runtime modules
+        run: |
+          python -m py_compile \
+            send/core/decision_assembly.py \
+            send/core/decision_object.py \
+            send/core/market_model.py \
+            send/core/scoring_model.py \
+            send/core/signal_engine.py \
+            send/core/signal_event.py \
+            send/core/signal_execution_gate.py \
+            send/core/strategy_v2.py \
+            send/core/time_model.py \
+            send/core/trade_physics.py \
+            send/core/v2_fsm_orchestrator.py
+      - name: Run focused canonical regression suite
+        env:
+          PYTHONPATH: send
+        run: |
+          python -m pytest -q \
+            tests/canonical/unit/test_market_model.py \
+            tests/canonical/unit/test_time_model.py \
+            tests/canonical/unit/test_scoring_model.py \
+            tests/canonical/unit/test_trade_physics.py \
+            tests/canonical/unit/test_decision_object.py \
+            tests/canonical/integration/test_decision_assembly.py \
+            tests/canonical/integration/test_binary_strategy_v2.py \
+            tests/canonical/unit/test_v2_fsm_orchestrator.py \
+            tests/canonical/unit/test_signal_event.py \
+            tests/canonical/unit/test_signal_execution_gate.py \
+            tests/canonical/unit/test_event_schema_v3.py \
+            tests/canonical/unit/test_signal_engine_persistence_boundary_v3.py \
+            tests/canonical/unit/test_binary_strategy_v2_runtime.py \
+            tests/canonical/test_human_comprehension_canon.py \
+            tests/telegram_app/test_owner_knowledge_layer.py \
+            tests/batch_03/test_distribution_observability_interface_repair.py \
+            tests/batch_04/test_canonical_outcome_and_telemetry_flow.py \
+            tests/batch_06/test_fsm_restart_recovery.py
+      - name: Run full repository regression suite
+        env:
+          PYTHONPATH: send
+        run: python -m pytest -q
