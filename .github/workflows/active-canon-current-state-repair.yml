@@ -1,0 +1,39 @@
+name: Active Canon Current State Repair
+
+on:
+  push:
+    branches:
+      - governance/active-canon-metadata-cleanup-20260901
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.head_commit.message != 'Apply deterministic active canon current-state repair'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: governance/active-canon-metadata-cleanup-20260901
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply exact editorial repairs
+        run: python scripts/_tmp_active_canon_current_state_repair.py
+      - name: Enforce docs-only repair scope
+        run: |
+          bad="$(git diff --name-only | grep -Ev '^send/docs/canonical/active/[^/]+\.md$' || true)"
+          if [ -n "$bad" ]; then
+            echo "FAIL: out-of-scope repair files"
+            echo "$bad"
+            exit 1
+          fi
+      - name: Commit repair
+        run: |
+          git config user.name 'caliofmarian-ai'
+          git config user.email 'caliofmarian@gmail.com'
+          git add send/docs/canonical/active
+          git commit -m 'Apply deterministic active canon current-state repair'
+          git push origin HEAD:governance/active-canon-metadata-cleanup-20260901
