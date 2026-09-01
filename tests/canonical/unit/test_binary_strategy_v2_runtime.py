@@ -45,16 +45,19 @@ def test_v2_requires_complete_real_history(canonical_runtime_root: Path) -> None
         decide(_candles(30, "M1", 60), _candles(30, "M5", 300), _params(canonical_runtime_root))
 
 
-def test_v2_preserves_real_input_evidence(canonical_runtime_root: Path) -> None:
+def test_v2_preserves_real_input_evidence_and_exposes_trade_physics(canonical_runtime_root: Path) -> None:
     m1, m5 = _candles(220, "M1", 60), _candles(220, "M5", 300)
     before_m1, before_m5 = copy.deepcopy(m1), copy.deepcopy(m5)
     result = decide(m1, m5, _params(canonical_runtime_root), cycle_id="preserve-inputs")
     assert isinstance(result, BinaryStrategyV2Evaluation)
+    assert result.canonical_spec == "ALGO_SPEC_v3.0.0"
+    assert result.trade_physics == result.scoring.trade_physics
+    assert result.decision.score.trade_physics is not None
     assert m1 == before_m1
     assert m5 == before_m5
 
 
-def test_runtime_uses_v2_evaluation_and_never_routes_it(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_fails_closed_before_execution_for_malformed_v2_evaluation(monkeypatch: pytest.MonkeyPatch) -> None:
     signal_engine = importlib.import_module("core.signal_engine")
     market_client = importlib.import_module("runtime.market_client")
     m1, m5 = _candles(220, "M1", 60), _candles(220, "M5", 300)
@@ -69,10 +72,13 @@ def test_runtime_uses_v2_evaluation_and_never_routes_it(monkeypatch: pytest.Monk
     monkeypatch.setattr(market_client, "configured_symbols", lambda: None)
     monkeypatch.setattr(market_client, "get_candles", lambda symbol, interval: list(reversed(m1 if interval == "1min" else m5)))
     monkeypatch.setattr(signal_engine, "decide", lambda **kwargs: evaluation)
-    monkeypatch.setattr(signal_engine.distribution_router, "route", lambda *_args: (_ for _ in ()).throw(AssertionError("route must remain blocked")))
+    monkeypatch.setattr(
+        signal_engine,
+        "prepare_signal_execution",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("execution must not run")),
+    )
     monkeypatch.setattr(signal_engine.observability_logger, "log_error", errors.append)
 
     signal_engine.run_once(now_ts=1_800_000_000)
     assert len(errors) == 1
     assert "object has no attribute 'decision'" in errors[0]["error"]
-    # Even a malformed V2 evaluation fails closed before distribution.
