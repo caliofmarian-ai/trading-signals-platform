@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any, Dict, Optional
 
 from core import observability_logger
@@ -11,8 +12,10 @@ TELEMETRY_VERSION = "2.0.0"
 OPEN_TRADES_REGISTRY_JSON = storage.root_path("observability", "open_trades_registry.json")
 
 
-def _iso_utc(epoch_seconds: int) -> str:
-    return datetime.fromtimestamp(int(epoch_seconds), tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+def _iso_utc(epoch_seconds: float) -> str:
+    value = float(epoch_seconds)
+    timespec = "seconds" if value.is_integer() else "microseconds"
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat(timespec=timespec).replace("+00:00", "Z")
 
 
 def _require_str(value: Any, field_name: str) -> str:
@@ -33,7 +36,10 @@ def _require_int(value: Any, field_name: str) -> int:
 def _require_number(value: Any, field_name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{field_name} must be a number")
-    return float(value)
+    result = float(value)
+    if not isfinite(result):
+        raise ValueError(f"{field_name} must be finite")
+    return result
 
 
 def _load_registry() -> Dict[str, Any]:
@@ -66,7 +72,7 @@ def _build_trade_record(event: Dict[str, Any], now_ts: int) -> Dict[str, Any]:
     if stage != "OPEN_NOW":
         raise ValueError("stage must be OPEN_NOW")
 
-    expiry_minutes = _require_int(event.get("expiry_minutes"), "expiry_minutes")
+    expiry_minutes = _require_number(event.get("expiry_minutes"), "expiry_minutes")
     if expiry_minutes <= 0:
         raise ValueError("expiry_minutes must be positive")
 
@@ -79,8 +85,9 @@ def _build_trade_record(event: Dict[str, Any], now_ts: int) -> Dict[str, Any]:
     if tps_value is not None:
         tps_value = _require_number(tps_value, "TPS")
 
-    expiry_ts = open_ts + (expiry_minutes * 60)
-    mid_expiry_ts = open_ts + ((expiry_minutes * 60) // 2)
+    expiry_duration_seconds = expiry_minutes * 60.0
+    expiry_ts = open_ts + expiry_duration_seconds
+    mid_expiry_ts = open_ts + (expiry_duration_seconds / 2.0)
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
 
     return {
@@ -94,6 +101,7 @@ def _build_trade_record(event: Dict[str, Any], now_ts: int) -> Dict[str, Any]:
         "open_ts": open_ts,
         "open_ts_utc": _iso_utc(open_ts),
         "expiry_minutes": expiry_minutes,
+        "expiry_duration_seconds": expiry_duration_seconds,
         "expiry_ts": expiry_ts,
         "expiry_ts_utc": _iso_utc(expiry_ts),
         "mid_expiry_ts": mid_expiry_ts,
@@ -131,6 +139,7 @@ def _immutable_fields(record: Dict[str, Any]) -> Dict[str, Any]:
         "entry_price": record.get("entry_price"),
         "open_ts": record.get("open_ts"),
         "expiry_minutes": record.get("expiry_minutes"),
+        "expiry_duration_seconds": record.get("expiry_duration_seconds"),
         "expiry_ts": record.get("expiry_ts"),
         "candle_ts": record.get("candle_ts"),
     }
