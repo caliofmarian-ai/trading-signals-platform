@@ -33,6 +33,7 @@ from core.admin_views import (
 from core import params_loader as _params_loader
 from core import observability_logger
 from core import storage as _storage
+from core import market_data_provider_control as _provider_control
 from core.operational_snapshot import build_status_snapshot
 
 CONFIG_DIR = _storage.root_path("config")
@@ -41,6 +42,7 @@ REPORTS_DIR = os.path.join(os.getenv("ANALYTICS_DIR", _storage.root_path("analyt
 
 ALGO_PARAMS_PATH = os.path.join(CONFIG_DIR, "algo_params.json")
 ACTIVE_SYMBOLS_PATH = os.path.join(CONFIG_DIR, "active_symbols.json")
+SYMBOL_UNIVERSE_PATH = os.path.join(CONFIG_DIR, "symbol_universe.json")
 ADMIN_EVENTS_PATH = os.path.join(os.getenv("OBS_DIR", _storage.root_path("observability")), "admin_events.jsonl")
 ADMIN_PROOFS_PATH = os.path.join(os.getenv("OBS_DIR", _storage.root_path("observability")), "admin_proofs.jsonl")
 ENGINE_EVENTS_PATH = os.path.join(os.getenv("OBS_DIR", _storage.root_path("observability")), "engine_events.jsonl")
@@ -49,63 +51,52 @@ ENGINE_EVENTS_PATH = os.path.join(os.getenv("OBS_DIR", _storage.root_path("obser
 # File delivery security constants
 # ---------------------------------------------------------------------------
 
-# Allowed file extensions for delivery.
 ALLOWED_EXTENSIONS: frozenset[str] = frozenset({".md", ".txt", ".json", ".jsonl", ".log"})
 
-# Allowed subdirectory names under BINARYBOT_BASE_DIR for file browsing.
 ALLOWED_DIR_NAMES: frozenset[str] = frozenset({
     "observability", "outcomes", "analytics", "reports", "snapshots", "docs", "audit",
 })
 
-# Short dir keys used in callback data (must stay ≤3 chars to keep callback_data ≤64 bytes).
 _DIR_KEY_MAP: Dict[str, str] = {
     "obs": "observability",
     "out": "outcomes",
     "ana": "analytics",
-    "rpt": "reports",        # resolves to analytics/reports
+    "rpt": "reports",
     "doc": "docs",
     "aud": "audit",
     "snp": "snapshots",
 }
 
-# Secret-bearing filename patterns — never deliver these.
 _SECRET_PATTERNS: tuple[str, ...] = (
     ".env", "token", "secret", "password", "passwd", ".key", "credential",
     "private", ".pem", ".p12", ".pfx", ".cer", "id_rsa", "id_ed25519",
     "id_ecdsa", "salt", ".htpasswd",
 )
 
-# Default maximum file size for delivery (bytes).  Override with MAX_DELIVERY_FILE_SIZE env var.
-MAX_DELIVERY_FILE_SIZE_DEFAULT = 5 * 1024 * 1024  # 5 MB
-
-# Maximum number of JSONL lines to include in a bounded log export.
+MAX_DELIVERY_FILE_SIZE_DEFAULT = 5 * 1024 * 1024
 LOG_EXPORT_MAX_LINES = 200
-
-# Maximum number of JSONL lines to include in a runtime audit artifact.
 AUDIT_MAX_LINES_PER_FILE = 50
 
 # ---------------------------------------------------------------------------
 # Canonical strategy-profile definitions (MIC/SMALL, MEDIU/MEDIUM, MARE/LARGE)
 # ---------------------------------------------------------------------------
-# Maps profile name → canonical algo_params mutations.
-# Only score_thresholds and sr_required_multiplier are touched;
-# all other params are preserved from the current file.
 STRATEGY_PROFILES: Dict[str, Dict[str, Any]] = {
-    "CONSERVATIVE": {  # MIC / SMALL — tighter filters, fewer signals
+    "CONSERVATIVE": {
         "score_thresholds": {"PRE": 60, "CONFIRM": 70, "OPEN": 75},
         "sr_required_multiplier": 1.8,
     },
-    "BALANCED": {  # MEDIU / MEDIUM — moderate filters
+    "BALANCED": {
         "score_thresholds": {"PRE": 55, "CONFIRM": 65, "OPEN": 70},
         "sr_required_multiplier": 1.5,
     },
-    "AGGRESSIVE": {  # MARE / LARGE — looser filters, more signals
+    "AGGRESSIVE": {
         "score_thresholds": {"PRE": 50, "CONFIRM": 60, "OPEN": 65},
         "sr_required_multiplier": 1.2,
     },
 }
 
-# Canonical list of known symbols split by category.
+# Legacy fallback only. The governed symbol universe is loaded from
+# config/symbol_universe.json when available.
 CANONICAL_SYMBOLS: Dict[str, List[str]] = {
     "FOREX": [
         "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD",
@@ -116,7 +107,7 @@ CANONICAL_SYMBOLS: Dict[str, List[str]] = {
     ],
 }
 
-# Canonical algo_params.json path resolved via storage when possible.
+
 def _algo_params_path() -> str:
     try:
         return _storage.config_path("algo_params.json")
@@ -170,7 +161,6 @@ def _parse_command(text: str) -> List[str]:
 
 
 def _load_algo_params() -> Dict[str, Any]:
-    """Load the canonical algo params for admin display. Returns empty dict on error."""
     try:
         return _params_loader.load_algo_params(_algo_params_path())
     except (_params_loader.ParamsValidationError, _params_loader.ParamsMigrationError):
@@ -180,7 +170,6 @@ def _load_algo_params() -> Dict[str, Any]:
 
 
 def _load_algo_params_observation() -> Optional[Dict[str, Any]]:
-    """Return validated effective parameters, or None for missing/invalid evidence."""
     try:
         return _params_loader.load_algo_params(_algo_params_path())
     except (
@@ -193,10 +182,6 @@ def _load_algo_params_observation() -> Optional[Dict[str, Any]]:
 
 
 def _save_algo_params_validated(params: Dict[str, Any]) -> None:
-    """
-    Validate params against the canonical contract, then write atomically.
-    Raises ParamsValidationError if validation fails — does NOT write in that case.
-    """
     _params_loader.validate_algo_params(params)
     path = _algo_params_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -209,13 +194,13 @@ def _load_active_symbols_raw() -> Any:
 
 def _flatten_active_symbols(data: Any) -> List[str]:
     if isinstance(data, list):
-        return sorted({str(x).upper() for x in data if str(x).strip()})
+        return sorted({str(x).strip().upper() for x in data if str(x).strip()})
 
     if isinstance(data, dict):
         flat: List[str] = []
-        for _, values in data.items():
+        for values in data.values():
             if isinstance(values, list):
-                flat.extend(str(x).upper() for x in values if str(x).strip())
+                flat.extend(str(x).strip().upper() for x in values if str(x).strip())
         return sorted(set(flat))
 
     return []
@@ -226,7 +211,6 @@ def _load_active_symbols() -> List[str]:
 
 
 def _load_active_symbols_observation() -> Optional[List[str]]:
-    """Return persisted symbol evidence, or None when it is absent/invalid."""
     data = _read_json_observation(ACTIVE_SYMBOLS_PATH)
 
     def strict_values(values: List[Any]) -> Optional[List[str]]:
@@ -252,21 +236,82 @@ def _load_active_symbols_observation() -> Optional[List[str]]:
     return None
 
 
+def _symbol_key(symbol: str) -> str:
+    return str(symbol or "").strip().upper().replace("/", "").replace("_", "").replace("-", "")
+
+
+def _valid_symbol(symbol: str) -> bool:
+    key = _symbol_key(symbol)
+    return len(key) == 6 and key.isalpha()
+
+
+def _matching_known_symbol(symbol: str) -> Optional[str]:
+    key = _symbol_key(symbol)
+    for known in get_all_known_symbols():
+        if _symbol_key(known) == key:
+            return known
+    return None
+
+
 def _save_active_symbols(symbols: List[str]) -> None:
+    """Persist active symbols while preserving configured category structure.
+
+    The symbol universe is independent from the active selection. This prevents
+    switching to FINNHUB from destroying the Twelve Data selection and prevents
+    a disabled symbol from disappearing from the UI universe.
     """
-    Preserve current project compatibility:
-    - if active_symbols.json is a dict, update the first list bucket
-    - otherwise save flat list
-    """
+    normalized = sorted({str(x).strip().upper() for x in symbols if str(x).strip()})
+    universe = _safe_load_json(SYMBOL_UNIVERSE_PATH, None)
     existing = _load_active_symbols_raw()
-    normalized = sorted({str(x).upper() for x in symbols if str(x).strip()})
+
+    if isinstance(universe, dict) and universe:
+        desired_by_key = {_symbol_key(item): item for item in normalized}
+        rebuilt: Dict[str, List[str]] = {}
+        assigned: set[str] = set()
+        for category, values in universe.items():
+            if not isinstance(values, list):
+                continue
+            selected: List[str] = []
+            for candidate in values:
+                if not isinstance(candidate, str) or not candidate.strip():
+                    continue
+                key = _symbol_key(candidate)
+                if key in desired_by_key:
+                    selected.append(candidate.strip().upper())
+                    assigned.add(key)
+            rebuilt[str(category)] = selected
+
+        leftovers = [item for item in normalized if _symbol_key(item) not in assigned]
+        if leftovers:
+            target = next(iter(rebuilt.keys()), "symbols")
+            rebuilt.setdefault(target, [])
+            rebuilt[target].extend(leftovers)
+            rebuilt[target] = sorted(set(rebuilt[target]))
+        _storage.save_json_atomic(ACTIVE_SYMBOLS_PATH, rebuilt)
+        return
 
     if isinstance(existing, dict) and existing:
-        first_key = next(iter(existing.keys()))
-        if isinstance(existing[first_key], list):
-            existing[first_key] = normalized
-            _storage.save_json_atomic(ACTIVE_SYMBOLS_PATH, existing)
-            return
+        # Compatibility path when no separate universe file exists: retain
+        # categories for symbols already known to those categories and place
+        # genuinely new symbols in the first bucket.
+        remaining = list(normalized)
+        rebuilt: Dict[str, List[str]] = {}
+        for category, values in existing.items():
+            prior_keys = {
+                _symbol_key(value)
+                for value in values
+                if isinstance(values, list) and isinstance(value, str)
+            } if isinstance(values, list) else set()
+            selected = [item for item in remaining if _symbol_key(item) in prior_keys]
+            rebuilt[str(category)] = selected
+            remaining = [item for item in remaining if _symbol_key(item) not in prior_keys]
+        if remaining:
+            target = next(iter(rebuilt.keys()), "symbols")
+            rebuilt.setdefault(target, [])
+            rebuilt[target].extend(remaining)
+            rebuilt[target] = sorted(set(rebuilt[target]))
+        _storage.save_json_atomic(ACTIVE_SYMBOLS_PATH, rebuilt)
+        return
 
     _storage.save_json_atomic(ACTIVE_SYMBOLS_PATH, normalized)
 
@@ -289,7 +334,6 @@ def _iter_jsonl(path: str):
 
 
 def _read_engine_events_observation() -> Optional[List[Dict[str, Any]]]:
-    """Read the event log strictly so absence/corruption is not reported as zero."""
     if not os.path.isfile(ENGINE_EVENTS_PATH):
         return None
     events: List[Dict[str, Any]] = []
@@ -379,15 +423,11 @@ def _find_latest_report_json() -> Optional[str]:
 def _report_summary() -> Dict[str, Any]:
     path = _find_latest_report_json()
     if not path:
-        return {
-            "availability": "UNAVAILABLE (no report artifact found)",
-        }
+        return {"availability": "UNAVAILABLE (no report artifact found)"}
 
     data = _read_json_observation(path)
     if not isinstance(data, dict):
-        return {
-            "availability": "UNAVAILABLE (report artifact invalid or unreadable)",
-        }
+        return {"availability": "UNAVAILABLE (report artifact invalid or unreadable)"}
 
     top_rejects = data.get("top_reject_reasons", [])
     if isinstance(top_rejects, dict):
@@ -398,10 +438,7 @@ def _report_summary() -> Dict[str, Any]:
     return {
         "availability": "AVAILABLE (persisted report artifact)",
         "date": data.get("date", os.path.basename(path)),
-        "decisions": data.get(
-            "decisions",
-            data.get("total_decisions", "UNKNOWN (not reported)"),
-        ),
+        "decisions": data.get("decisions", data.get("total_decisions", "UNKNOWN (not reported)")),
         "rejects": data.get("rejects", "UNKNOWN (not reported)"),
         "pre": data.get("pre", "UNKNOWN (not reported)"),
         "confirm": data.get("confirm", "UNKNOWN (not reported)"),
@@ -434,15 +471,9 @@ def _known_roles_for_view() -> Dict[str, List[str]]:
 
 # ---------------------------------------------------------------------------
 # Canonical parameter mutation helpers
-# All write functions:
-#   1. Load current canonical params (raw JSON, not validated, to allow partial files)
-#   2. Apply the mutation
-#   3. Validate full result via params_loader.validate_algo_params()
-#   4. Write atomically — only if validation passes
 # ---------------------------------------------------------------------------
 
 def _load_raw_algo_params() -> Dict[str, Any]:
-    """Load the raw JSON without validation (for mutation-then-revalidate pattern)."""
     path = _algo_params_path()
     if not os.path.exists(path):
         return {}
@@ -455,9 +486,6 @@ def _load_raw_algo_params() -> Dict[str, Any]:
 
 
 def _set_threshold(field: str, value: int) -> str:
-    """Mutate score_thresholds.<FIELD> and persist atomically after full validation.
-    Holds the algo_params lock for the full read-modify-write cycle (GAP-011).
-    """
     with _storage.with_lock("algo_params"):
         params = _load_raw_algo_params()
         params.setdefault("score_thresholds", {})
@@ -467,9 +495,6 @@ def _set_threshold(field: str, value: int) -> str:
 
 
 def _set_sr(value: float) -> str:
-    """Mutate sr_required_multiplier and persist atomically after full validation.
-    Holds the algo_params lock for the full read-modify-write cycle (GAP-011).
-    """
     with _storage.with_lock("algo_params"):
         params = _load_raw_algo_params()
         params["sr_required_multiplier"] = value
@@ -478,9 +503,6 @@ def _set_sr(value: float) -> str:
 
 
 def _set_spike(field: str, value: float) -> str:
-    """Mutate spike_filters.<field> and persist atomically after full validation.
-    Holds the algo_params lock for the full read-modify-write cycle (GAP-011).
-    """
     with _storage.with_lock("algo_params"):
         params = _load_raw_algo_params()
         params.setdefault("spike_filters", {})
@@ -489,76 +511,171 @@ def _set_spike(field: str, value: float) -> str:
     return f"Spike filter {field} set to {value}."
 
 
+def _finnhub_symbol_lock_message() -> str:
+    return (
+        "Finnhub is active in EXCLUSIVE mode. With the current Finnhub API mode, "
+        "this bot can scan EUR/USD only, so manual selection of other symbols is locked. "
+        "Select Twelve Data when the required Twelve Data API plan/key is available to "
+        "use the configured multi-symbol universe."
+    )
+
+
 def _symbols_add(symbol: str) -> str:
+    if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+        return _finnhub_symbol_lock_message()
+    preferred = _matching_known_symbol(symbol) or str(symbol).strip().upper()
+    if not _valid_symbol(preferred):
+        return f"Invalid symbol: {symbol!r}"
     with _storage.with_lock("active_symbols"):
         symbols = _load_active_symbols()
-        if symbol not in symbols:
-            symbols.append(symbol)
+        keys = {_symbol_key(item) for item in symbols}
+        if _symbol_key(preferred) not in keys:
+            symbols.append(preferred)
             _save_active_symbols(symbols)
-    return f"Added symbol {symbol}."
+    return f"Added symbol {preferred}."
 
 
 def _symbols_remove(symbol: str) -> str:
+    if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+        return _finnhub_symbol_lock_message()
+    key = _symbol_key(symbol)
     with _storage.with_lock("active_symbols"):
-        symbols = [s for s in _load_active_symbols() if s != symbol]
+        symbols = [s for s in _load_active_symbols() if _symbol_key(s) != key]
         _save_active_symbols(symbols)
     return f"Removed symbol {symbol}."
 
 
 # ---------------------------------------------------------------------------
-# Symbol management helpers
+# Symbol management + market-data-provider helpers
 # ---------------------------------------------------------------------------
 
 def get_all_known_symbols() -> List[str]:
-    """Return the canonical list of all known symbols (FOREX + CRYPTO)."""
+    """Return the stable configured symbol universe, independent of selection."""
+    configured = _safe_load_json(SYMBOL_UNIVERSE_PATH, None)
+    values = _flatten_active_symbols(configured)
+    if values:
+        return values
+
     result: List[str] = []
     for syms in CANONICAL_SYMBOLS.values():
         result.extend(syms)
     return sorted(set(result))
 
 
+def _provider_status_text() -> str:
+    summary = _provider_control.provider_summary()
+    provider = summary["active_provider"]
+    if provider == _provider_control.PROVIDER_FINNHUB:
+        return (
+            "Market data provider: FINNHUB (EXCLUSIVE)\n"
+            "Effective symbols: EUR/USD only\n"
+            "Symbol controls: LOCKED by current Finnhub API mode\n"
+            "Twelve Data: inactive"
+        )
+    return (
+        "Market data provider: TWELVE_DATA (EXCLUSIVE)\n"
+        "Effective symbols: active selection from configured project universe\n"
+        "Symbol controls: ENABLED\n"
+        "Finnhub: inactive"
+    )
+
+
 def handle_symbols_toggle(symbol: str, user_id: int) -> str:
-    """Toggle a single symbol on/off.  Generates Admin Proof."""
+    """Handle provider selection or a single symbol toggle with Admin Proof."""
     ok, reason = require_permission(user_id, "strategy.symbols.write")
     if not ok:
         return render_error(reason)
-    sym = symbol.upper().strip()
-    if not sym or not sym.isalpha() or len(sym) > 12:
+
+    action = str(symbol or "").strip().upper()
+    provider_actions = {
+        "PROVIDER_FINNHUB": _provider_control.PROVIDER_FINNHUB,
+        "PROVIDER_TWELVE_DATA": _provider_control.PROVIDER_TWELVE_DATA,
+    }
+    if action in provider_actions:
+        target = provider_actions[action]
+        before = _provider_control.get_active_provider()
+        try:
+            _provider_control.set_active_provider(target, selected_by=user_id)
+        except _provider_control.MarketDataProviderUnavailable as exc:
+            _audit(
+                user_id,
+                "/market_data_provider",
+                "REJECTED",
+                {"requested": target, "before": before, "reason": str(exc)},
+            )
+            return render_error(
+                f"{target} cannot be activated: {exc} Current provider remains {before}."
+            )
+
+        _audit(
+            user_id,
+            "/market_data_provider",
+            "OK",
+            {"before": before, "after": target, "mode": "EXCLUSIVE"},
+        )
+        if target == _provider_control.PROVIDER_FINNHUB:
+            return render_ok(
+                "Finnhub activated in EXCLUSIVE mode.\n"
+                "The bot now uses Finnhub market data only.\n"
+                "Effective symbol: EUR/USD only.\n"
+                "Other symbol controls are locked because the current Finnhub API mode "
+                "does not support this project's wider symbol universe.\n"
+                "Twelve Data is inactive."
+            )
+        return render_ok(
+            "Twelve Data activated in EXCLUSIVE mode.\n"
+            "The bot now uses Twelve Data market data only.\n"
+            "The full configured project symbol universe is available for selection.\n"
+            "Finnhub is inactive."
+        )
+
+    if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+        return render_error(_finnhub_symbol_lock_message())
+
+    if not _valid_symbol(action):
         return render_error(f"Invalid symbol: {symbol!r}")
+
+    preferred = _matching_known_symbol(action) or action
+    key = _symbol_key(preferred)
     with _storage.with_lock("active_symbols"):
         symbols = _load_active_symbols()
-        if sym in symbols:
-            symbols = [s for s in symbols if s != sym]
-            action = "remove"
+        existing = [item for item in symbols if _symbol_key(item) == key]
+        if existing:
+            symbols = [item for item in symbols if _symbol_key(item) != key]
+            action_name = "remove"
+            display = existing[0]
         else:
-            symbols.append(sym)
-            action = "add"
+            symbols.append(preferred)
+            action_name = "add"
+            display = preferred
         _save_active_symbols(symbols)
-    _audit(user_id, f"/symbols {action}", "OK", {"symbol": sym})
-    return render_ok(f"{'Added' if action == 'add' else 'Removed'} symbol {sym}.")
+    _audit(user_id, f"/symbols {action_name}", "OK", {"symbol": display})
+    return render_ok(f"{'Added' if action_name == 'add' else 'Removed'} symbol {display}.")
 
 
 def handle_symbols_all(user_id: int) -> str:
-    """Activate all canonical symbols.  Generates Admin Proof."""
     ok, reason = require_permission(user_id, "strategy.symbols.write")
     if not ok:
         return render_error(reason)
+    if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+        return render_error(_finnhub_symbol_lock_message())
     all_syms = get_all_known_symbols()
     with _storage.with_lock("active_symbols"):
         _save_active_symbols(all_syms)
     _audit(user_id, "/symbols all", "OK", {"count": len(all_syms)})
-    return render_ok(f"Activated {len(all_syms)} canonical symbols.")
+    return render_ok(f"Activated {len(all_syms)} configured symbols for Twelve Data.")
 
 
 def handle_symbols_none(user_id: int) -> str:
-    """Deactivate all symbols.  Generates Admin Proof."""
     ok, reason = require_permission(user_id, "strategy.symbols.write")
     if not ok:
         return render_error(reason)
+    if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+        return render_error(_finnhub_symbol_lock_message())
     with _storage.with_lock("active_symbols"):
         _save_active_symbols([])
     _audit(user_id, "/symbols none", "OK", {})
-    return render_ok("All symbols deactivated.")
+    return render_ok("All Twelve Data symbols deactivated.")
 
 
 # ---------------------------------------------------------------------------
@@ -566,10 +683,6 @@ def handle_symbols_none(user_id: int) -> str:
 # ---------------------------------------------------------------------------
 
 def get_current_strategy_profile() -> Optional[str]:
-    """
-    Detect which canonical strategy profile best matches the current parameters.
-    Returns the profile name if an exact match is found, otherwise None.
-    """
     params = _load_algo_params()
     return _detect_strategy_profile(params)
 
@@ -598,10 +711,6 @@ def get_current_strategy_profile_observation() -> str:
 
 
 def handle_strategy_profile(profile: str, user_id: int) -> str:
-    """
-    Apply a named strategy profile (CONSERVATIVE / BALANCED / AGGRESSIVE).
-    Generates Admin Proof.
-    """
     ok, reason = require_permission(user_id, "strategy.thresholds.write")
     if not ok:
         return render_error(reason)
@@ -641,16 +750,11 @@ def _max_delivery_size() -> int:
 
 
 def _resolve_dir_path(dir_key: str) -> Optional[str]:
-    """
-    Resolve a short dir key to an absolute allowed directory path.
-    Returns None if the key is unknown or the directory doesn't exist.
-    """
     subdir = _DIR_KEY_MAP.get(dir_key)
     if subdir is None:
         return None
     base = _storage.base_dir()
     if dir_key == "rpt":
-        # reports is analytics/reports
         candidate = os.path.join(base, "analytics", "reports")
     else:
         candidate = os.path.join(base, subdir)
@@ -658,42 +762,23 @@ def _resolve_dir_path(dir_key: str) -> Optional[str]:
 
 
 def _is_path_safe(path: str, dir_key: str) -> Tuple[bool, str]:
-    """
-    Validate that a file path is safe to deliver.
-
-    Checks:
-    1. No '..' in path components.
-    2. Extension is in the allowed set.
-    3. Real path is under the allowed directory.
-    4. Not a symlink escaping the allowed root.
-    5. File size does not exceed the configured maximum.
-    6. Filename does not match secret-bearing patterns.
-
-    Returns (ok: bool, reason: str).
-    """
     filename = os.path.basename(path)
-
-    # Reject traversal attempts up front
     if ".." in path.replace("\\", "/"):
         return False, "path traversal rejected"
 
-    # Extension check
     _, ext = os.path.splitext(filename.lower())
     if ext not in ALLOWED_EXTENSIONS:
         return False, f"unsupported extension: {ext!r}"
 
-    # Secret filename check
     fn_lower = filename.lower()
     for pattern in _SECRET_PATTERNS:
         if pattern in fn_lower:
             return False, "filename matches a restricted pattern"
 
-    # Resolve allowed root
     allowed_root = _resolve_dir_path(dir_key)
     if allowed_root is None:
         return False, f"unknown directory key: {dir_key!r}"
 
-    # Real path resolution (catches symlink escapes)
     try:
         real_path = os.path.realpath(path)
         real_root = os.path.realpath(allowed_root)
@@ -703,17 +788,14 @@ def _is_path_safe(path: str, dir_key: str) -> Tuple[bool, str]:
     if not real_path.startswith(real_root + os.sep) and real_path != real_root:
         return False, "path escapes allowed root"
 
-    # Existence check
     if not os.path.isfile(real_path):
         return False, "file not found"
 
-    # Symlink check
     if os.path.islink(path):
         link_target = os.path.realpath(path)
         if not link_target.startswith(real_root + os.sep):
             return False, "symlink escapes allowed root"
 
-    # Size check
     try:
         size = os.path.getsize(real_path)
     except Exception as exc:
@@ -725,12 +807,7 @@ def _is_path_safe(path: str, dir_key: str) -> Tuple[bool, str]:
 
 
 def handle_files_list(user_id: int, dir_key: str, page: int = 0) -> Dict[str, Any]:
-    """
-    List files in the allowed directory for `dir_key`, paginated.
-
-    Returns dict with keys: title, filenames, page, total_pages, error.
-    """
-    from core.telegram_admin_ui import FILES_PER_PAGE  # local import to avoid circular
+    from core.telegram_admin_ui import FILES_PER_PAGE
     ok_perm, reason = require_permission(user_id, "files.view")
     if not ok_perm:
         return {"error": reason, "filenames": [], "page": 0, "total_pages": 0, "title": ""}
@@ -769,18 +846,11 @@ def handle_files_list(user_id: int, dir_key: str, page: int = 0) -> Dict[str, An
 
 
 def handle_file_download_path(dir_key: str, filename: str, user_id: int) -> Tuple[Optional[str], str]:
-    """
-    Validate and return the absolute path of a file for delivery.
-
-    Returns (path, "") on success; (None, error_msg) on failure.
-    Generates an audit entry for every request.
-    """
     ok_perm, reason = require_permission(user_id, "files.view")
     if not ok_perm:
         _audit(user_id, "/download", "DENIED", {"dir_key": dir_key, "filename": filename, "reason": reason})
         return None, reason
 
-    # Sanitise filename — no path separators, no traversal
     safe_name = os.path.basename(filename)
     if safe_name != filename or not safe_name:
         _audit(user_id, "/download", "REJECTED", {"filename": filename, "reason": "traversal"})
@@ -802,17 +872,10 @@ def handle_file_download_path(dir_key: str, filename: str, user_id: int) -> Tupl
 
 
 def handle_docs_list(user_id: int) -> Dict[str, Any]:
-    """List .md / .txt files in the docs directory."""
     return handle_files_list(user_id, "doc", page=0)
 
 
 def handle_log_export(user_id: int) -> Tuple[Optional[str], str]:
-    """
-    Export a bounded, sanitized diagnostic log as a temporary file.
-
-    Returns (tmp_path, "") on success; (None, error_msg) on failure.
-    Never includes TELEGRAM_BOT_TOKEN or API secrets.
-    """
     ok_perm, reason = require_permission(user_id, "diagnostics.view")
     if not ok_perm:
         return None, reason
@@ -839,7 +902,6 @@ def handle_log_export(user_id: int) -> Tuple[Optional[str], str]:
         log_lines: List[str] = []
         for record in _iter_jsonl(log_path):
             log_lines.append(json.dumps(_redact(record), ensure_ascii=False))
-        # Take the last LOG_EXPORT_MAX_LINES lines
         lines_out.extend(log_lines[-LOG_EXPORT_MAX_LINES:])
 
     if not lines_out:
@@ -860,17 +922,12 @@ def handle_log_export(user_id: int) -> Tuple[Optional[str], str]:
 
 
 def handle_diagnose(user_id: int) -> str:
-    """
-    Generate a concise operational diagnosis covering all key subsystems.
-    Requires diagnostics.view permission.
-    """
     ok_perm, reason = require_permission(user_id, "diagnostics.view")
     if not ok_perm:
         return render_error(reason)
 
     snapshot = build_status_snapshot()
 
-    # Recent incidents (last 3 errors from error log)
     incidents: List[str] = []
     error_log = os.path.join(OBS_DIR, "error_events.jsonl")
     for record in _iter_jsonl(error_log):
@@ -882,7 +939,6 @@ def handle_diagnose(user_id: int) -> str:
             incidents.append(msg)
     recent_incidents = incidents[-3:] if incidents else []
 
-    # File availability
     file_checks = {
         "algo_params": os.path.exists(_algo_params_path()),
         "active_symbols": os.path.exists(ACTIVE_SYMBOLS_PATH),
@@ -896,6 +952,7 @@ def handle_diagnose(user_id: int) -> str:
         f"Runtime phase: {snapshot['runtime_phase']}",
         f"Telegram polling: {snapshot['telegram_state']}",
         f"Market data: {snapshot['market_data_state']}",
+        f"Market data provider: {_provider_control.get_active_provider()} (EXCLUSIVE)",
         f"FSM: {snapshot['fsm_state']}",
         f"Shadow mode: {snapshot['shadow_mode']}",
         f"Broker execution: {snapshot['broker_state']}",
@@ -912,29 +969,23 @@ def handle_diagnose(user_id: int) -> str:
 
 
 def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
-    """
-    Generate a bounded, sanitized runtime audit artifact as a temporary JSON file.
-
-    Never includes TELEGRAM_BOT_TOKEN, API secrets, salts, or credentials.
-    Returns (tmp_path, "") on success; (None, error_msg) on failure.
-    """
     ok_perm, reason = require_permission(user_id, "diagnostics.view")
     if not ok_perm:
         return None, reason
 
     _SECRET_ENV_KEYS = frozenset({
-        "TELEGRAM_BOT_TOKEN", "TWELVE_DATA_API_KEY", "COMMUNITY_FEEDBACK_SALT",
-        "SECRET", "PASSWORD", "PASSWD", "PRIVATE_KEY", "API_SECRET",
+        "TELEGRAM_BOT_TOKEN", "TWELVE_DATA_API_KEY", "FINNHUB_API_KEY",
+        "COMMUNITY_FEEDBACK_SALT", "SECRET", "PASSWORD", "PASSWD",
+        "PRIVATE_KEY", "API_SECRET",
     })
 
-    # Build env presence matrix — keys only, never values
     env_matrix: Dict[str, bool] = {}
     for key in [
         "BINARYBOT_BASE_DIR", "SHADOW_MODE", "ENABLE_BROKER_EXECUTION", "ENABLE_TELEGRAM",
-        "TELEGRAM_BOT_TOKEN", "TWELVE_DATA_API_KEY", "OWNER_TELEGRAM_ID",
-        "ADMIN_CONTROL_CHAT_ID", "ADMIN_CONTROL_THREAD_ID", "ADMIN_ROLES_CONFIG",
-        "ADMIN_PERMISSIONS_CONFIG", "OBS_DIR", "ANALYTICS_DIR", "ALGO_PARAMS_PATH",
-        "ADMIN_PROOF_CHAT_ID", "ADMIN_PROOF_THREAD_ID",
+        "TELEGRAM_BOT_TOKEN", "TWELVE_DATA_API_KEY", "FINNHUB_API_KEY", "MARKET_DATA_PROVIDER",
+        "OWNER_TELEGRAM_ID", "ADMIN_CONTROL_CHAT_ID", "ADMIN_CONTROL_THREAD_ID",
+        "ADMIN_ROLES_CONFIG", "ADMIN_PERMISSIONS_CONFIG", "OBS_DIR", "ANALYTICS_DIR",
+        "ALGO_PARAMS_PATH", "ADMIN_PROOF_CHAT_ID", "ADMIN_PROOF_THREAD_ID",
         "ADMIN_ALERTS_THREAD_ID", "ADMIN_ERRORS_THREAD_ID", "ADMIN_REPORTS_THREAD_ID",
         "MAX_DELIVERY_FILE_SIZE",
     ]:
@@ -944,20 +995,17 @@ def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
         else:
             env_matrix[key] = val is not None and val.strip() != ""
 
-    # Runtime status
     try:
-        from runtime import runtime_status  # type: ignore
+        from runtime import runtime_status
         status = runtime_status.read_status()
     except Exception:
         status = {}
 
-    # Directory inventory (existence only)
     base = _storage.base_dir()
     dir_inventory: Dict[str, bool] = {}
     for subdir in ["config", "observability", "outcomes", "analytics", "analytics/reports", "docs", "audit", "snapshots"]:
         dir_inventory[subdir] = os.path.isdir(os.path.join(base, subdir))
 
-    # Bounded recent events (last AUDIT_MAX_LINES_PER_FILE from engine and admin events)
     recent_engine: List[Any] = []
     recent_admin: List[Any] = []
     for record in _iter_jsonl(ENGINE_EVENTS_PATH):
@@ -967,20 +1015,19 @@ def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
     recent_engine = recent_engine[-AUDIT_MAX_LINES_PER_FILE:]
     recent_admin = recent_admin[-AUDIT_MAX_LINES_PER_FILE:]
 
-    # Recent errors (bounded)
     recent_errors: List[Any] = []
     error_log = os.path.join(OBS_DIR, "error_events.jsonl")
     for record in _iter_jsonl(error_log):
         recent_errors.append(record)
     recent_errors = recent_errors[-AUDIT_MAX_LINES_PER_FILE:]
 
-    # Active config summary (redact secrets)
     config_summary: Dict[str, Any] = {}
     try:
         params = _load_algo_params()
         config_summary["score_thresholds"] = params.get("score_thresholds")
         config_summary["sr_required_multiplier"] = params.get("sr_required_multiplier")
         config_summary["strategy_profile"] = get_current_strategy_profile_observation()
+        config_summary["market_data_provider"] = _provider_control.provider_summary()
         observed_symbols = _load_active_symbols_observation()
         config_summary["active_symbols_count"] = (
             "UNAVAILABLE (active-symbol configuration absent or invalid)"
@@ -1141,11 +1188,17 @@ def handle_admin_command(text: str, user_id: int) -> str:
                 ok, reason = require_permission(user_id, "strategy.view")
                 if not ok:
                     return render_error(reason)
-                return render_symbols(_load_active_symbols_observation())
+                observed = _load_active_symbols_observation()
+                if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+                    observed = list(_provider_control.FINNHUB_EFFECTIVE_SYMBOLS)
+                return _provider_status_text() + "\n\n" + render_symbols(observed)
 
             ok, reason = require_permission(user_id, "strategy.symbols.write")
             if not ok:
                 return render_error(reason)
+
+            if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+                return render_error(_finnhub_symbol_lock_message())
 
             if len(parts) != 3:
                 return render_error("Usage: /symbols list | /symbols add SYMBOL | /symbols remove SYMBOL")
@@ -1155,6 +1208,8 @@ def handle_admin_command(text: str, user_id: int) -> str:
 
             if action == "add":
                 message = _symbols_add(symbol)
+                if message.startswith("Invalid"):
+                    return render_error(message)
                 _audit(user_id, "/symbols add", "OK", {"symbol": symbol})
                 return render_ok(message)
 
@@ -1226,10 +1281,8 @@ def handle_admin_command(text: str, user_id: int) -> str:
         if cmd in {"/files", "/docs"}:
             dir_key = "doc" if cmd == "/docs" else None
             if cmd == "/files" and len(parts) >= 2:
-                # /files <dir_key>
                 dir_key = parts[1].lower()
             elif cmd == "/files":
-                # No arg: show file-home listing
                 return render_ok(
                     "📁 File Browser\n\nAvailable directories: "
                     + ", ".join(_DIR_KEY_MAP.keys())
@@ -1255,7 +1308,6 @@ def handle_admin_command(text: str, user_id: int) -> str:
             path, err = handle_file_download_path(dir_key, filename, user_id)
             if err:
                 return render_error(err)
-            # Caller (bot_service) handles actual document send; return path marker
             return f"__FILE_PATH__:{path}"
 
         if cmd == "/log":
