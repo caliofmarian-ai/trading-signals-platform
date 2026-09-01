@@ -33,17 +33,41 @@ def _candles(count: int, *, timeframe: str, step: int, rising: bool = True) -> l
 
 
 def test_market_model_describes_evidence_without_emitting_a_signal(canonical_runtime_root: Path) -> None:
-    result = evaluate_market(_candles(220, timeframe="M1", step=60), _candles(220, timeframe="M5", step=300), _params(canonical_runtime_root))
+    result = evaluate_market(
+        _candles(220, timeframe="M1", step=60),
+        _candles(220, timeframe="M5", step=300),
+        _params(canonical_runtime_root),
+    )
 
-    assert result.schema_version == "1.0.0"
+    assert result.schema_version == "2.0.0"
     assert result.symbol == "EUR/USD"
     assert result.direction_bias == "BUY"
     assert result.context.trend_context == "WITH_TREND"
     assert result.context.price_speed > 0
+    assert result.context.directional_effective_speed is not None
+    assert result.context.directional_effective_speed > 0
+    assert result.context.weighted_gross_speed is not None
+    assert result.context.weighted_gross_speed >= result.context.directional_effective_speed
+    assert result.context.flow_efficiency == pytest.approx(
+        result.context.directional_effective_speed / result.context.weighted_gross_speed
+    )
+    assert 0 <= result.context.flow_efficiency <= 1
     assert result.context.buffer_distance > 0
     assert result.context.target_distance is None
     assert not hasattr(result, "signal")
     assert not hasattr(result, "score")
+
+
+def test_directional_speed_uses_only_intended_direction_with_recency_weights(canonical_runtime_root: Path) -> None:
+    params = _params(canonical_runtime_root)
+    m1 = _candles(220, timeframe="M1", step=60, rising=True)
+    m5 = _candles(220, timeframe="M5", step=300, rising=True)
+    result = evaluate_market(m1, m5, params)
+
+    assert result.direction_bias == "BUY"
+    assert result.context.directional_effective_speed == pytest.approx(0.00003)
+    assert result.context.weighted_gross_speed == pytest.approx(0.00003)
+    assert result.context.flow_efficiency == pytest.approx(1.0)
 
 
 def test_result_is_deterministic_immutable_and_preserves_inputs(canonical_runtime_root: Path) -> None:
@@ -73,7 +97,11 @@ def test_buffer_distance_uses_selected_versioned_multiplier(canonical_runtime_ro
 
 def test_partial_real_history_is_rejected_instead_of_fabricated(canonical_runtime_root: Path) -> None:
     with pytest.raises(MarketModelUnavailable, match="requires 201 real candles"):
-        evaluate_market(_candles(220, timeframe="M1", step=60), _candles(200, timeframe="M5", step=300), _params(canonical_runtime_root))
+        evaluate_market(
+            _candles(220, timeframe="M1", step=60),
+            _candles(200, timeframe="M5", step=300),
+            _params(canonical_runtime_root),
+        )
 
 
 def test_wrong_order_and_invalid_ohlc_are_rejected(canonical_runtime_root: Path) -> None:
@@ -93,7 +121,11 @@ def test_missing_operational_parameter_is_rejected_not_defaulted(canonical_runti
     params = _params(canonical_runtime_root)
     del params["buffer_multipliers"]["MEDIUM"]
     with pytest.raises(MarketModelUnavailable, match="MEDIUM configuration is required"):
-        evaluate_market(_candles(220, timeframe="M1", step=60), _candles(220, timeframe="M5", step=300), params)
+        evaluate_market(
+            _candles(220, timeframe="M1", step=60),
+            _candles(220, timeframe="M5", step=300),
+            params,
+        )
 
 
 def test_spike_evidence_marks_noise_unstable(canonical_runtime_root: Path) -> None:
