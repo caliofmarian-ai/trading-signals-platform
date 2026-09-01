@@ -1179,14 +1179,6 @@ def render_status_page(
     restored_counts = snapshot.get("market_data_restored_candle_counts")
     integrity_state = snapshot.get("market_data_integrity_state")
     integrity_report = snapshot.get("market_data_integrity_report")
-    evaluation_count = snapshot.get("strategy_evaluation_count")
-    last_evaluation_ts = snapshot.get("last_strategy_evaluation_ts")
-    last_decision_kind = snapshot.get("last_strategy_decision_kind")
-    last_strategy_symbol = snapshot.get("last_strategy_symbol")
-    last_score = snapshot.get("last_strategy_score_total")
-    last_score_tier = snapshot.get("last_strategy_score_tier")
-    last_tps = snapshot.get("last_strategy_tps")
-    last_blockers = snapshot.get("last_strategy_hard_blockers")
 
     plain_summary = "\n".join(human_status_summary(snapshot))
 
@@ -1257,22 +1249,6 @@ def render_status_page(
                 f"\nCandle integrity evidence: hard errors {hard_errors}; "
                 f"observed gaps {gaps}"
             )
-    if isinstance(evaluation_count, int):
-        current_state += f"\nStrategy evaluations since runtime start: {evaluation_count}"
-    if isinstance(last_evaluation_ts, int):
-        current_state += f"\nLast strategy evaluation Unix time: {last_evaluation_ts}"
-    if isinstance(last_decision_kind, str) and last_decision_kind.strip():
-        current_state += (
-            f"\nLast strategy result: {last_decision_kind.strip()}"
-            f" on {str(last_strategy_symbol or 'UNKNOWN').strip()}"
-        )
-    if isinstance(last_score, (int, float)) and not isinstance(last_score, bool):
-        current_state += f"\nLast classical score: {last_score} ({last_score_tier or 'UNKNOWN'})"
-    if isinstance(last_tps, (int, float)) and not isinstance(last_tps, bool):
-        current_state += f"\nLast Trade Physics TPS: {last_tps}"
-    if isinstance(last_blockers, list):
-        rendered_blockers = ", ".join(str(item) for item in last_blockers if str(item).strip())
-        current_state += f"\nLast hard blockers: {rendered_blockers or 'NONE'}"
     note = snapshot.get("market_data_note")
     if isinstance(note, str) and note.strip():
         current_state += f"\n\nMarket note: {note.strip()}"
