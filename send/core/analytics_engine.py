@@ -147,11 +147,16 @@ def _load_market_truth(path: str) -> Dict[str, Any]:
     return result
 
 
-def _is_community_record(record: Dict[str, Any]) -> bool:
-    return (
-        record.get("truth_domain") == TRUTH_COMMUNITY
-        or record.get("truth_source") == COMMUNITY_SOURCE
-    )
+def _community_record_class(record: Dict[str, Any]) -> Optional[str]:
+    if record.get("truth_domain") == TRUTH_COMMUNITY or record.get("truth_source") == COMMUNITY_SOURCE:
+        return "EXPLICIT"
+    if (
+        record.get("event_type") == "user_outcome_record"
+        and record.get("truth_domain") is None
+        and record.get("truth_source") is None
+    ):
+        return "LEGACY_INFERRED_FROM_EVENT_TYPE"
+    return None
 
 
 def _load_community_truth(path: str, *, user_id: Any = None) -> Dict[str, Any]:
@@ -159,6 +164,7 @@ def _load_community_truth(path: str, *, user_id: Any = None) -> Dict[str, Any]:
     invalid_records: List[Dict[str, Any]] = []
     excluded_other_truth = 0
     duplicate_count = 0
+    legacy_inferred_count = 0
     seen: set[tuple[str, str]] = set()
 
     try:
@@ -166,7 +172,8 @@ def _load_community_truth(path: str, *, user_id: Any = None) -> Dict[str, Any]:
             if err is not None:
                 invalid_records.append(err.to_dict())
                 continue
-            if not _is_community_record(record):
+            classification = _community_record_class(record)
+            if classification is None:
                 excluded_other_truth += 1
                 continue
             uid = record.get("user_id")
@@ -188,6 +195,8 @@ def _load_community_truth(path: str, *, user_id: Any = None) -> Dict[str, Any]:
                 duplicate_count += 1
                 continue
             seen.add(dedup_key)
+            if classification == "LEGACY_INFERRED_FROM_EVENT_TYPE":
+                legacy_inferred_count += 1
             if outcome == "WIN":
                 wins += 1
             elif outcome == "LOSE":
@@ -199,6 +208,7 @@ def _load_community_truth(path: str, *, user_id: Any = None) -> Dict[str, Any]:
             "truth_domain": TRUTH_COMMUNITY,
             "truth_source": COMMUNITY_SOURCE,
             "authoritative_for_strategy_performance": False,
+            "migration_policy": "legacy user_outcome_record without truth labels is COMMUNITY_TRUTH only",
             "no_data": True,
             "reason": "community_outcomes_file_not_found",
             "path": path,
@@ -212,6 +222,7 @@ def _load_community_truth(path: str, *, user_id: Any = None) -> Dict[str, Any]:
             "insufficient_sample": True,
             "minimum_sample_for_rate": _MIN_SAMPLE_FOR_RATE,
             "excluded_other_truth": 0,
+            "legacy_inferred_count": 0,
             "duplicate_count": 0,
             "invalid_count": 0,
             "invalid_records": [],
@@ -222,6 +233,7 @@ def _load_community_truth(path: str, *, user_id: Any = None) -> Dict[str, Any]:
         "truth_domain": TRUTH_COMMUNITY,
         "truth_source": COMMUNITY_SOURCE,
         "authoritative_for_strategy_performance": False,
+        "migration_policy": "legacy user_outcome_record without truth labels is COMMUNITY_TRUTH only",
         "no_data": total == 0,
         "path": path,
         "wins": wins,
@@ -230,6 +242,7 @@ def _load_community_truth(path: str, *, user_id: Any = None) -> Dict[str, Any]:
         "total": total,
         "community_missed_rate_percent": round(missed / total * 100.0, 2) if total else None,
         "excluded_other_truth": excluded_other_truth,
+        "legacy_inferred_count": legacy_inferred_count,
         "duplicate_count": duplicate_count,
         "invalid_count": len(invalid_records),
         "invalid_records": invalid_records,
@@ -378,6 +391,7 @@ def recompute(now_ts: int) -> Dict[str, Any]:
             "operational_invalid_count": operational.get("invalid_count", 0),
             "community_invalid_count": community.get("invalid_count", 0),
             "community_excluded_other_truth": community.get("excluded_other_truth", 0),
+            "community_legacy_inferred_count": community.get("legacy_inferred_count", 0),
         },
     }
     storage.save_json_atomic(AGGREGATES_PATH, aggregates)
