@@ -1,24 +1,24 @@
 # CANONICAL_STRATEGY_STACK_v2.0.0
 
 Version: 2.0.0  
-Status: PROPOSED COMPLETE CONSOLIDATED ROOT MANIFEST — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL ROOT MANIFEST  
 Owner: BinaryBot / DROPi Signals  
 Scope: root strategy pipeline, Trade Physics integration, post-FSM execution handoff, canonical authority order and conflict resolution  
-Supersession Intent: `CANONICAL_STRATEGY_STACK_v1.0.0.md`
+Supersedes: `CANONICAL_STRATEGY_STACK_v1.0.0.md`
 
 ---
 
-## 0. Authority and promotion status
+## 0. Authority status
 
-This document is the proposed next root manifest for the strategy cluster.
+This document is the active root manifest for the strategy cluster.
 
-Until explicit promotion, `CANONICAL_STRATEGY_STACK_v1.0.0.md` remains authoritative.
+`CANONICAL_STRATEGY_STACK_v1.0.0.md` is superseded and historical only.
 
-This major successor consolidates two Owner-approved structural programs:
+This version consolidates two Owner-approved structural programs now in current canon:
 1. staged signal execution / post-FSM observability remediation;
 2. complete current-scope Trade Physics integration.
 
-No runtime implementation is authorized by this proposed root alone.
+Documentation activation does not itself authorize runtime implementation; runtime remains gated by the post-promotion canon-to-code audit.
 
 ---
 
@@ -94,9 +94,9 @@ No document or runtime path may invert or bypass this order without a new govern
 
 ---
 
-## 4. Runtime root canonical set after promotion
+## 4. Active runtime root canonical set
 
-The proposed runtime root set is:
+The active runtime root set is:
 
 1. `ALGO_SPEC_v3.0.0.md`
 2. `SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
@@ -111,9 +111,7 @@ These documents define the primary normative runtime strategy stack.
 
 ---
 
-## 5. Supporting/adjacent canonical authorities after promotion
-
-The exact supporting/adjacent authority graph is:
+## 5. Active supporting/adjacent canonical authorities
 
 ### System / interface / validation
 - `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md`
@@ -165,7 +163,7 @@ The exact supporting/adjacent authority graph is:
 - `SECURITY_MODEL_v2.0.1.md`
 - `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md`
 
-Supporting documents may refine mechanics but may not contradict runtime root authorities.
+Supporting authorities may refine their bounded mechanics but may not contradict runtime root authorities.
 
 ---
 
@@ -207,7 +205,7 @@ When conflict exists:
 These layers may interpret/evaluate root truth but do not silently redefine runtime formulas or lifecycle ownership.
 
 ### Level 4 — Proposed/transitional/supporting records
-Not authoritative until promotion.
+Not authoritative unless explicitly promoted into active canon.
 
 ### Level 5 — Superseded/deprecated/historical/intake
 Context only; never primary implementation authority.
@@ -262,7 +260,7 @@ Time Model owns:
 - `time_state`;
 - governed execution-expiry derivation.
 
-Canonical ratio orientation must remain explicit:
+Canonical ratio orientation:
 
 `model_time_reach_ratio = t_needed_adjusted / model_expiry`
 
@@ -566,10 +564,10 @@ Forbidden as primary active truth unless compatibility-mapped:
 No code patch may be based primarily on:
 - Intake files;
 - deprecated/superseded docs;
-- runtime behavior that contradicts promoted canon;
-- proposed docs before promotion.
+- runtime behavior that contradicts active canon;
+- proposed docs that have not been promoted.
 
-After promotion, every code change must cite the active root/domain authority relevant to the change.
+Every code change must cite the active root/domain authority relevant to the change.
 
 ---
 
@@ -587,34 +585,34 @@ Runtime is never used to override canon merely because it already exists.
 
 ---
 
-## 26. Current known implementation drift to audit after promotion
+## 26. Known implementation drift for immediate post-promotion audit
 
 At minimum:
 - TPS currently computed in/around Signal Engine rather than canonical scoring ownership;
-- current TPS speed component differs from Intake/canonical proposed ATR-reference formula;
+- current TPS speed component differs from canonical ATR-reference formula;
 - current Market Model gross speed is not the complete directional effective speed contract;
 - Event runtime schema is drifted from canonical semantic event families;
 - PRE/CONFIRM candidate handoff behavior requires re-audit;
 - current post-FSM execution observability requires dedicated event implementation.
 
-These findings authorize no code change until promotion.
+These findings authorize no code change until the post-promotion canon-to-code audit is completed.
 
 ---
 
-## 27. Promotion rule
+## 27. Activation result
 
-Promotion must be atomic enough that:
-- one Root Stack is active;
-- one version per canonical domain is active;
-- superseded versions are not left as competing active truth;
-- all linked references use the exact final successor filenames;
-- Trade Physics is no longer classified future-state;
-- staged-execution semantics and Trade Physics semantics coexist coherently;
-- Risk is `RISK_MODEL_v3.0.0.md`;
-- Community Feedback is `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v3.0.0.md`;
-- the 17 reference-repair successors listed in `CANONICAL_REFERENCE_REPAIR_FINAL_SET_20260901.md` are promoted with the same graph;
-- `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md`, `SYSTEM_INVARIANTS_v3.0.0.md`, and `TEST_PLAN_v3.0.0.md` are promoted with the same canonical graph;
-- runtime remains untouched until post-promotion audit.
+This version is activated as part of the atomic 2026-09-01 canonical promotion. The active graph must maintain:
+- one Root Stack;
+- one active version per canonical domain;
+- superseded versions outside active truth;
+- exact final successor references;
+- Trade Physics as current-scope canon;
+- staged-execution and Trade Physics semantics in one coherent graph;
+- `RISK_MODEL_v3.0.0.md`;
+- `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v3.0.0.md`;
+- all final reference-repair successors;
+- `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md`, `SYSTEM_INVARIANTS_v3.0.0.md`, and `TEST_PLAN_v3.0.0.md`;
+- runtime untouched until post-promotion audit.
 
 ---
 
