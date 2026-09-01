@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from core.owner_knowledge import get_knowledge
+from core import market_data_provider_control as _provider_control
 from core.role_constants import (
     ROLE_OWNER as _ROLE_OWNER,
     ROLE_PRIMARY_ADMIN as _ROLE_PRIMARY_ADMIN,
@@ -322,28 +323,15 @@ def symbols_toggle_markup(
     *,
     parent_action: str = "HOME",
 ) -> dict[str, list[list[dict[str, str]]]]:
-    """
-    Visual symbol-toggle keyboard with checkbox-style indicators.
+    """Provider selector plus provider-governed symbol controls.
 
-    Symbols are grouped by category (FOREX / CRYPTO) based on name prefix
-    and laid out 3 per row.  Active symbols show ✅, inactive show ⬜.
-
-    ``parent_action``: the Back-navigation target for this page.  Pass ``"STRATEGY"``
-    when the toggle is reached from the Strategy panel (SYMBOLS action) and ``"HOME"``
-    (default) when reached directly from the admin home via SYMBOLS_COV.
+    FINNHUB is exclusive and exposes only EUR/USD.  TWELVE_DATA exposes the
+    configured project symbol universe.  Provider buttons reuse the existing
+    governed symbol-mutation callback family so no second Telegram control
+    plane is introduced.
     """
     active_set = {s.upper() for s in active_symbols}
-    forex = [s for s in all_symbols if not s.upper().startswith("BTC")
-             and not s.upper().startswith("ETH")
-             and not s.upper().startswith("XRP")
-             and not s.upper().startswith("LTC")
-             and not s.upper().startswith("ADA")
-             and not s.upper().startswith("BNB")
-             and not s.upper().startswith("SOL")
-             and not s.upper().startswith("DOT")
-             and not s.upper().endswith("USD") or _is_forex(s)]
-    crypto = [s for s in all_symbols if not _is_forex(s)]
-
+    provider = _provider_control.get_active_provider()
     rows: list[list[dict[str, str]]] = []
 
     def _symbol_action(base: str, value: str = "") -> str:
@@ -351,34 +339,50 @@ def symbols_toggle_markup(
             return f"{base}:{value}" if value else base
         return f"{base}:{parent_action}:{value}" if value else f"{base}:{parent_action}"
 
-    def _section_rows(symbols: list[str]) -> list[list[dict[str, str]]]:
-        section_rows = []
-        row: list[dict[str, str]] = []
-        for sym in symbols:
-            icon = "✅" if sym.upper() in active_set else "⬜"
-            row.append(_btn(f"{icon} {sym}", _symbol_action("SYM_TOGGLE", sym)))
-            if len(row) == 3:
-                section_rows.append(row)
-                row = []
-        if row:
-            section_rows.append(row)
-        return section_rows
-
-    # Separate into forex and crypto lists
-    forex_syms = sorted(s for s in all_symbols if _is_forex(s))
-    crypto_syms = sorted(s for s in all_symbols if not _is_forex(s))
-
-    if forex_syms:
-        rows.extend(_section_rows(forex_syms))
-    if crypto_syms:
-        rows.extend(_section_rows(crypto_syms))
-
-    # Controls row
     rows.append([
-        _btn("✅ All", _symbol_action("SYMBOLS_ALL")),
-        _btn("⬜ None", _symbol_action("SYMBOLS_NONE")),
-        _btn("🔄 Refresh", "SYMBOLS_COV" if parent_action == "HOME" else "SYMBOLS"),
+        _btn(
+            f"{'✅' if provider == _provider_control.PROVIDER_FINNHUB else '⬜'} Finnhub",
+            _symbol_action("SYM_TOGGLE", "PROVIDER_FINNHUB"),
+        ),
+        _btn(
+            f"{'✅' if provider == _provider_control.PROVIDER_TWELVE_DATA else '⬜'} Twelve Data",
+            _symbol_action("SYM_TOGGLE", "PROVIDER_TWELVE_DATA"),
+        ),
     ])
+
+    if provider == _provider_control.PROVIDER_FINNHUB:
+        rows.append([
+            _btn("🔒 EUR/USD only", _symbol_action("SYM_TOGGLE", "EUR/USD")),
+        ])
+        rows.append([
+            _btn("🔄 Refresh", "SYMBOLS_COV" if parent_action == "HOME" else "SYMBOLS"),
+        ])
+    else:
+        def _section_rows(symbols: list[str]) -> list[list[dict[str, str]]]:
+            section_rows = []
+            row: list[dict[str, str]] = []
+            for sym in symbols:
+                icon = "✅" if sym.upper() in active_set else "⬜"
+                row.append(_btn(f"{icon} {sym}", _symbol_action("SYM_TOGGLE", sym)))
+                if len(row) == 3:
+                    section_rows.append(row)
+                    row = []
+            if row:
+                section_rows.append(row)
+            return section_rows
+
+        forex_syms = sorted(s for s in all_symbols if _is_forex(s))
+        crypto_syms = sorted(s for s in all_symbols if not _is_forex(s))
+        if forex_syms:
+            rows.extend(_section_rows(forex_syms))
+        if crypto_syms:
+            rows.extend(_section_rows(crypto_syms))
+        rows.append([
+            _btn("✅ All", _symbol_action("SYMBOLS_ALL")),
+            _btn("⬜ None", _symbol_action("SYMBOLS_NONE")),
+            _btn("🔄 Refresh", "SYMBOLS_COV" if parent_action == "HOME" else "SYMBOLS"),
+        ])
+
     info_return = "SYMBOLS_COV" if parent_action == "HOME" else "SYMBOLS"
     rows.append([_knowledge_btn("symbols_coverage", info_return)])
     back_label = "⬅️ Admin" if parent_action == "HOME" else "⬅️ Strategy"
@@ -387,12 +391,10 @@ def symbols_toggle_markup(
 
 
 def _is_forex(sym: str) -> bool:
-    """Classify a symbol as FOREX (6-char currency pair) vs CRYPTO."""
-    s = sym.upper()
-    forex_suffixes = {"USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"}
-    if len(s) == 6:
-        return s[3:] in forex_suffixes and s[:3] in forex_suffixes | {"USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"}
-    return False
+    """Classify slash/underscore/plain six-letter currency pairs as FOREX."""
+    s = sym.upper().replace("/", "").replace("_", "")
+    forex_codes = {"USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"}
+    return len(s) == 6 and s[:3] in forex_codes and s[3:] in forex_codes
 
 
 def strategy_quick_markup(current_profile: Optional[str]) -> dict[str, list[list[dict[str, str]]]]:
@@ -486,11 +488,9 @@ def files_list_markup(
     """Paginated file list with download buttons."""
     rows: list[list[dict[str, str]]] = []
     for fname in filenames:
-        # Truncate for display but keep full name in callback
         display = fname if len(fname) <= 32 else fname[:29] + "…"
         rows.append([_btn(f"📄 {display}", f"FILE_DL:{dir_key}:{fname}")])
 
-    # Pagination row
     nav: list[dict[str, str]] = []
     if page > 0:
         nav.append(_btn("◀️ Prev", f"FILES:{dir_key}:{page - 1}"))
