@@ -294,6 +294,16 @@ def build_status_snapshot(
         "market_data_candle_counts": evidence.get("market_data_candle_counts"),
         "market_data_minimum_candles": evidence.get("market_data_minimum_candles"),
         "market_data_history_ready": evidence.get("market_data_history_ready"),
+        "market_data_bootstrap_state": evidence.get("market_data_bootstrap_state"),
+        "market_data_stream_state": evidence.get("market_data_stream_state"),
+        "market_data_rate_limit_state": evidence.get("market_data_rate_limit_state"),
+        "market_data_rest_requests_last_minute": evidence.get(
+            "market_data_rest_requests_last_minute"
+        ),
+        "market_data_rest_requests_per_minute_limit": evidence.get(
+            "market_data_rest_requests_per_minute_limit"
+        ),
+        "market_data_retry_after_ts": evidence.get("market_data_retry_after_ts"),
         "market_data_persistence_state": evidence.get("market_data_persistence_state"),
         "market_data_store_load_state": evidence.get("market_data_store_load_state"),
         "market_data_store_write_state": evidence.get("market_data_store_write_state"),
