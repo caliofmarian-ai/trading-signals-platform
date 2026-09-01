@@ -114,6 +114,9 @@ These documents define the primary normative runtime strategy stack.
 ## 5. Supporting/adjacent canonical authorities
 
 Critical supporting authorities include:
+- `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md`
+- `SYSTEM_INVARIANTS_v3.0.0.md`
+- `TEST_PLAN_v3.0.0.md`
 - `MODULE_INTERFACE_SPEC_v3.0.0.md`
 - `EVENT_SCHEMA_SPEC_v3.0.0.md`
 - `OBSERVABILITY_LOGGING_SPEC_v3.0.0.md`
@@ -126,7 +129,7 @@ Critical supporting authorities include:
 - `STRATEGY_INTELLIGENCE_SYSTEM_v3.0.0.md`
 - `AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v3.0.0.md`
 - `STRATEGY_PARAMETER_CONTROL_SPEC_v3.0.0.md`
-- active Distribution, Risk, System Invariant, Governance, Security, Deployment and Test Plan authorities.
+- active Distribution, Risk, Governance, Security and Deployment authorities.
 
 Supporting documents may refine mechanics but may not contradict runtime root authorities.
 
@@ -147,13 +150,16 @@ When conflict exists:
 - Observability Policy
 
 ### Level 2 — System/interface/schema/domain supporting canon
+- System Architecture Map
+- System Invariants
+- Test Plan
 - Module Interface
 - Event Schema
 - Observability Logging
 - Decision Audit
 - Telemetry
 - Outcome
-- Distribution/Risk/System Invariants/Governance/Test/Deployment
+- Distribution/Risk/Governance/Deployment
 
 ### Level 3 — Analytics/research/intelligence canon
 - Performance Analytics
@@ -555,6 +561,7 @@ Promotion must be atomic enough that:
 - all linked references are updated;
 - Trade Physics is no longer classified future-state;
 - staged-execution semantics and Trade Physics semantics coexist coherently;
+- `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md`, `SYSTEM_INVARIANTS_v3.0.0.md`, and `TEST_PLAN_v3.0.0.md` are promoted with the same canonical graph;
 - runtime remains untouched until post-promotion audit.
 
 ---
