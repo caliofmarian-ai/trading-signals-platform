@@ -238,7 +238,7 @@ The active runtime currently uses an undirected average absolute close-to-close 
 
 ### 7.1 Proposed v1 deterministic algorithm
 
-This section is a technical reconciliation introduced by this proposed successor because the intake source defines the concept but does not provide exact weights.
+This section is a technical reconciliation in this active specification because the intake source defines the concept but does not provide exact weights.
 
 Use the most recent 20 completed M1 intervals, matching the current Market Model speed horizon.
 
@@ -703,7 +703,7 @@ The following are non-canonical:
 
 ## 24. REQUIRED CODE REALIGNMENT AFTER PROMOTION
 
-This document does not authorize code changes before promotion.
+Code changes remain subject to canonical Governance, Test Plan, and Deployment Protocol controls.
 
 After promotion, the implementation audit must at minimum inspect and reconcile:
 
@@ -745,7 +745,7 @@ Required deterministic tests include:
 
 ## 26. CURRENT STATUS AND PROMOTION GATE
 
-Status now: PROPOSED — NOT ACTIVE.
+Status now: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 Before this document can become active:
 

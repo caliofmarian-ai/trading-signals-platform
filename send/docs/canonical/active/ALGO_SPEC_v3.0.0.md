@@ -15,11 +15,11 @@ Governance basis:
 - merged governance PR #78
 
 Linked proposed/current documents:
-- `canonical/superseded/CANONICAL_STRATEGY_STACK_v1.0.0.md` until successor promotion
+- `canonical/superseded/CANONICAL_STRATEGY_STACK_v1.0.0.md`
 - `canonical/superseded/TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
 - `canonical/superseded/SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`
 - `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `canonical/superseded/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md` until successor promotion
+- `canonical/superseded/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
 - `canonical/superseded/FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
 - `canonical/superseded/SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`
 - `canonical/superseded/OBSERVABILITY_SPEC_v2.0.0.md`
@@ -28,14 +28,14 @@ Linked proposed/current documents:
 
 ## 0. PROMOTION STATUS
 
-This document is a complete proposed successor, not an amendment to the active file.
+This document is the active canonical successor to `ALGO_SPEC_v2.0.0.md`.
 
 Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
-- `ALGO_SPEC_v2.0.0.md` remains authoritative;
+- `ALGO_SPEC_v2.0.0.md` is superseded and retained for historical provenance;
 - this document does not authorize runtime changes;
-- `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md` remains proposed;
-- PR #73 remains on canonical hold.
+- `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md` is active canonical under the executed 2026-09-01 promotion;
+- PR #73 is historical and was closed without merge as superseded by the promoted canonical/runtime sequence.
 
 ---
 

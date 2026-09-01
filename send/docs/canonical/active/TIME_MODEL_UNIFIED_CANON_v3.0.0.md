@@ -13,15 +13,15 @@ Linked documents:
 - `canonical/active/ALGO_SPEC_v3.0.0.md`
 - `canonical/active/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
 - `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `canonical/superseded/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md` until successor promotion
-- `canonical/superseded/FSM_DECISION_ENGINE_SPEC_v1.0.0.md` until successor promotion
+- `canonical/superseded/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
+- `canonical/superseded/FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
 - `canonical/superseded/TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md`
 
 ---
 
 ## 0. PROMOTION STATUS
 
-This document is a complete proposed successor. Until explicit promotion, `TIME_MODEL_UNIFIED_CANON_v2.0.0.md` remains the sole active time authority and no runtime change is authorized by this file.
+This document is the active canonical successor to `TIME_MODEL_UNIFIED_CANON_v2.0.0.md`. Runtime changes remain subject to Governance, Test Plan, and Deployment Protocol controls.
 
 ---
 

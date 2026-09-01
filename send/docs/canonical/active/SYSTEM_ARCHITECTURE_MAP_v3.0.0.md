@@ -28,7 +28,7 @@ Linked proposed/current authorities:
 
 ## 0. Authority and promotion status
 
-This document is a complete proposed successor for the top-level system architecture map.
+This document is the active canonical successor for the top-level system architecture map.
 
 Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 

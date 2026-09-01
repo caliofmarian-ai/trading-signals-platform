@@ -43,7 +43,7 @@ It does not transfer canonical ownership of strategy, execution, distribution, a
 
 ## 2. Canonical Authority
 
-This document extends the proposed successor control-plane authority defined by:
+This document extends the active canonical control-plane authority defined by:
 
 - `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md`
 - `ADMIN_CONTROL_SPEC_v2.0.1.md`

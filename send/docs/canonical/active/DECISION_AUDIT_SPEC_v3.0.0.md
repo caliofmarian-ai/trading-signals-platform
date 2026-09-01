@@ -21,7 +21,7 @@ Linked documents:
 
 ## 0. PROMOTION STATUS
 
-This is a complete proposed successor. Until promotion, v2.0.0 remains authoritative. No runtime change is authorized by this proposal alone.
+This is the active canonical successor to v2.0.0. Runtime changes remain subject to Governance, Test Plan, and Deployment Protocol controls.
 
 ---
 

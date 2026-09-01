@@ -13,7 +13,7 @@ Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 ## 0. PROMOTION STATUS
 
-Until promotion, v2.0.0 remains authoritative. This proposed successor does not authorize autonomous production mutation.
+This active canonical successor does not authorize autonomous production mutation; any production mutation remains governed.
 
 ---
 

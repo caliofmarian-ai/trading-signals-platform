@@ -26,7 +26,7 @@ Linked proposed/current authorities:
 
 ## 0. Authority and promotion status
 
-This document is the complete consolidated proposed successor for the signal-execution domain.
+This document is the active canonical consolidated successor for the signal-execution domain.
 
 It incorporates:
 - staged execution / post-FSM observability remediation;

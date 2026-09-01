@@ -33,7 +33,7 @@ Linked proposed/current authorities:
 
 ## 0. Authority and promotion status
 
-This document is a complete proposed successor and does not depend on v2 to supply omitted normative behavior.
+This document is the active canonical successor and does not depend on v2 to supply omitted normative behavior.
 
 Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 

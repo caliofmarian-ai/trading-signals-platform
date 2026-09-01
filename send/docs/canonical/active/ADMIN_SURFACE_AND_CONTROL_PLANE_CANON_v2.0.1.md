@@ -20,7 +20,7 @@
 This successor preserves the authority hierarchy and human-control-plane semantics of v2.0.0.
 
 The patch:
-- updates all normative links to the final proposed successor filenames required by the Trade Physics + staged-execution promotion graph;
+- updates all normative links to the active successor filenames established by the Trade Physics + staged-execution promotion;
 - updates this document's version/status/path metadata;
 - clarifies the already-governed delivery ownership boundary so Signal Engine handoff/candidate construction is not described as external delivery.
 

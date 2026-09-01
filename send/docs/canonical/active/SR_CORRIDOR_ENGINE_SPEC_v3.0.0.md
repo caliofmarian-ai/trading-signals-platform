@@ -12,9 +12,9 @@ Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 Linked documents:
 - `canonical/active/ALGO_SPEC_v3.0.0.md`
 - `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `canonical/superseded/TIME_MODEL_UNIFIED_CANON_v2.0.0.md` until successor promotion
-- `canonical/superseded/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md` until successor promotion
-- `canonical/superseded/OBSERVABILITY_SPEC_v2.0.0.md` until successor promotion
+- `canonical/superseded/TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
+- `canonical/superseded/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
+- `canonical/superseded/OBSERVABILITY_SPEC_v2.0.0.md`
 
 ---
 

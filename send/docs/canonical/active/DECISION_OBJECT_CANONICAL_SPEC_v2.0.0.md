@@ -14,9 +14,9 @@ Linked proposed/current documents:
 - `canonical/active/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
 - `canonical/active/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`
 - `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `canonical/superseded/FSM_DECISION_ENGINE_SPEC_v1.0.0.md` until successor promotion
-- `canonical/superseded/OBSERVABILITY_SPEC_v2.0.0.md` until successor promotion
-- `canonical/superseded/DECISION_AUDIT_SPEC_v2.0.0.md` until successor promotion
+- `canonical/superseded/FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
+- `canonical/superseded/OBSERVABILITY_SPEC_v2.0.0.md`
+- `canonical/superseded/DECISION_AUDIT_SPEC_v2.0.0.md`
 
 ---
 
@@ -254,7 +254,7 @@ Proposed readiness families:
 - `BLOCKED_UNSTABLE_MARKET`;
 - `INVALID_EVIDENCE`.
 
-Final enum names must be synchronized across Trade Physics model, DecisionObject implementation, Decision Audit and Event Schema before promotion.
+Final enum names must remain synchronized across Trade Physics model, DecisionObject implementation, Decision Audit and Event Schema.
 
 No downstream layer may treat a non-READY object as if TPS were valid merely because a legacy field exists.
 
