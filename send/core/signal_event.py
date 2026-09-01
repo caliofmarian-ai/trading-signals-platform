@@ -2,17 +2,18 @@
 
 This module only constructs an internal semantic object after exact-stage FSM
 acceptance. It does not route, format, publish, register an outcome, or execute
-a trade. Model time and Trade Physics are carried as upstream evidence and are
-not recalculated here.
+a trade. Model Time, Execution Time and Trade Physics remain distinct upstream
+truths and are carried without recomputation.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from math import ceil, isfinite
-from typing import Any, Dict, Mapping
+from math import isfinite
+from typing import Any, Dict, Mapping, Optional
 
 from .decision_object import ACTIONABLE_DECISION_KINDS, DecisionObject
+from .execution_model import ExecutionTimeResult
 
 
 SIGNAL_EVENT_SCHEMA_VERSION = "3.0.0"
@@ -36,6 +37,12 @@ def _positive_number(value: Any, name: str) -> float:
     if not isfinite(result) or result <= 0:
         raise SignalEventUnavailable(f"{name} must be finite and positive")
     return result
+
+
+def _optional_positive_number(value: Any, name: str) -> Optional[float]:
+    if value is None:
+        return None
+    return _positive_number(value, name)
 
 
 def _non_negative_number(value: Any, name: str) -> float:
@@ -65,6 +72,11 @@ class SignalEvent:
     buffer_mode: str
     buffer_distance: float
     model_expiry: float
+    execution_time_available: bool
+    confirm_expiry_min_minutes: Optional[float]
+    confirm_expiry_max_minutes: Optional[float]
+    open_now_expiry_minutes: Optional[float]
+    execution_calibration_source: Optional[str]
     candle_ts: int
     created_ts: int
     entry_price: float
@@ -89,6 +101,53 @@ class SignalEvent:
         _positive_number(self.entry_price, "entry_price")
         _positive_int(self.candle_ts, "candle_ts")
         _positive_int(self.created_ts, "created_ts")
+        if not isinstance(self.execution_time_available, bool):
+            raise SignalEventUnavailable("execution_time_available must be boolean")
+        confirm_min = _optional_positive_number(
+            self.confirm_expiry_min_minutes, "confirm_expiry_min_minutes"
+        )
+        confirm_max = _optional_positive_number(
+            self.confirm_expiry_max_minutes, "confirm_expiry_max_minutes"
+        )
+        open_now = _optional_positive_number(
+            self.open_now_expiry_minutes, "open_now_expiry_minutes"
+        )
+        if self.execution_time_available:
+            if not isinstance(self.execution_calibration_source, str) or not self.execution_calibration_source.strip():
+                raise SignalEventUnavailable(
+                    "available Execution Time requires a calibration source"
+                )
+            if self.stage in {"CONFIRM", "OPEN_NOW"}:
+                if confirm_min is None or confirm_max is None:
+                    raise SignalEventUnavailable(
+                        "available CONFIRM/OPEN_NOW Execution Time requires a confirm interval"
+                    )
+                if confirm_min > confirm_max:
+                    raise SignalEventUnavailable(
+                        "confirm execution interval must satisfy min <= max"
+                    )
+            if self.stage == "OPEN_NOW":
+                if open_now is None:
+                    raise SignalEventUnavailable(
+                        "OPEN_NOW requires exact governed Execution Time"
+                    )
+                if not confirm_min <= open_now <= confirm_max:
+                    raise SignalEventUnavailable(
+                        "OPEN_NOW expiry must remain inside the governed CONFIRM interval"
+                    )
+        else:
+            if any(value is not None for value in (confirm_min, confirm_max, open_now)):
+                raise SignalEventUnavailable(
+                    "unavailable Execution Time cannot expose execution expiry values"
+                )
+            if self.execution_calibration_source is not None:
+                raise SignalEventUnavailable(
+                    "unavailable Execution Time cannot claim a calibration source"
+                )
+        if self.stage == "OPEN_NOW" and open_now is None:
+            raise SignalEventUnavailable(
+                "OPEN_NOW cannot form a distributable candidate without governed Execution Time"
+            )
         if not isinstance(self.payload, Mapping):
             raise SignalEventUnavailable("payload must be a mapping")
         if self.distribution_enabled:
@@ -100,9 +159,14 @@ class SignalEvent:
         return self.buffer_distance
 
     @property
-    def expiry_minutes(self) -> int:
-        """Compatibility alias derived from model_expiry; not primary model-time truth."""
-        return int(ceil(self.model_expiry))
+    def expiry_minutes(self) -> Optional[float]:
+        """Compatibility alias for explicit OPEN_NOW Execution Time only.
+
+        This property intentionally never derives, rounds or copies Model Time.
+        It is None for PRE/CONFIRM and equals the governed exact OPEN_NOW
+        execution duration only when that value was supplied by Execution Time.
+        """
+        return self.open_now_expiry_minutes if self.stage == "OPEN_NOW" else None
 
     def to_dict(self) -> Dict[str, Any]:
         result = asdict(self)
@@ -140,7 +204,50 @@ def _trade_physics_payload(decision: DecisionObject) -> Dict[str, Any] | None:
     }
 
 
-def _semantic_payload(decision: DecisionObject) -> Dict[str, Any]:
+def _execution_snapshot(
+    decision: DecisionObject, execution_time: Optional[ExecutionTimeResult]
+) -> Dict[str, Any]:
+    if execution_time is None:
+        return {
+            "available": False,
+            "confirm_expiry_min_minutes": None,
+            "confirm_expiry_max_minutes": None,
+            "open_now_expiry_minutes": None,
+            "calibration_source": None,
+            "explanation": "Execution Time evidence was not supplied to SignalEvent construction.",
+        }
+    if not isinstance(execution_time, ExecutionTimeResult):
+        raise TypeError("execution_time must be an ExecutionTimeResult or None")
+    if execution_time.symbol != decision.setup.symbol or execution_time.cycle_id != decision.setup.cycle_id:
+        raise SignalEventUnavailable(
+            "Execution Time and DecisionObject must describe the same symbol/cycle"
+        )
+    expected_outcome = {
+        "PRE": "PREPARE",
+        "CONFIRM": "CONFIRM",
+        "OPEN_NOW": "OPEN_NOW",
+    }[decision.kind]
+    if execution_time.fsm_outcome != expected_outcome:
+        raise SignalEventUnavailable(
+            "Execution Time FSM outcome does not match the SignalEvent stage"
+        )
+    if execution_time.signal_handoff_ready:
+        raise SignalEventUnavailable(
+            "Execution Time cannot authorize SignalEvent handoff"
+        )
+    return {
+        "available": bool(execution_time.available),
+        "confirm_expiry_min_minutes": execution_time.confirm_expiry_min_minutes,
+        "confirm_expiry_max_minutes": execution_time.confirm_expiry_max_minutes,
+        "open_now_expiry_minutes": execution_time.open_now_expiry_minutes,
+        "calibration_source": execution_time.calibration_source,
+        "explanation": execution_time.explanation,
+    }
+
+
+def _semantic_payload(
+    decision: DecisionObject, execution: Mapping[str, Any]
+) -> Dict[str, Any]:
     return {
         "strategy": "Binary Trading",
         "strategy_version": "2.0.0",
@@ -158,6 +265,7 @@ def _semantic_payload(decision: DecisionObject) -> Dict[str, Any]:
         "model_expiry": decision.time.model_expiry,
         "model_time_reach_ratio": decision.time.model_time_reach_ratio,
         "time_to_buffer_ratio": decision.time.time_to_buffer_ratio,
+        "execution_time": dict(execution),
         "structure_state": decision.structure.feasibility_state,
         "structure_position": decision.structure.position,
         "score_tier": decision.score.tier,
@@ -169,9 +277,13 @@ def _semantic_payload(decision: DecisionObject) -> Dict[str, Any]:
 
 
 def build_signal_event(
-    decision: DecisionObject, *, buffer_mode: str, created_ts: int
+    decision: DecisionObject,
+    *,
+    buffer_mode: str,
+    created_ts: int,
+    execution_time: Optional[ExecutionTimeResult] = None,
 ) -> SignalEvent:
-    """Build a complete internal candidate from real V2 decision evidence."""
+    """Build an internal candidate without conflating Model and Execution Time."""
 
     if not isinstance(decision, DecisionObject):
         raise TypeError("decision must be a DecisionObject")
@@ -181,6 +293,12 @@ def build_signal_event(
         raise SignalEventUnavailable("real model_expiry is required")
     model_expiry = _positive_number(decision.time.model_expiry, "model_expiry")
     normalized_buffer_mode = _text(buffer_mode, "buffer_mode").upper()
+    execution = _execution_snapshot(decision, execution_time)
+    if decision.kind == "OPEN_NOW" and not execution["available"]:
+        raise SignalEventUnavailable(
+            "OPEN_NOW requires available governed Execution Time; Model Time cannot be used as expiry"
+        )
+
     return SignalEvent(
         event_type="SIGNAL_CANDIDATE",
         stage=decision.kind,
@@ -192,9 +310,14 @@ def build_signal_event(
         buffer_mode=normalized_buffer_mode,
         buffer_distance=float(decision.market_context.buffer_distance),
         model_expiry=model_expiry,
+        execution_time_available=bool(execution["available"]),
+        confirm_expiry_min_minutes=execution["confirm_expiry_min_minutes"],
+        confirm_expiry_max_minutes=execution["confirm_expiry_max_minutes"],
+        open_now_expiry_minutes=execution["open_now_expiry_minutes"],
+        execution_calibration_source=execution["calibration_source"],
         candle_ts=decision.setup.evaluated_ts,
         created_ts=created_ts,
         entry_price=float(decision.market_context.latest_price),
-        payload=_semantic_payload(decision),
+        payload=_semantic_payload(decision, execution),
         distribution_enabled=False,
     )

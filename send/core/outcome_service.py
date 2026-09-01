@@ -4,6 +4,7 @@ import hashlib
 import os
 import time
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any, Dict, Optional, Tuple
 
 import requests
@@ -21,8 +22,19 @@ ALLOWED_OUTCOMES = {"WIN", "LOSE", "MISSED"}
 _ALLOWED_MEMBER_STATUSES = {"member", "administrator", "creator"}
 
 
-def _iso_utc(epoch_seconds: int) -> str:
-    return datetime.fromtimestamp(int(epoch_seconds), tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+def _iso_utc(epoch_seconds: float) -> str:
+    value = float(epoch_seconds)
+    timespec = "seconds" if value.is_integer() else "microseconds"
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat(timespec=timespec).replace("+00:00", "Z")
+
+
+def _positive_minutes(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("expiry_minutes must be a number")
+    result = float(value)
+    if not isfinite(result) or result <= 0:
+        raise ValueError("expiry_minutes must be finite and positive")
+    return result
 
 
 def _bot_token() -> str:
@@ -164,15 +176,15 @@ def _build_vote_record(
         "outcome": outcome,
         "voted_ts": int(now_ts),
         "voted_ts_utc": _iso_utc(now_ts),
-        "open_now_ts": int(meta.get("open_now_ts", 0)),
+        "open_now_ts": meta.get("open_now_ts", 0),
         "open_now_ts_utc": meta.get("open_now_ts_utc"),
-        "expiry_minutes": int(meta.get("expiry_minutes", 0)),
-        "expiry_ts": int(meta.get("expiry_ts", 0)),
+        "expiry_minutes": meta.get("expiry_minutes", 0),
+        "expiry_ts": meta.get("expiry_ts", 0),
         "expiry_ts_utc": meta.get("expiry_ts_utc"),
         "vote_window": {
-            "activation_ts": int(meta.get("activation_ts", 0)),
+            "activation_ts": meta.get("activation_ts", 0),
             "activation_ts_utc": meta.get("activation_ts_utc"),
-            "vote_end_ts": int(meta.get("vote_end_ts", 0)),
+            "vote_end_ts": meta.get("vote_end_ts", 0),
             "vote_end_ts_utc": meta.get("vote_end_ts_utc"),
         },
         "telemetry_trade_id": str(meta.get("telemetry_trade_id") or signal_id),
@@ -244,7 +256,7 @@ def register_open_now(
     elite_chat_id: int,
     open_message_id: int,
     open_now_ts: int,
-    expiry_minutes: int,
+    expiry_minutes: float,
     *,
     symbol: Optional[str] = None,
     direction: Optional[str] = None,
@@ -257,13 +269,11 @@ def register_open_now(
         raise ValueError("signal_id is required")
 
     open_now_ts = int(open_now_ts)
-    expiry_minutes = int(expiry_minutes)
+    expiry_minutes = _positive_minutes(expiry_minutes)
     if open_now_ts <= 0:
         raise ValueError("open_now_ts must be positive")
-    if expiry_minutes <= 0:
-        raise ValueError("expiry_minutes must be positive")
 
-    expiry_sec = expiry_minutes * 60
+    expiry_sec = expiry_minutes * 60.0
     activation_ts = open_now_ts + expiry_sec
     vote_end_ts = activation_ts + VOTE_WINDOW_GRACE_SECONDS
     callback_context = {
@@ -273,9 +283,9 @@ def register_open_now(
     }
     immutable = {
         "signal_id": signal_id,
-        "open_now_ts": int(open_now_ts),
-        "expiry_minutes": int(expiry_minutes),
-        "expiry_ts": int(open_now_ts + expiry_sec),
+        "open_now_ts": open_now_ts,
+        "expiry_minutes": expiry_minutes,
+        "expiry_ts": activation_ts,
         "symbol": symbol,
         "direction": direction,
         "timeframe": timeframe,
@@ -307,9 +317,10 @@ def register_open_now(
             meta = {
                 **immutable,
                 "open_now_ts_utc": _iso_utc(open_now_ts),
-                "activation_ts": int(activation_ts),
+                "expiry_ts_utc": _iso_utc(activation_ts),
+                "activation_ts": activation_ts,
                 "activation_ts_utc": _iso_utc(activation_ts),
-                "vote_end_ts": int(vote_end_ts),
+                "vote_end_ts": vote_end_ts,
                 "vote_end_ts_utc": _iso_utc(vote_end_ts),
                 "created_ts": int(time.time()),
                 "callback_contexts": [callback_context],
@@ -327,10 +338,10 @@ def register_open_now(
                 {
                     "elite_chat_id": int(elite_chat_id),
                     "open_message_id": int(open_message_id),
-                    "open_now_ts": int(open_now_ts),
-                    "expiry_minutes": int(expiry_minutes),
-                    "activation_ts": int(activation_ts),
-                    "vote_end_ts": int(vote_end_ts),
+                    "open_now_ts": open_now_ts,
+                    "expiry_minutes": expiry_minutes,
+                    "activation_ts": activation_ts,
+                    "vote_end_ts": vote_end_ts,
                 },
                 source={"module": "outcome_service", "function": "register_open_now"},
                 correlation={
@@ -428,8 +439,8 @@ def handle_vote_callback(
         )
         return {"accepted": False, "reason": str(config_reason)}
 
-    activation_ts = int(meta.get("activation_ts", 0))
-    vote_end_ts = int(meta.get("vote_end_ts", 0))
+    activation_ts = float(meta.get("activation_ts", 0))
+    vote_end_ts = float(meta.get("vote_end_ts", 0))
     if now_ts < activation_ts:
         _log_user_outcome_event(
             signal_id=signal_id,

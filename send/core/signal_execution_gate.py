@@ -3,7 +3,9 @@
 This module consumes explicit FSMExecutionHandoff truth. It can construct
 PRE/CONFIRM/OPEN_NOW SignalEvent candidates only after exact-stage acceptance.
 A valid exact-stage candidate may authorize Distribution Router invocation.
-The pre-distribution checkpoint remains DEFERRED and can never claim EMITTED.
+OPEN_NOW additionally requires governed Execution Time; Model Time can never be
+silently converted into a trader-facing expiry. The pre-distribution checkpoint
+remains DEFERRED and can never claim EMITTED.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from .decision_object import ACTIONABLE_DECISION_KINDS, DecisionObject
+from .execution_model import ExecutionTimeResult
 from .signal_event import SignalEvent, SignalEventUnavailable, build_signal_event
 from .v2_fsm_orchestrator import PersistentFSMResult
 
@@ -40,6 +43,9 @@ class SignalExecutionGateResult:
     execution_phase: str
     stage_handoff_ready: bool
     trade_execution_ready: bool
+    execution_time_available: bool
+    execution_calibration_source: Optional[str]
+    execution_time_explanation: Optional[str]
     signal_event_available: bool
     destination_state: str
     candidate: Optional[SignalEvent]
@@ -60,6 +66,15 @@ class SignalExecutionGateResult:
             raise ValueError("pre-distribution gate must use PRE_DISTRIBUTION phase")
         if self.destination_state != PRE_DISTRIBUTION_DESTINATION_STATE:
             raise ValueError("pre-distribution destination state is unresolved")
+        if not isinstance(self.execution_time_available, bool):
+            raise ValueError("execution_time_available must be boolean")
+        if self.execution_time_available and (
+            not isinstance(self.execution_calibration_source, str)
+            or not self.execution_calibration_source.strip()
+        ):
+            raise ValueError("available Execution Time requires a calibration source")
+        if not self.execution_time_available and self.execution_calibration_source is not None:
+            raise ValueError("unavailable Execution Time cannot claim a calibration source")
         if self.distribution_allowed:
             if self.candidate is None or not self.stage_handoff_ready:
                 raise ValueError("distribution requires an available handoff-ready candidate")
@@ -72,6 +87,12 @@ class SignalExecutionGateResult:
                 raise ValueError("candidate signal_id must match execution result")
             if self.stage != self.candidate.stage:
                 raise ValueError("candidate stage must match execution result")
+            if self.candidate.execution_time_available != self.execution_time_available:
+                raise ValueError("candidate Execution Time availability must match execution result")
+            if self.candidate.execution_calibration_source != self.execution_calibration_source:
+                raise ValueError("candidate Execution Time source must match execution result")
+        if self.stage == "OPEN_NOW" and self.distribution_allowed and not self.execution_time_available:
+            raise ValueError("OPEN_NOW distribution requires governed Execution Time")
         if self.outcome == "EMITTED":
             raise ValueError("EMITTED is forbidden before governed publication evidence")
 
@@ -87,6 +108,9 @@ class SignalExecutionGateResult:
             "execution_phase": self.execution_phase,
             "stage_handoff_ready": self.stage_handoff_ready,
             "trade_execution_ready": self.trade_execution_ready,
+            "execution_time_available": self.execution_time_available,
+            "execution_calibration_source": self.execution_calibration_source,
+            "execution_time_explanation": self.execution_time_explanation,
             "signal_event_available": self.signal_event_available,
             "destination_state": self.destination_state,
             "distribution_allowed": self.distribution_allowed,
@@ -100,6 +124,9 @@ class SignalExecutionGateResult:
             "execution_reason": self.reason,
             "stage_handoff_ready": self.stage_handoff_ready,
             "trade_execution_ready": self.trade_execution_ready,
+            "execution_time_available": self.execution_time_available,
+            "execution_calibration_source": self.execution_calibration_source,
+            "execution_time_explanation": self.execution_time_explanation,
             "signal_event_available": self.signal_event_available,
             "destination_state": self.destination_state,
             "candidate_schema_version": self.candidate.schema_version if self.candidate is not None else None,
@@ -111,6 +138,20 @@ def _attempt_id(decision: DecisionObject, created_ts: int) -> str:
     return f"binary-v2:{signal_id}:{decision.kind}:{created_ts}"
 
 
+def _execution_time_fields(
+    execution_time: Optional[ExecutionTimeResult],
+) -> tuple[bool, Optional[str], Optional[str]]:
+    if execution_time is None:
+        return False, None, "Execution Time evidence was not supplied."
+    if not isinstance(execution_time, ExecutionTimeResult):
+        raise TypeError("execution_time must be an ExecutionTimeResult or None")
+    return (
+        bool(execution_time.available),
+        execution_time.calibration_source,
+        execution_time.explanation,
+    )
+
+
 def _base_result(
     persistent_fsm: PersistentFSMResult,
     decision: DecisionObject,
@@ -118,9 +159,13 @@ def _base_result(
     created_ts: int,
     outcome: str,
     reason: str,
+    execution_time: Optional[ExecutionTimeResult] = None,
     candidate: Optional[SignalEvent] = None,
     distribution_allowed: bool = False,
 ) -> SignalExecutionGateResult:
+    execution_time_available, calibration_source, explanation = _execution_time_fields(
+        execution_time
+    )
     return SignalExecutionGateResult(
         outcome=outcome,
         reason=reason,
@@ -132,6 +177,9 @@ def _base_result(
         execution_phase=EXECUTION_PHASE,
         stage_handoff_ready=persistent_fsm.stage_handoff_ready,
         trade_execution_ready=persistent_fsm.trade_execution_ready,
+        execution_time_available=execution_time_available,
+        execution_calibration_source=calibration_source,
+        execution_time_explanation=explanation,
         signal_event_available=candidate is not None,
         destination_state=PRE_DISTRIBUTION_DESTINATION_STATE,
         candidate=candidate,
@@ -145,13 +193,21 @@ def prepare_signal_execution(
     *,
     buffer_mode: str,
     created_ts: int,
+    execution_time: Optional[ExecutionTimeResult] = None,
 ) -> SignalExecutionGateResult:
-    """Prepare a traceable exact-stage pre-distribution verdict."""
+    """Prepare a traceable exact-stage pre-distribution verdict.
+
+    PRE and CONFIRM remain lifecycle candidates when exact-stage FSM handoff is
+    valid. OPEN_NOW is stricter: it cannot be released to Distribution unless
+    Execution Time is available and carries an exact governed OPEN_NOW expiry.
+    """
 
     if not isinstance(persistent_fsm, PersistentFSMResult):
         raise TypeError("persistent_fsm must be a PersistentFSMResult")
     if not isinstance(decision, DecisionObject):
         raise TypeError("decision must be a DecisionObject")
+    if execution_time is not None and not isinstance(execution_time, ExecutionTimeResult):
+        raise TypeError("execution_time must be an ExecutionTimeResult or None")
 
     if decision.kind not in ACTIONABLE_DECISION_KINDS:
         return _base_result(
@@ -160,6 +216,7 @@ def prepare_signal_execution(
             created_ts=created_ts,
             outcome="NOT_EMITTED",
             reason="NON_ACTIONABLE_DECISION",
+            execution_time=execution_time,
         )
 
     if persistent_fsm.requested_stage != decision.kind:
@@ -169,6 +226,7 @@ def prepare_signal_execution(
             created_ts=created_ts,
             outcome="BLOCKED",
             reason="FSM_REQUESTED_STAGE_MISMATCH",
+            execution_time=execution_time,
         )
 
     if not persistent_fsm.stage_handoff_ready:
@@ -183,6 +241,7 @@ def prepare_signal_execution(
             created_ts=created_ts,
             outcome=outcome,
             reason=persistent_fsm.reason or "FSM_STAGE_HANDOFF_NOT_READY",
+            execution_time=execution_time,
         )
 
     if persistent_fsm.accepted_stage != decision.kind:
@@ -192,6 +251,7 @@ def prepare_signal_execution(
             created_ts=created_ts,
             outcome="BLOCKED",
             reason="FSM_EXACT_STAGE_ACCEPTANCE_REQUIRED",
+            execution_time=execution_time,
         )
 
     if persistent_fsm.signal_id != decision.signal_id:
@@ -201,6 +261,21 @@ def prepare_signal_execution(
             created_ts=created_ts,
             outcome="BLOCKED",
             reason="FSM_SIGNAL_ID_MISMATCH",
+            execution_time=execution_time,
+        )
+
+    if decision.kind == "OPEN_NOW" and (
+        execution_time is None
+        or not execution_time.available
+        or execution_time.open_now_expiry_minutes is None
+    ):
+        return _base_result(
+            persistent_fsm,
+            decision,
+            created_ts=created_ts,
+            outcome="BLOCKED",
+            reason="EXECUTION_TIME_UNAVAILABLE",
+            execution_time=execution_time,
         )
 
     try:
@@ -208,6 +283,7 @@ def prepare_signal_execution(
             decision,
             buffer_mode=buffer_mode,
             created_ts=created_ts,
+            execution_time=execution_time,
         )
     except SignalEventUnavailable as exc:
         return _base_result(
@@ -216,6 +292,7 @@ def prepare_signal_execution(
             created_ts=created_ts,
             outcome="NOT_EMITTED",
             reason=f"SIGNAL_EVENT_UNAVAILABLE:{exc}",
+            execution_time=execution_time,
         )
 
     return _base_result(
@@ -224,6 +301,7 @@ def prepare_signal_execution(
         created_ts=created_ts,
         outcome="DEFERRED",
         reason="DISTRIBUTION_ROUTER_READY",
+        execution_time=execution_time,
         candidate=candidate,
         distribution_allowed=True,
     )
