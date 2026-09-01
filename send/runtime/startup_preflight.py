@@ -1,6 +1,6 @@
 """Shared fail-closed startup validation for production runtime workers.
 
-This module performs deterministic, offline validation only.  It proves that
+This module performs deterministic, offline validation only. It proves that
 critical governed configuration and persisted runtime state are safe enough to
 start the strategy/distribution workers; it does not contact market providers.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Dict, Tuple
 
 from core import admin_permissions
 from core import distribution_router
@@ -208,12 +208,17 @@ def _validate_runtime_state() -> Dict[str, Any]:
     }
 
 
-def run_startup_preflight(*, require_shadow_mode: bool = False) -> Dict[str, Any]:
+def run_startup_preflight(
+    *,
+    require_shadow_mode: bool = False,
+    require_deployment_inputs: bool = True,
+) -> Dict[str, Any]:
     """Validate critical startup inputs without network access or live mutations.
 
-    `require_shadow_mode=True` is used by the governed Railway deployment path.
-    The in-process system_boot backstop still enforces broker disablement and all
-    configuration/state checks even when invoked outside that wrapper.
+    Governed Railway/shadow startup uses ``require_deployment_inputs=True`` and
+    therefore validates provider readiness plus Admin/distribution configuration.
+    Generic test/development boot may set it false, but still cannot bypass
+    governed algo params, active-symbol, broker-safety, or persisted-state checks.
     """
 
     try:
@@ -238,15 +243,24 @@ def run_startup_preflight(*, require_shadow_mode: bool = False) -> Dict[str, Any
             raise StartupPreflightError(f"Algorithm parameter validation failed: {exc}") from exc
 
         state = _validate_runtime_state()
-        active_symbols = _configured_symbols(
-            runtime_state_store.load_active_symbols()
-        )
+        active_symbols = _configured_symbols(runtime_state_store.load_active_symbols())
         if not active_symbols:
             raise StartupPreflightError("Active market symbol universe is empty")
 
-        provider = _validate_provider(active_symbols)
-        admin_control = _validate_admin_control_config()
-        _validate_distribution_config()
+        provider: Dict[str, Any]
+        admin_control: Dict[str, int]
+        if require_deployment_inputs:
+            provider = _validate_provider(active_symbols)
+            admin_control = _validate_admin_control_config()
+            _validate_distribution_config()
+        else:
+            provider = {
+                "active_provider": None,
+                "selection_source": "NOT_EVALUATED_NON_DEPLOYMENT",
+                "mode": "NOT_EVALUATED_NON_DEPLOYMENT",
+                "effective_symbols": list(active_symbols),
+            }
+            admin_control = {"permission_count": 0}
 
         return {
             "status": "ready",
@@ -257,13 +271,14 @@ def run_startup_preflight(*, require_shadow_mode: bool = False) -> Dict[str, Any
             "provider_selection_source": provider["selection_source"],
             "provider_mode": provider["mode"],
             "effective_symbols": provider["effective_symbols"],
-            "permissions_valid": True,
+            "permissions_valid": bool(require_deployment_inputs),
             "permission_count": admin_control["permission_count"],
             "persistent_state_valid": True,
             "fsm_watchlist_count": len(state["fsm_state"].get("watchlist", [])),
             "distribution_state_valid": isinstance(state["dist_state"], dict),
             "restart_state_valid": isinstance(state["restart_state"], dict),
             "shadow_mode_required": bool(require_shadow_mode),
+            "deployment_inputs_required": bool(require_deployment_inputs),
         }
     except StartupPreflightError:
         raise
