@@ -96,7 +96,7 @@ def test_community_feedback_is_non_authoritative_and_missed_is_not_loss(tmp_path
     assert result["missed"] == 1
     assert result["decisive_sample"] == 5
     assert result["community_win_rate_percent"] == pytest.approx(60.0)
-    assert result["community_missed_rate_percent"] == pytest.approx(100 / 6)
+    assert result["community_missed_rate_percent"] == pytest.approx(16.67)
 
 
 def test_mixed_and_unknown_truth_cannot_enter_community_metric(tmp_path: Path) -> None:
@@ -170,8 +170,8 @@ def test_operational_win_rate_excludes_missed_and_keeps_latest_reconciliation(tm
     assert result["loses"] == 2
     assert result["missed"] == 1
     assert result["operational_win_rate_percent"] == pytest.approx(60.0)
-    assert result["execution_rate_percent"] == pytest.approx(100 * 5 / 6)
-    assert result["missed_rate_percent"] == pytest.approx(100 / 6)
+    assert result["execution_rate_percent"] == pytest.approx(83.33)
+    assert result["missed_rate_percent"] == pytest.approx(16.67)
 
 
 def test_small_samples_never_present_rate_as_stable_evidence(tmp_path: Path) -> None:
