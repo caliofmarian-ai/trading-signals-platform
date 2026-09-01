@@ -1,0 +1,102 @@
+name: PR86 Owner Knowledge Canon Migration
+
+on:
+  push:
+    branches:
+      - feature/trade-physics-staged-execution-runtime
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/trade-physics-staged-execution-runtime
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Migrate canonical source references
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          registry_path = Path('send/config/owner_knowledge_registry.json')
+          active = Path('send/docs/canonical/active')
+          payload = json.loads(registry_path.read_text(encoding='utf-8'))
+
+          mapping = {
+              'ADMIN_CONTROL_SPEC_v2.0.0.md': 'ADMIN_CONTROL_SPEC_v2.0.1.md',
+              'ADMIN_OPERATIONS_SPEC_v2.0.0.md': 'ADMIN_OPERATIONS_SPEC_v2.0.1.md',
+              'ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md': 'ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md',
+              'ADMIN_TREE_MAP_v2.0.0.md': 'ADMIN_TREE_MAP_v2.0.1.md',
+              'AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.0.md': 'AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.1.md',
+              'ALGO_SPEC_v2.0.0.md': 'ALGO_SPEC_v3.0.0.md',
+              'AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v2.0.0.md': 'AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v3.0.0.md',
+              'CANONICAL_STRATEGY_STACK_v1.0.0.md': 'CANONICAL_STRATEGY_STACK_v2.0.0.md',
+              'CHANNEL_CONFIG_SPEC_v2.0.0.md': 'CHANNEL_CONFIG_SPEC_v2.0.1.md',
+              'COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v2.0.0.md': 'COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v3.0.0.md',
+              'CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.0.md': 'CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.1.md',
+              'DECISION_AUDIT_SPEC_v2.0.0.md': 'DECISION_AUDIT_SPEC_v3.0.0.md',
+              'DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md': 'DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md',
+              'DEPLOYMENT_PROTOCOL_v2.0.0.md': 'DEPLOYMENT_PROTOCOL_v2.0.1.md',
+              'ECONOMICS_AND_PRICING_SPEC_v2.0.0.md': 'ECONOMICS_AND_PRICING_SPEC_v2.0.1.md',
+              'EVENT_SCHEMA_SPEC_v2.0.0.md': 'EVENT_SCHEMA_SPEC_v3.0.0.md',
+              'FAILURE_RECOVERY_SPEC_v2.0.0.md': 'FAILURE_RECOVERY_SPEC_v2.0.1.md',
+              'FSM_DECISION_ENGINE_SPEC_v1.0.0.md': 'FSM_DECISION_ENGINE_SPEC_v2.0.0.md',
+              'GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md': 'GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md',
+              'HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md': 'HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.1.md',
+              'MODULE_INTERFACE_SPEC_v2.0.0.md': 'MODULE_INTERFACE_SPEC_v3.0.0.md',
+              'OBSERVABILITY_LOGGING_SPEC_v2.0.0.md': 'OBSERVABILITY_LOGGING_SPEC_v3.0.0.md',
+              'OBSERVABILITY_SPEC_v2.0.0.md': 'OBSERVABILITY_SPEC_v3.0.0.md',
+              'OUTCOME_TRACKING_SPEC_v2.0.0.md': 'OUTCOME_TRACKING_SPEC_v3.0.0.md',
+              'PERFORMANCE_ANALYTICS_SPEC_v2.0.0.md': 'PERFORMANCE_ANALYTICS_SPEC_v3.0.0.md',
+              'RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v2.0.0.md': 'RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v3.0.0.md',
+              'RISK_MODEL_v2.0.0.md': 'RISK_MODEL_v3.0.0.md',
+              'ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md': 'ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.1.md',
+              'SECURITY_MODEL_v2.0.0.md': 'SECURITY_MODEL_v2.0.1.md',
+              'SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md': 'SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.1.md',
+              'SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md': 'SIGNAL_DISTRIBUTION_SPEC_v2.0.1.md',
+              'SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md': 'SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md',
+              'SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md': 'SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md',
+              'STRATEGY_INTELLIGENCE_SYSTEM_v2.0.0.md': 'STRATEGY_INTELLIGENCE_SYSTEM_v3.0.0.md',
+              'STRATEGY_PARAMETER_CONTROL_SPEC_v2.0.0.md': 'STRATEGY_PARAMETER_CONTROL_SPEC_v3.0.0.md',
+              'SYSTEM_ARCHITECTURE_MAP_v2.0.0.md': 'SYSTEM_ARCHITECTURE_MAP_v3.0.0.md',
+              'SYSTEM_INVARIANTS_v2.0.0.md': 'SYSTEM_INVARIANTS_v3.0.0.md',
+              'TELEGRAM_UX_v2.0.0.md': 'TELEGRAM_UX_v2.0.1.md',
+              'TEST_PLAN_v2.0.0.md': 'TEST_PLAN_v3.0.0.md',
+              'TIME_MODEL_UNIFIED_CANON_v2.0.0.md': 'TIME_MODEL_UNIFIED_CANON_v3.0.0.md',
+              'TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md': 'TRADE_TEMPORAL_TELEMETRY_SPEC_v3.0.0.md',
+          }
+
+          payload['human_comprehension_canon'] = mapping.get(
+              payload['human_comprehension_canon'], payload['human_comprehension_canon']
+          )
+          for entry in payload['entries']:
+              entry['canonical_sources'] = [mapping.get(source, source) for source in entry['canonical_sources']]
+
+          missing = sorted({
+              source
+              for entry in payload['entries']
+              for source in [payload['human_comprehension_canon'], *entry['canonical_sources']]
+              if not (active / source).is_file()
+          })
+          if missing:
+              raise SystemExit('Unresolved canonical sources: ' + ', '.join(missing))
+
+          registry_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+          PY
+      - name: Commit migrated registry
+        run: |
+          if git diff --quiet -- send/config/owner_knowledge_registry.json; then
+            echo 'Registry already aligned.'
+            exit 0
+          fi
+          git config user.name 'caliofmarian-ai'
+          git config user.email 'caliofmarian@gmail.com'
+          git add send/config/owner_knowledge_registry.json
+          git commit -m 'Align owner knowledge registry with active canon'
+          git push origin HEAD:feature/trade-physics-staged-execution-runtime
