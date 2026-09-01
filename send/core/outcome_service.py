@@ -4,6 +4,7 @@ import hashlib
 import os
 import time
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any, Dict, Optional, Tuple
 
 import requests
@@ -21,8 +22,24 @@ ALLOWED_OUTCOMES = {"WIN", "LOSE", "MISSED"}
 _ALLOWED_MEMBER_STATUSES = {"member", "administrator", "creator"}
 
 
-def _iso_utc(epoch_seconds: int) -> str:
-    return datetime.fromtimestamp(int(epoch_seconds), tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+def _canonical_timestamp(value: float | int) -> float | int:
+    number = float(value)
+    return int(number) if number.is_integer() else number
+
+
+def _iso_utc(epoch_seconds: float | int) -> str:
+    value = float(epoch_seconds)
+    timespec = "seconds" if value.is_integer() else "milliseconds"
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat(timespec=timespec).replace("+00:00", "Z")
+
+
+def _positive_minutes(value: Any, field_name: str = "expiry_minutes") -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a number")
+    number = float(value)
+    if not isfinite(number) or number <= 0:
+        raise ValueError(f"{field_name} must be finite and positive")
+    return number
 
 
 def _bot_token() -> str:
@@ -153,6 +170,7 @@ def _build_vote_record(
     meta: Dict[str, Any],
     callback_context: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    expiry_minutes = _positive_minutes(meta.get("expiry_minutes"))
     record: Dict[str, Any] = {
         "event_type": "user_outcome_record",
         "record_schema_version": "3.0.0",
@@ -166,13 +184,13 @@ def _build_vote_record(
         "voted_ts_utc": _iso_utc(now_ts),
         "open_now_ts": int(meta.get("open_now_ts", 0)),
         "open_now_ts_utc": meta.get("open_now_ts_utc"),
-        "expiry_minutes": int(meta.get("expiry_minutes", 0)),
-        "expiry_ts": int(meta.get("expiry_ts", 0)),
+        "expiry_minutes": _canonical_timestamp(expiry_minutes),
+        "expiry_ts": _canonical_timestamp(float(meta.get("expiry_ts", 0))),
         "expiry_ts_utc": meta.get("expiry_ts_utc"),
         "vote_window": {
-            "activation_ts": int(meta.get("activation_ts", 0)),
+            "activation_ts": _canonical_timestamp(float(meta.get("activation_ts", 0))),
             "activation_ts_utc": meta.get("activation_ts_utc"),
-            "vote_end_ts": int(meta.get("vote_end_ts", 0)),
+            "vote_end_ts": _canonical_timestamp(float(meta.get("vote_end_ts", 0))),
             "vote_end_ts_utc": meta.get("vote_end_ts_utc"),
         },
         "telemetry_trade_id": str(meta.get("telemetry_trade_id") or signal_id),
@@ -244,7 +262,7 @@ def register_open_now(
     elite_chat_id: int,
     open_message_id: int,
     open_now_ts: int,
-    expiry_minutes: int,
+    expiry_minutes: float,
     *,
     symbol: Optional[str] = None,
     direction: Optional[str] = None,
@@ -257,15 +275,15 @@ def register_open_now(
         raise ValueError("signal_id is required")
 
     open_now_ts = int(open_now_ts)
-    expiry_minutes = int(expiry_minutes)
+    expiry_minutes = _positive_minutes(expiry_minutes)
     if open_now_ts <= 0:
         raise ValueError("open_now_ts must be positive")
-    if expiry_minutes <= 0:
-        raise ValueError("expiry_minutes must be positive")
 
-    expiry_sec = expiry_minutes * 60
-    activation_ts = open_now_ts + expiry_sec
-    vote_end_ts = activation_ts + VOTE_WINDOW_GRACE_SECONDS
+    expiry_sec = expiry_minutes * 60.0
+    expiry_ts = _canonical_timestamp(open_now_ts + expiry_sec)
+    activation_ts = expiry_ts
+    vote_end_ts = _canonical_timestamp(float(activation_ts) + VOTE_WINDOW_GRACE_SECONDS)
+    canonical_expiry = _canonical_timestamp(expiry_minutes)
     callback_context = {
         "chat_id": int(elite_chat_id),
         "message_id": int(open_message_id),
@@ -274,8 +292,8 @@ def register_open_now(
     immutable = {
         "signal_id": signal_id,
         "open_now_ts": int(open_now_ts),
-        "expiry_minutes": int(expiry_minutes),
-        "expiry_ts": int(open_now_ts + expiry_sec),
+        "expiry_minutes": canonical_expiry,
+        "expiry_ts": expiry_ts,
         "symbol": symbol,
         "direction": direction,
         "timeframe": timeframe,
@@ -290,10 +308,7 @@ def register_open_now(
             raise ValueError(f"invalid open registry record for {signal_id}")
 
         if existing:
-            existing_immutable = {
-                key: existing.get(key)
-                for key in immutable.keys()
-            }
+            existing_immutable = {key: existing.get(key) for key in immutable.keys()}
             if existing_immutable != immutable:
                 raise ValueError(f"conflicting OPEN_NOW callback registration for {signal_id}")
             contexts = existing.setdefault("callback_contexts", [])
@@ -307,9 +322,9 @@ def register_open_now(
             meta = {
                 **immutable,
                 "open_now_ts_utc": _iso_utc(open_now_ts),
-                "activation_ts": int(activation_ts),
+                "activation_ts": activation_ts,
                 "activation_ts_utc": _iso_utc(activation_ts),
-                "vote_end_ts": int(vote_end_ts),
+                "vote_end_ts": vote_end_ts,
                 "vote_end_ts_utc": _iso_utc(vote_end_ts),
                 "created_ts": int(time.time()),
                 "callback_contexts": [callback_context],
@@ -328,9 +343,9 @@ def register_open_now(
                     "elite_chat_id": int(elite_chat_id),
                     "open_message_id": int(open_message_id),
                     "open_now_ts": int(open_now_ts),
-                    "expiry_minutes": int(expiry_minutes),
-                    "activation_ts": int(activation_ts),
-                    "vote_end_ts": int(vote_end_ts),
+                    "expiry_minutes": canonical_expiry,
+                    "activation_ts": activation_ts,
+                    "vote_end_ts": vote_end_ts,
                 },
                 source={"module": "outcome_service", "function": "register_open_now"},
                 correlation={
@@ -428,8 +443,8 @@ def handle_vote_callback(
         )
         return {"accepted": False, "reason": str(config_reason)}
 
-    activation_ts = int(meta.get("activation_ts", 0))
-    vote_end_ts = int(meta.get("vote_end_ts", 0))
+    activation_ts = float(meta.get("activation_ts", 0))
+    vote_end_ts = float(meta.get("vote_end_ts", 0))
     if now_ts < activation_ts:
         _log_user_outcome_event(
             signal_id=signal_id,
@@ -438,8 +453,8 @@ def handle_vote_callback(
             accepted=False,
             rejected_reason="too_early",
             vote_window={
-                "activation_ts": activation_ts,
-                "vote_end_ts": vote_end_ts,
+                "activation_ts": _canonical_timestamp(activation_ts),
+                "vote_end_ts": _canonical_timestamp(vote_end_ts),
                 "ts_clicked": now_ts,
             },
             source_function="handle_vote_callback",
@@ -453,8 +468,8 @@ def handle_vote_callback(
             accepted=False,
             rejected_reason="vote_window_closed",
             vote_window={
-                "activation_ts": activation_ts,
-                "vote_end_ts": vote_end_ts,
+                "activation_ts": _canonical_timestamp(activation_ts),
+                "vote_end_ts": _canonical_timestamp(vote_end_ts),
                 "ts_clicked": now_ts,
             },
             source_function="handle_vote_callback",
@@ -516,6 +531,8 @@ def handle_vote_callback(
         )
         return {"accepted": False, "reason": "persistence_failed"}
 
+    canonical_activation = _canonical_timestamp(activation_ts)
+    canonical_vote_end = _canonical_timestamp(vote_end_ts)
     if duplicate_vote_reason is not None:
         _log_user_outcome_event(
             signal_id=signal_id,
@@ -524,8 +541,8 @@ def handle_vote_callback(
             accepted=False,
             rejected_reason=duplicate_vote_reason,
             vote_window={
-                "activation_ts": activation_ts,
-                "vote_end_ts": vote_end_ts,
+                "activation_ts": canonical_activation,
+                "vote_end_ts": canonical_vote_end,
                 "ts_clicked": now_ts,
             },
             source_function="handle_vote_callback",
@@ -543,8 +560,8 @@ def handle_vote_callback(
         accepted=True,
         rejected_reason=None,
         vote_window={
-            "activation_ts": activation_ts,
-            "vote_end_ts": vote_end_ts,
+            "activation_ts": canonical_activation,
+            "vote_end_ts": canonical_vote_end,
             "ts_clicked": now_ts,
         },
         source_function="handle_vote_callback",
