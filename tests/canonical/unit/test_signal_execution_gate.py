@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from core.decision_object import (
     DecisionObject,
     MarketContext,
@@ -12,6 +14,8 @@ from core.decision_object import (
     StructureContext,
     TimeContext,
 )
+from core.execution_model import ExecutionCalibration, derive_execution_time
+from core.fsm_decision_adapter import interpret_decision
 from core.signal_execution_gate import prepare_signal_execution
 from core.v2_fsm_orchestrator import advance_persistent_fsm
 from state_store.state_store import default_fsm_state
@@ -65,6 +69,24 @@ def _decision(kind: str, candle_ts: int, *, model_expiry: float | None = 5.0) ->
     )
 
 
+def _calibration(*, pressure_bias: float = 0.1) -> ExecutionCalibration:
+    return ExecutionCalibration(
+        confirm_delta_minutes=1.0,
+        pressure_bias=pressure_bias,
+        minimum_expiry_minutes=1.0,
+        maximum_expiry_minutes=15.0,
+        source="test-calibration-v1",
+    )
+
+
+def _execution(decision: DecisionObject, *, calibrated: bool = True):
+    return derive_execution_time(
+        decision,
+        interpret_decision(decision),
+        _calibration() if calibrated else None,
+    )
+
+
 def _after_pre() -> dict:
     pre = advance_persistent_fsm(
         default_fsm_state(),
@@ -90,21 +112,25 @@ def test_ready_pre_builds_lifecycle_candidate_but_not_trade_ready() -> None:
     assert result.destination_state == "PRE_DISTRIBUTION_UNRESOLVED"
     assert result.stage_handoff_ready is True
     assert result.trade_execution_ready is False
+    assert result.execution_time_available is False
     assert result.signal_event_available is True
     assert result.candidate is not None
     assert result.candidate.stage == "PRE"
+    assert result.candidate.expiry_minutes is None
     assert result.distribution_allowed is True
 
 
-def test_ready_confirm_builds_lifecycle_candidate_but_not_trade_ready() -> None:
+def test_ready_confirm_carries_interval_but_not_exact_trade_expiry() -> None:
     state = _after_pre()
     decision = _decision("CONFIRM", 160)
     persistent = advance_persistent_fsm(state, decision, now_ts=161)
+    execution_time = _execution(decision)
     result = prepare_signal_execution(
         persistent,
         decision,
         buffer_mode="MEDIUM",
         created_ts=162,
+        execution_time=execution_time,
     )
 
     assert result.outcome == "DEFERRED"
@@ -112,10 +138,15 @@ def test_ready_confirm_builds_lifecycle_candidate_but_not_trade_ready() -> None:
     assert result.candidate.stage == "CONFIRM"
     assert result.stage_handoff_ready is True
     assert result.trade_execution_ready is False
+    assert result.execution_time_available is True
+    assert result.execution_calibration_source == "test-calibration-v1"
+    assert result.candidate.confirm_expiry_min_minutes == pytest.approx(4.0)
+    assert result.candidate.confirm_expiry_max_minutes == pytest.approx(6.0)
+    assert result.candidate.expiry_minutes is None
     assert result.distribution_allowed is True
 
 
-def test_ready_open_now_builds_candidate_and_is_trade_ready_but_still_deferred() -> None:
+def test_open_now_without_execution_calibration_fails_closed() -> None:
     decision = _decision("OPEN_NOW", 160)
     persistent = advance_persistent_fsm(_after_pre(), decision, now_ts=161)
 
@@ -126,18 +157,82 @@ def test_ready_open_now_builds_candidate_and_is_trade_ready_but_still_deferred()
         created_ts=162,
     )
 
+    assert result.outcome == "BLOCKED"
+    assert result.reason == "EXECUTION_TIME_UNAVAILABLE"
+    assert result.stage_handoff_ready is True
+    assert result.trade_execution_ready is True
+    assert result.execution_time_available is False
+    assert result.candidate is None
+    assert result.signal_event_available is False
+    assert result.distribution_allowed is False
+
+
+def test_explicit_unavailable_execution_time_still_fails_closed() -> None:
+    decision = _decision("OPEN_NOW", 160)
+    persistent = advance_persistent_fsm(_after_pre(), decision, now_ts=161)
+    unavailable = _execution(decision, calibrated=False)
+
+    result = prepare_signal_execution(
+        persistent,
+        decision,
+        buffer_mode="MEDIUM",
+        created_ts=162,
+        execution_time=unavailable,
+    )
+
+    assert result.outcome == "BLOCKED"
+    assert result.reason == "EXECUTION_TIME_UNAVAILABLE"
+    assert result.execution_time_available is False
+    assert "not invented" in (result.execution_time_explanation or "")
+    assert result.candidate is None
+    assert result.distribution_allowed is False
+
+
+def test_ready_open_now_uses_exact_execution_time_and_remains_pre_distribution_deferred() -> None:
+    decision = _decision("OPEN_NOW", 160)
+    persistent = advance_persistent_fsm(_after_pre(), decision, now_ts=161)
+    execution_time = _execution(decision)
+
+    result = prepare_signal_execution(
+        persistent,
+        decision,
+        buffer_mode="MEDIUM",
+        created_ts=162,
+        execution_time=execution_time,
+    )
+
     assert result.outcome == "DEFERRED"
     assert result.reason == "DISTRIBUTION_ROUTER_READY"
     assert result.distribution_allowed is True
     assert result.stage_handoff_ready is True
     assert result.trade_execution_ready is True
+    assert result.execution_time_available is True
     assert result.candidate is not None
     assert result.candidate.event_type == "SIGNAL_CANDIDATE"
     assert result.candidate.signal_id == "sig-v2-execution-gate"
     assert result.candidate.stage == "OPEN_NOW"
-    assert result.candidate.buffer_distance == 0.0008
-    assert result.candidate.model_expiry == 5.0
-    assert result.candidate.expiry_minutes == 5
+    assert result.candidate.buffer_distance == pytest.approx(0.0008)
+    assert result.candidate.model_expiry == pytest.approx(5.0)
+    assert result.candidate.expiry_minutes == pytest.approx(4.5)
+
+
+def test_fractional_open_now_expiry_is_preserved_without_rounding() -> None:
+    decision = _decision("OPEN_NOW", 160, model_expiry=5.3)
+    persistent = advance_persistent_fsm(_after_pre(), decision, now_ts=161)
+    execution_time = _execution(decision)
+
+    result = prepare_signal_execution(
+        persistent,
+        decision,
+        buffer_mode="MEDIUM",
+        created_ts=162,
+        execution_time=execution_time,
+    )
+
+    assert result.candidate is not None
+    assert result.candidate.model_expiry == pytest.approx(5.3)
+    assert result.candidate.expiry_minutes == pytest.approx(4.77)
+    assert result.candidate.expiry_minutes not in {4, 5, 6}
 
 
 def test_duplicate_stage_is_blocked_without_candidate() -> None:
@@ -159,7 +254,7 @@ def test_duplicate_stage_is_blocked_without_candidate() -> None:
     assert result.distribution_allowed is False
 
 
-def test_rejected_fsm_result_is_blocked() -> None:
+def test_rejected_fsm_result_is_blocked_before_execution_time_matters() -> None:
     decision = _decision("OPEN_NOW", 100)
     persistent = advance_persistent_fsm(default_fsm_state(), decision, now_ts=101)
 
@@ -168,6 +263,7 @@ def test_rejected_fsm_result_is_blocked() -> None:
         decision,
         buffer_mode="MEDIUM",
         created_ts=102,
+        execution_time=_execution(decision),
     )
 
     assert result.outcome == "BLOCKED"
@@ -178,6 +274,7 @@ def test_rejected_fsm_result_is_blocked() -> None:
 def test_incomplete_real_signal_event_evidence_stays_not_emitted() -> None:
     complete = _decision("OPEN_NOW", 160)
     persistent = advance_persistent_fsm(_after_pre(), complete, now_ts=161)
+    execution_time = _execution(complete)
     incomplete = replace(complete, time=replace(complete.time, model_expiry=None))
 
     result = prepare_signal_execution(
@@ -185,6 +282,7 @@ def test_incomplete_real_signal_event_evidence_stays_not_emitted() -> None:
         incomplete,
         buffer_mode="MEDIUM",
         created_ts=162,
+        execution_time=execution_time,
     )
 
     assert result.outcome == "NOT_EMITTED"
@@ -194,7 +292,7 @@ def test_incomplete_real_signal_event_evidence_stays_not_emitted() -> None:
     assert result.distribution_allowed is False
 
 
-def test_execution_trace_is_canonical_and_contains_no_delivery_side_effects() -> None:
+def test_execution_trace_exposes_timing_authority_and_no_delivery_side_effects() -> None:
     decision = _decision("OPEN_NOW", 160)
     persistent = advance_persistent_fsm(_after_pre(), decision, now_ts=161)
     result = prepare_signal_execution(
@@ -202,6 +300,7 @@ def test_execution_trace_is_canonical_and_contains_no_delivery_side_effects() ->
         decision,
         buffer_mode="LARGE",
         created_ts=162,
+        execution_time=_execution(decision),
     )
     trace = result.to_dict()
     event_data = result.to_event_data()
@@ -210,6 +309,10 @@ def test_execution_trace_is_canonical_and_contains_no_delivery_side_effects() ->
     assert trace["setup_correlation_id"] == "cycle-160"
     assert trace["candidate"]["distribution_enabled"] is False
     assert trace["distribution_allowed"] is True
+    assert trace["execution_time_available"] is True
+    assert trace["execution_calibration_source"] == "test-calibration-v1"
     assert event_data["execution_phase"] == "PRE_DISTRIBUTION"
     assert event_data["execution_outcome"] == "DEFERRED"
     assert event_data["destination_state"] == "PRE_DISTRIBUTION_UNRESOLVED"
+    assert event_data["execution_time_available"] is True
+    assert event_data["execution_calibration_source"] == "test-calibration-v1"
