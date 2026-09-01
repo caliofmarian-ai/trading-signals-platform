@@ -87,7 +87,12 @@ def _extract_execution_expiry(event: Dict[str, Any]) -> float:
             if alias != expiry:
                 raise ValueError("expiry_minutes conflicts with governed OPEN_NOW expiry")
     else:
-        expiry = _require_number(event.get("expiry_minutes"), "expiry_minutes")
+        try:
+            expiry = _require_number(event.get("expiry_minutes"), "expiry_minutes")
+        except ValueError as exc:
+            if "must be a number" in str(exc):
+                raise ValueError("expiry_minutes must be an integer or fractional number") from exc
+            raise
 
     if expiry <= 0:
         raise ValueError("execution expiry must be positive")
