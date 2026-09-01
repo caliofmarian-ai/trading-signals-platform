@@ -1,22 +1,22 @@
-"""Canonical trader-facing expiry derivation in shadow mode.
+"""Canonical trader-facing expiry derivation in shadow/live-safe form.
 
-The active canon defines the relationships but does not provide calibrated
-values for the CONFIRM tolerance or OPEN_NOW pressure adjustment.  Callers
-must therefore supply those values explicitly; this module never invents
-defaults and never authorizes a signal or broker action.
+Model Time is internal strategy evidence. Trader-facing expiry may be produced
+only by this execution layer and only from an explicit, governed calibration.
+No caller may invent an expiry from ``model_expiry`` by copying or rounding it.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
+import os
 from typing import Optional
 
 from .decision_object import DecisionObject
 from .fsm_decision_adapter import FSMInterpretation
 
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 
 
 class ExecutionModelError(ValueError):
@@ -72,12 +72,12 @@ def _is_contract(value: object, name: str, fields: tuple[str, ...]) -> bool:
     return type(value).__name__ == name and all(hasattr(value, field) for field in fields)
 
 
-def _unavailable(decision: DecisionObject, fsm: FSMInterpretation, explanation: str) -> ExecutionTimeResult:
+def _unavailable_for_stage(decision: DecisionObject, stage: str, explanation: str) -> ExecutionTimeResult:
     return ExecutionTimeResult(
         schema_version=SCHEMA_VERSION,
         symbol=decision.setup.symbol,
         cycle_id=decision.setup.cycle_id,
-        fsm_outcome=fsm.outcome,
+        fsm_outcome=stage,
         available=False,
         confirm_expiry_min_minutes=None,
         confirm_expiry_max_minutes=None,
@@ -88,34 +88,78 @@ def _unavailable(decision: DecisionObject, fsm: FSMInterpretation, explanation: 
     )
 
 
-def derive_execution_time(
+def load_execution_calibration_from_env() -> Optional[ExecutionCalibration]:
+    """Load one explicit execution-time calibration from environment variables.
+
+    No numeric defaults are provided. When all variables are absent the result is
+    ``None`` and downstream OPEN_NOW must fail closed. A partial calibration is
+    an error rather than an invitation to fill missing values implicitly.
+    """
+
+    names = {
+        "confirm_delta_minutes": "EXECUTION_CONFIRM_DELTA_MINUTES",
+        "pressure_bias": "EXECUTION_PRESSURE_BIAS",
+        "minimum_expiry_minutes": "EXECUTION_MIN_EXPIRY_MINUTES",
+        "maximum_expiry_minutes": "EXECUTION_MAX_EXPIRY_MINUTES",
+        "source": "EXECUTION_CALIBRATION_SOURCE",
+    }
+    raw = {field: os.getenv(env_name, "").strip() for field, env_name in names.items()}
+    present = {field for field, value in raw.items() if value}
+    if not present:
+        return None
+    if present != set(names):
+        missing = sorted(names[field] for field in set(names) - present)
+        raise ExecutionModelError(
+            "execution calibration is partial; missing: " + ", ".join(missing)
+        )
+    try:
+        return ExecutionCalibration(
+            confirm_delta_minutes=float(raw["confirm_delta_minutes"]),
+            pressure_bias=float(raw["pressure_bias"]),
+            minimum_expiry_minutes=float(raw["minimum_expiry_minutes"]),
+            maximum_expiry_minutes=float(raw["maximum_expiry_minutes"]),
+            source=raw["source"],
+        )
+    except ValueError as exc:
+        raise ExecutionModelError("execution calibration values must be numeric") from exc
+
+
+def derive_execution_time_for_stage(
     decision: DecisionObject,
-    fsm: FSMInterpretation,
+    stage: str,
     calibration: Optional[ExecutionCalibration] = None,
 ) -> ExecutionTimeResult:
-    """Derive expiry evidence without activating downstream execution."""
+    """Derive governed execution time for an already accepted lifecycle stage.
+
+    This helper is intentionally stage-oriented so the persistent FSM execution
+    gate can use the same mathematics as the strategy's shadow interpretation.
+    It never authorizes signal handoff or broker execution.
+    """
 
     if not isinstance(decision, DecisionObject) and not _is_contract(
         decision, "DecisionObject", ("setup", "time")
     ):
         raise TypeError("decision must be a DecisionObject")
-    if not isinstance(fsm, FSMInterpretation) and not _is_contract(
-        fsm, "FSMInterpretation", ("symbol", "cycle_id", "outcome", "signal_handoff_ready")
-    ):
-        raise TypeError("fsm must be an FSMInterpretation")
-    if decision.setup.symbol != fsm.symbol or decision.setup.cycle_id != fsm.cycle_id:
-        raise ExecutionModelError("decision and FSM evidence must describe the same cycle")
-    if fsm.signal_handoff_ready:
-        raise ExecutionModelError("shadow FSM must not authorize signal handoff")
+    normalized_stage = str(stage or "").strip().upper()
+    if normalized_stage not in {"PRE", "CONFIRM", "OPEN_NOW", "NO_SIGNAL", "REJECT"}:
+        raise ExecutionModelError(f"unsupported execution stage: {stage!r}")
 
-    if fsm.outcome not in {"CONFIRM", "OPEN_NOW"}:
-        return _unavailable(decision, fsm, "This FSM outcome does not expose trader-facing expiry.")
-    if decision.time.time_state != "READY" or decision.time.model_expiry is None:
-        return _unavailable(decision, fsm, "Ready Model Time evidence is required for execution expiry.")
-    if calibration is None:
-        return _unavailable(
+    if normalized_stage not in {"CONFIRM", "OPEN_NOW"}:
+        return _unavailable_for_stage(
             decision,
-            fsm,
+            normalized_stage,
+            "This lifecycle stage does not expose trader-facing expiry.",
+        )
+    if decision.time.time_state != "READY" or decision.time.model_expiry is None:
+        return _unavailable_for_stage(
+            decision,
+            normalized_stage,
+            "Ready Model Time evidence is required for execution expiry.",
+        )
+    if calibration is None:
+        return _unavailable_for_stage(
+            decision,
+            normalized_stage,
             "Execution calibration is absent; canonical expiry values are not invented.",
         )
 
@@ -123,13 +167,19 @@ def derive_execution_time(
     if not isfinite(model_expiry) or model_expiry <= 0:
         raise ExecutionModelError("model_expiry must be finite and positive")
 
-    confirm_min = max(calibration.minimum_expiry_minutes, model_expiry - calibration.confirm_delta_minutes)
-    confirm_max = min(calibration.maximum_expiry_minutes, model_expiry + calibration.confirm_delta_minutes)
+    confirm_min = max(
+        calibration.minimum_expiry_minutes,
+        model_expiry - calibration.confirm_delta_minutes,
+    )
+    confirm_max = min(
+        calibration.maximum_expiry_minutes,
+        model_expiry + calibration.confirm_delta_minutes,
+    )
     if confirm_min > confirm_max:
         raise ExecutionModelError("calibration produces an empty CONFIRM expiry interval")
 
     open_now = None
-    if fsm.outcome == "OPEN_NOW":
+    if normalized_stage == "OPEN_NOW":
         candidate = model_expiry * (1 - calibration.pressure_bias)
         if not confirm_min <= candidate <= confirm_max:
             raise ExecutionModelError("OPEN_NOW expiry violates the canonical consistency rule")
@@ -139,7 +189,7 @@ def derive_execution_time(
         schema_version=SCHEMA_VERSION,
         symbol=decision.setup.symbol,
         cycle_id=decision.setup.cycle_id,
-        fsm_outcome=fsm.outcome,
+        fsm_outcome=normalized_stage,
         available=True,
         confirm_expiry_min_minutes=confirm_min,
         confirm_expiry_max_minutes=confirm_max,
@@ -152,3 +202,26 @@ def derive_execution_time(
             else "A calibrated CONFIRM expiry interval was derived from Model Time."
         ),
     )
+
+
+def derive_execution_time(
+    decision: DecisionObject,
+    fsm: FSMInterpretation,
+    calibration: Optional[ExecutionCalibration] = None,
+) -> ExecutionTimeResult:
+    """Derive expiry evidence from the strategy's shadow FSM interpretation."""
+
+    if not isinstance(decision, DecisionObject) and not _is_contract(
+        decision, "DecisionObject", ("setup", "time")
+    ):
+        raise TypeError("decision must be a DecisionObject")
+    if not isinstance(fsm, FSMInterpretation) and not _is_contract(
+        fsm, "FSMInterpretation", ("symbol", "cycle_id", "outcome", "signal_handoff_ready")
+    ):
+        raise TypeError("fsm must be a FSMInterpretation")
+    if decision.setup.symbol != fsm.symbol or decision.setup.cycle_id != fsm.cycle_id:
+        raise ExecutionModelError("decision and FSM evidence must describe the same cycle")
+    if fsm.signal_handoff_ready:
+        raise ExecutionModelError("shadow FSM must not authorize signal handoff")
+
+    return derive_execution_time_for_stage(decision, fsm.outcome, calibration)
