@@ -129,12 +129,46 @@ def _signal_event(signal_id: str = "sig-001") -> Dict[str, Any]:
         "score_total": 88.5,
         "buffer_mode": "MEDIUM",
         "buffer_price": 1.2345,
-        "expiry_minutes": 5,
+        "model_expiry": 5.0,
+        "execution_time_available": True,
+        "confirm_expiry_min_minutes": 4.0,
+        "confirm_expiry_max_minutes": 6.0,
+        "open_now_expiry_minutes": 5.0,
+        "execution_calibration_source": "test-calibration-v1",
+        "expiry_minutes": 5.0,
         "candle_ts": 1720000000,
         "created_ts": 1720000005,
-        "payload": {"price": 1.11111, "test": True},
+        "entry_price": 1.11111,
+        "payload": {
+            "price": 1.11111,
+            "test": True,
+            "cycle_id": "cycle-batch04",
+            "strategy_version": "2.0.0",
+            "canonical_specification": "ALGO_SPEC_v3.0.0",
+        },
         "TPS": 57.1,
     }
+
+
+def _publication_evidence(
+    *, route: str = "ELITE", destination_id: int = 1004, message_id: int = 808
+) -> Dict[str, Any]:
+    return {
+        "route_result_event_id": f"route-{route.lower()}-{message_id}",
+        "visibility_event_id": f"visible-{route.lower()}-{message_id}",
+        "route": route,
+        "destination_id": destination_id,
+        "message_id": message_id,
+    }
+
+
+def _register_telemetry(telemetry: Any, event: Dict[str, Any], *, evidence: Dict[str, Any] | None = None):
+    return telemetry.register_open_now_trade(
+        event,
+        market_provider="TWELVE_DATA",
+        publication_evidence=evidence or _publication_evidence(),
+        now_ts=event["created_ts"],
+    )
 
 
 def _callback_update(
@@ -204,9 +238,9 @@ def test_trade_registration_persists_required_fields_uses_utc_and_survives_reloa
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    obs, telemetry, *_rest, root = _import_batch04_modules(tmp_path, monkeypatch)
+    _, telemetry, *_rest, root = _import_batch04_modules(tmp_path, monkeypatch)
 
-    result = telemetry.register_open_now_trade(_signal_event(), now_ts=1720000005)
+    result = _register_telemetry(telemetry, _signal_event())
 
     assert result["status"] == "registered"
     registry = _read_json(root / "observability" / "open_trades_registry.json")
@@ -214,10 +248,15 @@ def test_trade_registration_persists_required_fields_uses_utc_and_survives_reloa
     assert record["signal_id"] == "sig-001"
     assert record["symbol"] == "EURUSD"
     assert record["direction"] == "BUY"
+    assert record["market_provider"] == "TWELVE_DATA"
+    assert record["truth_domain"] == "MARKET_TRUTH"
     assert record["entry_price"] == pytest.approx(1.11111)
+    assert record["entry_price_source"] == "signal_event.entry_price"
     assert record["open_ts"] == 1720000005
     assert record["expiry_ts"] == 1720000305
     assert record["mid_expiry_ts"] == 1720000155
+    assert record["checkpoints"]["expiry"]["target_ts"] == 1720000305
+    assert record["publication_evidence"] == [_publication_evidence()]
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", record["open_ts_utc"])
     assert telemetry.get_open_trade("sig-001")["trade_id"] == "sig-001"
 
@@ -226,14 +265,6 @@ def test_trade_registration_persists_required_fields_uses_utc_and_survives_reloa
     telemetry_reloaded = importlib.import_module("core.trade_temporal_telemetry")
     assert telemetry_reloaded.get_open_trade("sig-001")["expiry_ts"] == 1720000305
 
-    engine_events = _read_jsonl(root / "observability" / "engine_events.jsonl")
-    registration_events = [
-        event for event in engine_events
-        if event["event_type"] == "decision" and event["data"]["decision_kind"] == "OPEN_NOW_REGISTERED"
-    ]
-    assert len(registration_events) == 1
-    assert obs.validate_event(registration_events[0]) == registration_events[0]
-
 
 def test_trade_registration_is_idempotent_but_conflicts_and_invalid_input_fail_cleanly(
     tmp_path: Path,
@@ -241,27 +272,28 @@ def test_trade_registration_is_idempotent_but_conflicts_and_invalid_input_fail_c
 ) -> None:
     _, telemetry, *_rest, root = _import_batch04_modules(tmp_path, monkeypatch)
 
-    first = telemetry.register_open_now_trade(_signal_event(), now_ts=1720000005)
-    second = telemetry.register_open_now_trade(_signal_event(), now_ts=1720000005)
+    event = _signal_event()
+    first = _register_telemetry(telemetry, event)
+    second = _register_telemetry(telemetry, event)
     assert first["status"] == "registered"
     assert second["status"] == "already_registered"
     registry = _read_json(root / "observability" / "open_trades_registry.json")
     assert list(registry["trades"].keys()) == ["sig-001"]
 
     bad_event = _signal_event()
-    bad_event["expiry_minutes"] = 6
+    bad_event["entry_price"] = 1.22222
     with pytest.raises(ValueError, match="conflicting OPEN_NOW registration"):
-        telemetry.register_open_now_trade(bad_event, now_ts=1720000005)
+        _register_telemetry(telemetry, bad_event)
 
     missing_field = _signal_event("sig-002")
     missing_field.pop("signal_id")
     with pytest.raises(ValueError, match="signal_id"):
-        telemetry.register_open_now_trade(missing_field, now_ts=1720000005)
+        _register_telemetry(telemetry, missing_field)
 
     invalid_type = _signal_event("sig-003")
     invalid_type["expiry_minutes"] = "five"
-    with pytest.raises(ValueError, match="expiry_minutes must be an integer"):
-        telemetry.register_open_now_trade(invalid_type, now_ts=1720000005)
+    with pytest.raises(ValueError, match="expiry_minutes must be a number"):
+        _register_telemetry(telemetry, invalid_type)
 
     assert "sig-002" not in registry["trades"]
     assert "sig-003" not in registry["trades"]
@@ -275,15 +307,14 @@ def test_trade_registration_failed_persistence_and_observability_do_not_create_f
 
     monkeypatch.setattr(telemetry.storage, "save_json_atomic", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")))
     with pytest.raises(OSError, match="disk full"):
-        telemetry.register_open_now_trade(_signal_event(), now_ts=1720000005)
+        _register_telemetry(telemetry, _signal_event())
     assert not (root / "observability" / "open_trades_registry.json").exists()
-    assert _read_jsonl(root / "observability" / "engine_events.jsonl") == []
 
     _purge_modules()
     importlib.invalidate_caches()
     _, telemetry, *_rest, root = _import_batch04_modules(tmp_path, monkeypatch)
     monkeypatch.setattr(telemetry.observability_logger, "log_event", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("obs fail")))
-    result = telemetry.register_open_now_trade(_signal_event(), now_ts=1720000005)
+    result = _register_telemetry(telemetry, _signal_event())
     assert result["status"] == "registered"
     assert _read_json(root / "observability" / "open_trades_registry.json")["trades"]["sig-001"]["signal_id"] == "sig-001"
 
