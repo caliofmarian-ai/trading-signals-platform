@@ -37,24 +37,15 @@ def _load_env_file() -> None:
 
     for raw_line in env_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
-
-        if not line:
+        if not line or line.startswith("#") or "=" not in line:
             continue
-        if line.startswith("#"):
-            continue
-        if "=" not in line:
-            continue
-
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-
         if key and key not in os.environ:
             os.environ[key] = value
 
 
-# IMPORTANT:
-# Load env BEFORE importing modules that read os.getenv() at import time.
 _load_env_file()
 
 from runtime.engine_loop import ENGINE_TICK_SECONDS, start_engine
@@ -89,10 +80,8 @@ def _should_start_telegram_thread() -> bool:
             source={"module": "system_boot", "function": "_should_start_telegram_thread"},
         )
         return False
-
     if os.getenv("TELEGRAM_BOT_TOKEN", "").strip():
         return True
-
     log_warning(
         warn_type="telegram_token_missing",
         message="Telegram polling disabled because TELEGRAM_BOT_TOKEN is missing",
@@ -114,29 +103,25 @@ def _mark_graceful_shutdown() -> None:
     try:
         snapshot_manager.create_snapshot()
     except Exception as exc:
-        log_event(
-            {
-                "event_type": "error",
-                "severity": "ERROR",
-                "error_type": "SNAPSHOT_CREATE_FAILED",
-                "message": "Failed to create shutdown snapshot",
-                "context": {"error": str(exc)},
-                "source": {"module": "system_boot", "function": "_mark_graceful_shutdown"},
-            }
-        )
+        log_event({
+            "event_type": "error",
+            "severity": "ERROR",
+            "error_type": "SNAPSHOT_CREATE_FAILED",
+            "message": "Failed to create shutdown snapshot",
+            "context": {"error": str(exc)},
+            "source": {"module": "system_boot", "function": "_mark_graceful_shutdown"},
+        })
     try:
         mark_graceful_shutdown()
     except Exception as exc:
-        log_event(
-            {
-                "event_type": "error",
-                "severity": "ERROR",
-                "error_type": "GRACEFUL_SHUTDOWN_MARK_FAILED",
-                "message": "Failed to persist graceful shutdown marker",
-                "context": {"error": str(exc)},
-                "source": {"module": "system_boot", "function": "_mark_graceful_shutdown"},
-            }
-        )
+        log_event({
+            "event_type": "error",
+            "severity": "ERROR",
+            "error_type": "GRACEFUL_SHUTDOWN_MARK_FAILED",
+            "message": "Failed to persist graceful shutdown marker",
+            "context": {"error": str(exc)},
+            "source": {"module": "system_boot", "function": "_mark_graceful_shutdown"},
+        })
     try:
         runtime_status.write_status("stopped", "BinaryBot runtime stopped gracefully")
     except Exception:
@@ -145,13 +130,11 @@ def _mark_graceful_shutdown() -> None:
 
 
 def _handle_shutdown_signal(signum, _frame) -> None:
-    log_event(
-        build_event(
-            "engine_stop",
-            {"message": f"BinaryBot runtime stopping on signal {signum}"},
-            source={"module": "system_boot", "function": "_handle_shutdown_signal"},
-        )
-    )
+    log_event(build_event(
+        "engine_stop",
+        {"message": f"BinaryBot runtime stopping on signal {signum}"},
+        source={"module": "system_boot", "function": "_handle_shutdown_signal"},
+    ))
     _mark_graceful_shutdown()
     raise SystemExit(0)
 
@@ -164,11 +147,6 @@ def _register_shutdown_hooks() -> None:
 
 def start_system() -> None:
     _register_shutdown_hooks()
-
-    # Guard against stale restart_guard.lock (or any other startup state error)
-    # preventing the bot from starting. A TimeoutError from a stale lock file
-    # is treated as a degraded-but-safe startup: the restart counter is unknown
-    # but we must not leave Telegram polling permanently blocked.
     try:
         start_info = record_start()
     except Exception as start_exc:
@@ -201,20 +179,18 @@ def start_system() -> None:
     )
     if start_info["recovery_required"]:
         send_control_notification("RECOVERY STARTED", "BinaryBot recovery bootstrap started.")
-    log_event(
-        build_event(
-            "recovery_started",
-            {
-                "message": "BinaryBot recovery bootstrap started",
-                "restart_count": int(start_info["restart_count"]),
-                "window_seconds": int(start_info["window_seconds"]),
-                "max_restarts": int(start_info["max_restarts"]),
-                "previous_shutdown_kind": str(start_info["previous_shutdown_kind"]),
-                "recovery_required": bool(start_info["recovery_required"]),
-            },
-            source={"module": "system_boot", "function": "start_system"},
-        )
-    )
+    log_event(build_event(
+        "recovery_started",
+        {
+            "message": "BinaryBot recovery bootstrap started",
+            "restart_count": int(start_info["restart_count"]),
+            "window_seconds": int(start_info["window_seconds"]),
+            "max_restarts": int(start_info["max_restarts"]),
+            "previous_shutdown_kind": str(start_info["previous_shutdown_kind"]),
+            "recovery_required": bool(start_info["recovery_required"]),
+        },
+        source={"module": "system_boot", "function": "start_system"},
+    ))
 
     try:
         fsm_runtime.load_state()
@@ -227,29 +203,25 @@ def start_system() -> None:
             recovery_required=bool(start_info["recovery_required"]),
             recovery_state="UNSAFE_BLOCKED",
         )
-        log_event(
-            build_event(
-                "recovery_completed",
-                {
-                    "message": "BinaryBot recovery bootstrap failed",
-                    "result": "UNSAFE_BLOCKED",
-                    "blocked": True,
-                    "restart_count": int(start_info["restart_count"]),
-                    "blocked_operations": ["engine_start", "telegram_poll", "scheduler_loop", "telemetry_market_loop"],
-                },
-                source={"module": "system_boot", "function": "start_system"},
-            )
-        )
-        log_event(
+        log_event(build_event(
+            "recovery_completed",
             {
-                "event_type": "error",
-                "severity": "CRITICAL",
-                "error_type": "RECOVERY_VALIDATION_FAILED",
-                "message": "Runtime state validation failed during boot",
-                "context": {"error": str(exc)},
-                "source": {"module": "system_boot", "function": "start_system"},
-            }
-        )
+                "message": "BinaryBot recovery bootstrap failed",
+                "result": "UNSAFE_BLOCKED",
+                "blocked": True,
+                "restart_count": int(start_info["restart_count"]),
+                "blocked_operations": ["engine_start", "telegram_poll", "scheduler_loop", "telemetry_market_loop"],
+            },
+            source={"module": "system_boot", "function": "start_system"},
+        ))
+        log_event({
+            "event_type": "error",
+            "severity": "CRITICAL",
+            "error_type": "RECOVERY_VALIDATION_FAILED",
+            "message": "Runtime state validation failed during boot",
+            "context": {"error": str(exc)},
+            "source": {"module": "system_boot", "function": "start_system"},
+        })
         send_control_notification("STARTUP BLOCKED", "Runtime state validation failed during boot.")
         return
 
@@ -261,19 +233,17 @@ def start_system() -> None:
             recovery_required=bool(start_info["recovery_required"]),
             recovery_state="UNSAFE_BLOCKED",
         )
-        log_event(
-            build_event(
-                "recovery_completed",
-                {
-                    "message": "BinaryBot boot blocked by restart guard",
-                    "result": "UNSAFE_BLOCKED",
-                    "blocked": True,
-                    "restart_count": int(start_info["restart_count"]),
-                    "blocked_operations": ["engine_start", "telegram_poll", "scheduler_loop", "telemetry_market_loop"],
-                },
-                source={"module": "system_boot", "function": "start_system"},
-            )
-        )
+        log_event(build_event(
+            "recovery_completed",
+            {
+                "message": "BinaryBot boot blocked by restart guard",
+                "result": "UNSAFE_BLOCKED",
+                "blocked": True,
+                "restart_count": int(start_info["restart_count"]),
+                "blocked_operations": ["engine_start", "telegram_poll", "scheduler_loop", "telemetry_market_loop"],
+            },
+            source={"module": "system_boot", "function": "start_system"},
+        ))
         log_event({
             "event_type": "error",
             "severity": "CRITICAL",
@@ -289,24 +259,18 @@ def start_system() -> None:
         send_control_notification("STARTUP BLOCKED", "Runtime boot blocked by restart guard.")
         return
 
-    log_event(
-        build_event(
-            "recovery_completed",
-            {
-                "message": "BinaryBot recovery bootstrap completed",
-                "result": "DEGRADED_SAFE" if start_info["recovery_required"] else "HEALTHY",
-                "blocked": False,
-                "restart_count": int(start_info["restart_count"]),
-                "blocked_operations": [],
-            },
-            source={"module": "system_boot", "function": "start_system"},
-        )
-    )
-
-    log_event({
-        "event_type": "engine_start",
-        "message": "BinaryBot runtime starting",
-    })
+    log_event(build_event(
+        "recovery_completed",
+        {
+            "message": "BinaryBot recovery bootstrap completed",
+            "result": "DEGRADED_SAFE" if start_info["recovery_required"] else "HEALTHY",
+            "blocked": False,
+            "restart_count": int(start_info["restart_count"]),
+            "blocked_operations": [],
+        },
+        source={"module": "system_boot", "function": "start_system"},
+    ))
+    log_event({"event_type": "engine_start", "message": "BinaryBot runtime starting"})
 
     ui_init = telegram_app_nav.initialize_active_ui_state()
     log_warning(
@@ -326,14 +290,8 @@ def start_system() -> None:
 
     engine_thread = threading.Thread(target=start_engine, daemon=True)
     scheduler_thread = threading.Thread(target=scheduler_loop, daemon=True)
-    telemetry_thread = threading.Thread(
-        target=telemetry_market_loop,
-        name="trade-temporal-telemetry",
-        daemon=True,
-    )
+    telemetry_thread = threading.Thread(target=telemetry_market_loop, daemon=True)
 
-    # Start objective telemetry before the strategy engine so persisted pending
-    # records can perform restart recovery before new runtime decisions flow.
     telemetry_thread.start()
     engine_thread.start()
     telegram_enabled = _should_start_telegram_thread()
