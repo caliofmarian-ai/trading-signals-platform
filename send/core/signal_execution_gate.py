@@ -1,8 +1,8 @@
 """Governed post-FSM execution gate for Binary Strategy V2.
 
-This module consumes explicit FSMExecutionHandoff truth. It can construct
+This module consumes explicit persistent FSM truth. It can construct
 PRE/CONFIRM/OPEN_NOW SignalEvent candidates only after exact-stage acceptance.
-A valid exact-stage candidate may authorize Distribution Router invocation.
+OPEN_NOW additionally requires an available, governed Execution Time result.
 The pre-distribution checkpoint remains DEFERRED and can never claim EMITTED.
 """
 
@@ -12,6 +12,11 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from .decision_object import ACTIONABLE_DECISION_KINDS, DecisionObject
+from .execution_model import (
+    ExecutionModelError,
+    derive_execution_time_for_stage,
+    load_execution_calibration_from_env,
+)
 from .signal_event import SignalEvent, SignalEventUnavailable, build_signal_event
 from .v2_fsm_orchestrator import PersistentFSMResult
 
@@ -101,6 +106,11 @@ class SignalExecutionGateResult:
             "stage_handoff_ready": self.stage_handoff_ready,
             "trade_execution_ready": self.trade_execution_ready,
             "signal_event_available": self.signal_event_available,
+            "execution_time_available": (
+                self.candidate.execution_time_available
+                if self.candidate is not None
+                else False
+            ),
             "destination_state": self.destination_state,
             "candidate_schema_version": self.candidate.schema_version if self.candidate is not None else None,
         }
@@ -204,10 +214,36 @@ def prepare_signal_execution(
         )
 
     try:
+        calibration = load_execution_calibration_from_env()
+        execution_time = derive_execution_time_for_stage(
+            decision,
+            decision.kind,
+            calibration,
+        )
+    except ExecutionModelError as exc:
+        return _base_result(
+            persistent_fsm,
+            decision,
+            created_ts=created_ts,
+            outcome="BLOCKED",
+            reason=f"EXECUTION_TIME_INVALID:{exc}",
+        )
+
+    if decision.kind == "OPEN_NOW" and not execution_time.available:
+        return _base_result(
+            persistent_fsm,
+            decision,
+            created_ts=created_ts,
+            outcome="BLOCKED",
+            reason=f"EXECUTION_TIME_UNAVAILABLE:{execution_time.explanation}",
+        )
+
+    try:
         candidate = build_signal_event(
             decision,
             buffer_mode=buffer_mode,
             created_ts=created_ts,
+            execution_time=execution_time,
         )
     except SignalEventUnavailable as exc:
         return _base_result(
