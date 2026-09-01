@@ -41,3 +41,7 @@ jobs:
       - name: Run Telegram admin regression tests
         run: |
           python -m pytest -q tests/telegram_admin_ui_restoration/test_admin_ui_restoration.py
+
+      - name: Run full repository regression suite
+        run: |
+          python -m pytest -q
