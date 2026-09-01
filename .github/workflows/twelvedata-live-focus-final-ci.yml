@@ -1,5 +1,6 @@
 name: Twelve Data Live Focus Final CI
 
+# final validation rerun after live-focus test alignment
 on:
   push:
     branches:
