@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from math import isfinite
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -11,7 +10,9 @@ from core import storage
 
 
 TELEMETRY_VERSION = "3.0.0"
+TELEMETRY_SPECIFICATION = "TRADE_TEMPORAL_TELEMETRY_SPEC_v3.0.0"
 LABEL_DERIVATION_VERSION = "market-expiry-direction-v1"
+CHECKPOINT_SELECTION_POLICY = "FIRST_REAL_OBSERVATION_AT_OR_AFTER_TARGET"
 OPEN_TRADES_REGISTRY_JSON = storage.root_path("observability", "open_trades_registry.json")
 FINALIZED_TELEMETRY_JSONL = storage.root_path("observability", "trade_temporal_telemetry.jsonl")
 
@@ -44,6 +45,13 @@ def _require_str(value: Any, field_name: str) -> str:
     return cleaned
 
 
+def _optional_text(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
 def _require_int(value: Any, field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{field_name} must be an integer")
@@ -64,10 +72,6 @@ def _require_positive_number(value: Any, field_name: str) -> float:
     if result <= 0:
         raise ValueError(f"{field_name} must be positive")
     return result
-
-
-def _require_expiry_minutes(value: Any) -> float:
-    return _require_positive_number(value, "expiry_minutes")
 
 
 def _extract_entry_price(event: Mapping[str, Any]) -> tuple[float, str]:
@@ -111,6 +115,7 @@ def _empty_checkpoint(target_ts: float) -> Dict[str, Any]:
         "observed_ts_utc": None,
         "observation_lag_seconds": None,
         "provider": None,
+        "directional_result": None,
         "gap_reason": None,
         "gap_detected_ts": None,
         "gap_detected_ts_utc": None,
@@ -118,14 +123,22 @@ def _empty_checkpoint(target_ts: float) -> Dict[str, Any]:
 
 
 def _normalize_publication_evidence(value: Mapping[str, Any]) -> Dict[str, Any]:
-    route_result_event_id = _require_str(value.get("route_result_event_id"), "publication_evidence.route_result_event_id")
-    visibility_event_id = _require_str(value.get("visibility_event_id"), "publication_evidence.visibility_event_id")
+    if not isinstance(value, Mapping):
+        raise ValueError("publication_evidence must be a mapping")
+    route_result_event_id = _require_str(
+        value.get("route_result_event_id"), "publication_evidence.route_result_event_id"
+    )
+    visibility_event_id = _require_str(
+        value.get("visibility_event_id"), "publication_evidence.visibility_event_id"
+    )
     route = _require_str(value.get("route"), "publication_evidence.route")
     destination_id = value.get("destination_id")
     if isinstance(destination_id, bool) or not isinstance(destination_id, int):
         raise ValueError("publication_evidence.destination_id must be an integer")
     message_id = value.get("message_id")
-    if message_id is not None and (isinstance(message_id, bool) or not isinstance(message_id, int)):
+    if message_id is not None and (
+        isinstance(message_id, bool) or not isinstance(message_id, int)
+    ):
         raise ValueError("publication_evidence.message_id must be an integer or null")
     return {
         "route_result_event_id": route_result_event_id,
@@ -133,6 +146,22 @@ def _normalize_publication_evidence(value: Mapping[str, Any]) -> Dict[str, Any]:
         "route": route,
         "destination_id": int(destination_id),
         "message_id": message_id,
+    }
+
+
+def _lineage_snapshot(event: Mapping[str, Any], payload: Mapping[str, Any]) -> Dict[str, Any]:
+    linkage = {
+        "setup_correlation_id": _optional_text(payload.get("cycle_id")),
+        "decision_id": _optional_text(event.get("decision_id") or payload.get("decision_id")),
+        "decision_audit_id": _optional_text(event.get("decision_audit_id") or payload.get("decision_audit_id")),
+        "execution_attempt_id": _optional_text(event.get("execution_attempt_id") or payload.get("execution_attempt_id")),
+        "fsm_transition_id": _optional_text(event.get("fsm_transition_id") or payload.get("fsm_transition_id")),
+    }
+    missing = [key for key, value in linkage.items() if value is None]
+    return {
+        **linkage,
+        "linkage_state": "COMPLETE" if not missing else "DEGRADED",
+        "missing_linkage_fields": missing,
     }
 
 
@@ -155,8 +184,10 @@ def _build_trade_record(
     if event.get("execution_time_available") is not True:
         raise ValueError("OPEN_NOW telemetry requires governed Execution Time")
 
-    expiry_minutes = _require_expiry_minutes(event.get("open_now_expiry_minutes"))
-    compatibility_expiry = _require_expiry_minutes(event.get("expiry_minutes"))
+    expiry_minutes = _require_positive_number(
+        event.get("open_now_expiry_minutes"), "open_now_expiry_minutes"
+    )
+    compatibility_expiry = _require_positive_number(event.get("expiry_minutes"), "expiry_minutes")
     if compatibility_expiry != expiry_minutes:
         raise ValueError("telemetry expiry must equal governed OPEN_NOW Execution Time")
 
@@ -167,6 +198,7 @@ def _build_trade_record(
     provider = _require_str(market_provider, "market_provider").upper()
     publication = _normalize_publication_evidence(publication_evidence)
     payload = dict(event.get("payload")) if isinstance(event.get("payload"), Mapping) else {}
+    lineage = _lineage_snapshot(event, payload)
 
     expiry_duration_seconds = expiry_minutes * 60.0
     targets = _checkpoint_targets(float(open_ts), expiry_duration_seconds)
@@ -196,6 +228,8 @@ def _build_trade_record(
         "post_5m_ts": targets["post_5m"],
         "candle_ts": candle_ts,
         "candle_ts_utc": _iso_utc(candle_ts),
+        "feature_cutoff_ts": candle_ts,
+        "feature_cutoff_ts_utc": _iso_utc(candle_ts),
         "score_total": score_total,
         "TPS": _extract_tps(event),
         "buffer_mode": _require_str(event.get("buffer_mode"), "buffer_mode"),
@@ -203,11 +237,15 @@ def _build_trade_record(
         "execution_calibration_source": _require_str(
             event.get("execution_calibration_source"), "execution_calibration_source"
         ),
+        "strategy_version": _optional_text(payload.get("strategy_version")),
+        "canonical_specification": _optional_text(payload.get("canonical_specification")),
+        **lineage,
         "telemetry_status": "OPEN",
         "truth_domain": "MARKET_TRUTH",
         "result_at_expiry": None,
         "mid_expiry_price": None,
         "mid_direction_correct": None,
+        "mid_directional_delta": None,
         "expiry_price": None,
         "post_1m_price": None,
         "post_3m_price": None,
@@ -216,11 +254,15 @@ def _build_trade_record(
         "would_win_at_plus_3m": None,
         "would_win_at_plus_5m": None,
         "post_expiry_recovery": None,
+        "label_observation_ts": None,
+        "label_observation_ts_utc": None,
         "label_derivation_version": LABEL_DERIVATION_VERSION,
+        "checkpoint_selection_policy": CHECKPOINT_SELECTION_POLICY,
         "checkpoints": checkpoints,
         "publication_evidence": [publication],
         "pre_trade_snapshot": payload,
         "telemetry_version": TELEMETRY_VERSION,
+        "telemetry_specification": TELEMETRY_SPECIFICATION,
         "registered_ts": int(now_ts),
         "registered_ts_utc": _iso_utc(now_ts),
         "finalized_ts": None,
@@ -230,20 +272,28 @@ def _build_trade_record(
 
 
 def _immutable_fields(record: Mapping[str, Any]) -> Dict[str, Any]:
-    return {
-        "signal_id": record.get("signal_id"),
-        "symbol": record.get("symbol"),
-        "timeframe": record.get("timeframe"),
-        "direction": record.get("direction"),
-        "market_provider": record.get("market_provider"),
-        "entry_price": record.get("entry_price"),
-        "open_ts": record.get("open_ts"),
-        "expiry_minutes": record.get("expiry_minutes"),
-        "expiry_duration_seconds": record.get("expiry_duration_seconds"),
-        "expiry_ts": record.get("expiry_ts"),
-        "candle_ts": record.get("candle_ts"),
-        "execution_calibration_source": record.get("execution_calibration_source"),
-    }
+    keys = (
+        "signal_id",
+        "symbol",
+        "timeframe",
+        "direction",
+        "market_provider",
+        "entry_price",
+        "open_ts",
+        "expiry_minutes",
+        "expiry_duration_seconds",
+        "expiry_ts",
+        "candle_ts",
+        "score_total",
+        "TPS",
+        "buffer_mode",
+        "buffer_price",
+        "execution_calibration_source",
+        "strategy_version",
+        "canonical_specification",
+        "pre_trade_snapshot",
+    )
+    return {key: record.get(key) for key in keys}
 
 
 def _normalize_record(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -254,7 +304,6 @@ def _normalize_record(record: Dict[str, Any]) -> Dict[str, Any]:
             targets = _checkpoint_targets(open_ts, duration)
         except (KeyError, TypeError, ValueError):
             return record
-        checkpoints: Dict[str, Any] = {}
         legacy_price_fields = {
             "mid_expiry": "mid_expiry_price",
             "expiry": "expiry_price",
@@ -262,6 +311,7 @@ def _normalize_record(record: Dict[str, Any]) -> Dict[str, Any]:
             "post_3m": "post_3m_price",
             "post_5m": "post_5m_price",
         }
+        checkpoints: Dict[str, Any] = {}
         for key in CHECKPOINT_KEYS:
             checkpoint = _empty_checkpoint(targets[key])
             legacy_value = record.get(legacy_price_fields[key])
@@ -273,6 +323,8 @@ def _normalize_record(record: Dict[str, Any]) -> Dict[str, Any]:
         record["checkpoints"] = checkpoints
     record.setdefault("truth_domain", "MARKET_TRUTH")
     record.setdefault("label_derivation_version", LABEL_DERIVATION_VERSION)
+    record.setdefault("checkpoint_selection_policy", CHECKPOINT_SELECTION_POLICY)
+    record.setdefault("telemetry_specification", TELEMETRY_SPECIFICATION)
     record.setdefault("publication_evidence", [])
     record.setdefault("finalized_record_written", False)
     return record
@@ -314,11 +366,11 @@ def _all_checkpoints_resolved(record: Mapping[str, Any]) -> bool:
     checkpoints = record.get("checkpoints")
     if not isinstance(checkpoints, Mapping):
         return False
-    for key in CHECKPOINT_KEYS:
-        checkpoint = checkpoints.get(key)
-        if not isinstance(checkpoint, Mapping) or checkpoint.get("state") == "PENDING":
-            return False
-    return True
+    return all(
+        isinstance(checkpoints.get(key), Mapping)
+        and checkpoints[key].get("state") != "PENDING"
+        for key in CHECKPOINT_KEYS
+    )
 
 
 def _has_evidence_gap(record: Mapping[str, Any]) -> bool:
@@ -326,8 +378,8 @@ def _has_evidence_gap(record: Mapping[str, Any]) -> bool:
     if not isinstance(checkpoints, Mapping):
         return True
     return any(
-        isinstance(checkpoints.get(key), Mapping)
-        and checkpoints[key].get("state") != "OBSERVED"
+        not isinstance(checkpoints.get(key), Mapping)
+        or checkpoints[key].get("state") != "OBSERVED"
         for key in CHECKPOINT_KEYS
     )
 
@@ -336,20 +388,17 @@ def _derive_recovery(record: Dict[str, Any]) -> None:
     expiry_result = record.get("result_at_expiry")
     checkpoints = record.get("checkpoints") if isinstance(record.get("checkpoints"), dict) else {}
     if expiry_result == "WIN":
-        observed_post_results: List[str] = []
-        for key, _flag_field, _recovery_name in _POST_CHECKPOINTS:
-            checkpoint = checkpoints.get(key)
-            if isinstance(checkpoint, dict) and checkpoint.get("state") == "OBSERVED":
-                result = checkpoint.get("directional_result")
-                if isinstance(result, str):
-                    observed_post_results.append(result)
-        if observed_post_results and any(result != "WIN" for result in observed_post_results):
+        observed = [
+            checkpoints[key].get("directional_result")
+            for key, _flag, _name in _POST_CHECKPOINTS
+            if isinstance(checkpoints.get(key), dict)
+            and checkpoints[key].get("state") == "OBSERVED"
+        ]
+        if observed and any(result != "WIN" for result in observed):
             record["post_expiry_recovery"] = "EARLY_CORRECT_THEN_REVERSED"
         return
-
     if expiry_result not in {"LOSS", "DRAW"}:
         return
-
     for key, flag_field, recovery_name in _POST_CHECKPOINTS:
         checkpoint = checkpoints.get(key)
         if isinstance(checkpoint, dict) and checkpoint.get("state") == "OBSERVED":
@@ -360,7 +409,7 @@ def _derive_recovery(record: Dict[str, Any]) -> None:
     if all(
         isinstance(checkpoints.get(key), dict)
         and checkpoints[key].get("state") == "OBSERVED"
-        for key, _flag, _recovery in _POST_CHECKPOINTS
+        for key, _flag, _name in _POST_CHECKPOINTS
     ):
         record["post_expiry_recovery"] = "NO_RECOVERY"
 
@@ -393,7 +442,6 @@ def _maybe_finalize(record: Dict[str, Any], now_ts: int) -> bool:
         if not record.get("finalized_record_written"):
             _append_finalized_once(record)
             record["finalized_record_written"] = True
-            return True
         return False
     if not _all_checkpoints_resolved(record):
         return False
@@ -408,20 +456,22 @@ def _maybe_finalize(record: Dict[str, Any], now_ts: int) -> bool:
     return True
 
 
-def _log_telemetry_event(event_type: str, record: Mapping[str, Any], data: Mapping[str, Any]) -> None:
+def _warn_gap(record: Mapping[str, Any], checkpoint_key: str, reason: str) -> None:
     try:
-        event = observability_logger.build_event(
-            event_type,
-            dict(data),
-            source={"module": "trade_temporal_telemetry", "function": event_type},
-            correlation={
+        checkpoint = record.get("checkpoints", {}).get(checkpoint_key, {})
+        observability_logger.log_warning(
+            warn_type="TRADE_TEMPORAL_TELEMETRY_EVIDENCE_GAP",
+            message="Objective market telemetry checkpoint is unavailable and remains unfilled",
+            context={
                 "signal_id": record.get("signal_id"),
                 "symbol": record.get("symbol"),
-                "timeframe": record.get("timeframe"),
-                "stage": "OPEN_NOW",
+                "checkpoint": checkpoint_key,
+                "target_ts": checkpoint.get("target_ts"),
+                "market_provider": record.get("market_provider"),
+                "reason": reason,
             },
+            source={"module": "trade_temporal_telemetry", "function": "_warn_gap"},
         )
-        observability_logger.log_event(event)
     except Exception:
         pass
 
@@ -485,7 +535,6 @@ def register_open_now_trade(
         registry = _load_registry()
         trades = registry.setdefault("trades", {})
         existing = trades.get(record["trade_id"])
-
         if existing is not None:
             if not isinstance(existing, dict):
                 raise ValueError(f"existing telemetry record for {record['trade_id']} is invalid")
@@ -506,18 +555,6 @@ def register_open_now_trade(
             _save_registry(registry)
             status = "registered"
             output = dict(record)
-
-    _log_telemetry_event(
-        "trade_telemetry_registered",
-        output,
-        {
-            "telemetry_status": output.get("telemetry_status"),
-            "market_provider": output.get("market_provider"),
-            "expiry_minutes": output.get("expiry_minutes"),
-            "publication_evidence_ref": publication.get("route_result_event_id"),
-            "registration_result": status,
-        },
-    )
     return {"status": status, "trade_id": record["trade_id"], "record": output}
 
 
@@ -539,21 +576,19 @@ def _observe_checkpoint(
     if observed_ts < target_ts:
         return False
 
-    checkpoint.update(
-        {
-            "state": "OBSERVED",
-            "price": price,
-            "observed_ts": observed_ts,
-            "observed_ts_utc": _iso_utc(observed_ts),
-            "observation_lag_seconds": observed_ts - target_ts,
-            "provider": provider,
-            "gap_reason": None,
-            "gap_detected_ts": None,
-            "gap_detected_ts_utc": None,
-        }
-    )
     directional_result = _market_result(record["direction"], float(record["entry_price"]), price)
-    checkpoint["directional_result"] = directional_result
+    checkpoint.update({
+        "state": "OBSERVED",
+        "price": price,
+        "observed_ts": observed_ts,
+        "observed_ts_utc": _iso_utc(observed_ts),
+        "observation_lag_seconds": observed_ts - target_ts,
+        "provider": provider,
+        "directional_result": directional_result,
+        "gap_reason": None,
+        "gap_detected_ts": None,
+        "gap_detected_ts_utc": None,
+    })
 
     if key == "mid_expiry":
         record["mid_expiry_price"] = price
@@ -594,7 +629,7 @@ def observe_market_sample(sample: Mapping[str, Any], *, now_ts: Optional[int] = 
     price = _require_positive_number(sample.get("price"), "sample.price")
     observed_ts = _require_positive_number(sample.get("observed_ts"), "sample.observed_ts")
     resolved_now = int(now_ts if now_ts is not None else observed_ts)
-    changed_records: List[Tuple[Dict[str, Any], List[str], bool]] = []
+    changed_records: List[Tuple[Dict[str, Any], bool]] = []
 
     with storage.with_lock("trade_temporal_telemetry"):
         registry = _load_registry()
@@ -609,58 +644,110 @@ def observe_market_sample(sample: Mapping[str, Any], *, now_ts: Optional[int] = 
                 continue
             if str(record.get("symbol") or "").upper() != symbol.upper():
                 continue
-            observed_keys: List[str] = []
+            observed_any = False
             for key in CHECKPOINT_KEYS:
-                if _observe_checkpoint(
+                observed_any = _observe_checkpoint(
                     record,
                     key,
                     price=price,
                     observed_ts=observed_ts,
                     provider=provider,
-                ):
-                    observed_keys.append(key)
-            if not observed_keys:
+                ) or observed_any
+            if not observed_any:
                 continue
             finalized = _maybe_finalize(record, resolved_now)
             trades[trade_id] = record
-            changed_records.append((dict(record), observed_keys, finalized))
+            changed_records.append((dict(record), finalized))
             changed = True
         if changed:
             _save_registry(registry)
 
-    for record, observed_keys, finalized in changed_records:
-        for key in observed_keys:
-            checkpoint = record["checkpoints"][key]
-            _log_telemetry_event(
-                "trade_telemetry_checkpoint",
-                record,
-                {
-                    "checkpoint": key,
-                    "target_ts": checkpoint.get("target_ts"),
-                    "observed_ts": checkpoint.get("observed_ts"),
-                    "observation_lag_seconds": checkpoint.get("observation_lag_seconds"),
-                    "price": checkpoint.get("price"),
-                    "market_provider": provider,
-                    "directional_result": checkpoint.get("directional_result"),
-                },
-            )
-        if finalized:
-            _log_telemetry_event(
-                "trade_telemetry_finalized",
-                record,
-                {
-                    "telemetry_status": record.get("telemetry_status"),
-                    "result_at_expiry": record.get("result_at_expiry"),
-                    "post_expiry_recovery": record.get("post_expiry_recovery"),
-                    "truth_domain": "MARKET_TRUTH",
-                },
-            )
     return {
         "provider": provider,
         "symbol": symbol,
         "observed_ts": observed_ts,
         "updated_trade_count": len(changed_records),
-        "finalized_trade_count": sum(1 for _record, _keys, finalized in changed_records if finalized),
+        "finalized_trade_count": sum(1 for _record, finalized in changed_records if finalized),
+    }
+
+
+def _mark_checkpoint_gap(
+    record: Dict[str, Any], checkpoint_key: str, *, reason: str, now_ts: int
+) -> bool:
+    checkpoints = record.get("checkpoints")
+    if not isinstance(checkpoints, dict):
+        return False
+    checkpoint = checkpoints.get(checkpoint_key)
+    if not isinstance(checkpoint, dict) or checkpoint.get("state") != "PENDING":
+        return False
+    checkpoint.update({
+        "state": "EVIDENCE_GAP",
+        "price": None,
+        "observed_ts": None,
+        "observed_ts_utc": None,
+        "observation_lag_seconds": None,
+        "provider": None,
+        "directional_result": None,
+        "gap_reason": reason,
+        "gap_detected_ts": int(now_ts),
+        "gap_detected_ts_utc": _iso_utc(now_ts),
+    })
+    record["telemetry_status"] = "COLLECTING_WITH_GAPS"
+    return True
+
+
+def mark_due_provider_mismatch(active_provider: str, *, now_ts: int) -> Dict[str, Any]:
+    provider = _require_str(active_provider, "active_provider").upper()
+    resolved_now = _require_int(now_ts, "now_ts")
+    gaps: List[Tuple[Dict[str, Any], List[str], bool]] = []
+
+    with storage.with_lock("trade_temporal_telemetry"):
+        registry = _load_registry()
+        trades = registry.get("trades") or {}
+        changed = False
+        for trade_id, record in trades.items():
+            if not isinstance(record, dict):
+                continue
+            if record.get("telemetry_status") in {"FINALIZED", "INCOMPLETE_MARKET_EVIDENCE"}:
+                continue
+            registered_provider = str(record.get("market_provider") or "").upper()
+            if not registered_provider or registered_provider == provider:
+                continue
+            checkpoints = record.get("checkpoints")
+            if not isinstance(checkpoints, dict):
+                continue
+            gap_keys: List[str] = []
+            for key in CHECKPOINT_KEYS:
+                checkpoint = checkpoints.get(key)
+                if not isinstance(checkpoint, dict) or checkpoint.get("state") != "PENDING":
+                    continue
+                target_ts = checkpoint.get("target_ts")
+                if isinstance(target_ts, bool) or not isinstance(target_ts, (int, float)):
+                    continue
+                if float(target_ts) > resolved_now:
+                    continue
+                if _mark_checkpoint_gap(
+                    record,
+                    key,
+                    reason="ACTIVE_PROVIDER_CHANGED_BEFORE_CHECKPOINT",
+                    now_ts=resolved_now,
+                ):
+                    gap_keys.append(key)
+                    changed = True
+            if gap_keys:
+                finalized = _maybe_finalize(record, resolved_now)
+                trades[trade_id] = record
+                gaps.append((dict(record), gap_keys, finalized))
+        if changed:
+            _save_registry(registry)
+
+    for record, gap_keys, _finalized in gaps:
+        for key in gap_keys:
+            _warn_gap(record, key, "ACTIVE_PROVIDER_CHANGED_BEFORE_CHECKPOINT")
+    return {
+        "affected_trade_count": len(gaps),
+        "evidence_gap_count": sum(len(keys) for _record, keys, _finalized in gaps),
+        "finalized_incomplete_count": sum(1 for _record, _keys, finalized in gaps if finalized),
     }
 
 
@@ -692,46 +779,24 @@ def recover_after_restart(now_ts: int) -> Dict[str, Any]:
                     continue
                 if float(target_ts) >= resolved_now:
                     continue
-                checkpoint.update(
-                    {
-                        "state": "EVIDENCE_GAP",
-                        "gap_reason": "RUNTIME_RESTART_MISSED_CHECKPOINT",
-                        "gap_detected_ts": resolved_now,
-                        "gap_detected_ts_utc": _iso_utc(resolved_now),
-                    }
-                )
-                gap_keys.append(key)
-                changed = True
+                if _mark_checkpoint_gap(
+                    record,
+                    key,
+                    reason="RUNTIME_RESTART_MISSED_CHECKPOINT",
+                    now_ts=resolved_now,
+                ):
+                    gap_keys.append(key)
+                    changed = True
             if gap_keys:
-                record["telemetry_status"] = "COLLECTING_WITH_GAPS"
                 finalized = _maybe_finalize(record, resolved_now)
                 trades[trade_id] = record
                 gaps.append((dict(record), gap_keys, finalized))
         if changed:
             _save_registry(registry)
 
-    for record, gap_keys, finalized in gaps:
+    for record, gap_keys, _finalized in gaps:
         for key in gap_keys:
-            _log_telemetry_event(
-                "trade_telemetry_evidence_gap",
-                record,
-                {
-                    "checkpoint": key,
-                    "reason": "RUNTIME_RESTART_MISSED_CHECKPOINT",
-                    "target_ts": record["checkpoints"][key].get("target_ts"),
-                },
-            )
-        if finalized:
-            _log_telemetry_event(
-                "trade_telemetry_finalized",
-                record,
-                {
-                    "telemetry_status": record.get("telemetry_status"),
-                    "result_at_expiry": record.get("result_at_expiry"),
-                    "post_expiry_recovery": record.get("post_expiry_recovery"),
-                    "truth_domain": "MARKET_TRUTH",
-                },
-            )
+            _warn_gap(record, key, "RUNTIME_RESTART_MISSED_CHECKPOINT")
     return {
         "recovered_trade_count": len(gaps),
         "evidence_gap_count": sum(len(keys) for _record, keys, _finalized in gaps),
