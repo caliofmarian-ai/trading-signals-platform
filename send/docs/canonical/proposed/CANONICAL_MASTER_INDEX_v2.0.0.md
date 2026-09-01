@@ -66,6 +66,7 @@ Master Index itself and supporting governance records are documented separately 
 
 | Policy/Architecture Authority | Implementation/Mechanics Authority |
 |---|---|
+| `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md` | `SYSTEM_INVARIANTS_v3.0.0.md`, `MODULE_INTERFACE_SPEC_v3.0.0.md`, `TEST_PLAN_v3.0.0.md` as bounded system-level contracts |
 | `OBSERVABILITY_SPEC_v3.0.0.md` | `OBSERVABILITY_LOGGING_SPEC_v3.0.0.md`, `EVENT_SCHEMA_SPEC_v3.0.0.md` |
 | `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md` | `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md` |
 | `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md` | ALGO/DecisionObject/Telemetry consumers; Signal Engine is downstream only |
@@ -161,9 +162,9 @@ Governed by `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md`.
 
 | # | Canonical filename | Version | Intended status | Domain | Authority role |
 |---:|---|---:|---|---|---|
-| 35 | `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md` | 2.0.0 | Active Canonical | System architecture | Overall architecture-map authority |
+| 35 | `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md` | 3.0.0 | Active Canonical | System architecture | Overall architecture-map authority aligned with Trade Physics and staged execution |
 | 36 | `MODULE_INTERFACE_SPEC_v3.0.0.md` | 3.0.0 | Active Canonical | Module interfaces | Cross-module ownership/contracts authority |
-| 37 | `SYSTEM_INVARIANTS_v2.0.0.md` | 2.0.0 | Active Canonical | System invariants | Non-negotiable system rules |
+| 37 | `SYSTEM_INVARIANTS_v3.0.0.md` | 3.0.0 | Active Canonical | System invariants | Non-negotiable Trade Physics/execution/system rules |
 | 38 | `FAILURE_RECOVERY_SPEC_v2.0.0.md` | 2.0.0 | Active Canonical | Failure recovery | Failure/recovery authority |
 | 39 | `DEPLOYMENT_PROTOCOL_v2.0.0.md` | 2.0.0 | Active Canonical | Deployment | Deployment/safety authority |
 
@@ -173,7 +174,7 @@ Governed by `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md`.
 |---:|---|---:|---|---|---|
 | 40 | `SECURITY_MODEL_v2.0.0.md` | 2.0.0 | Active Canonical | Security | Security/threat authority |
 | 41 | `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md` | 2.0.0 | Active Canonical | Governance/change control | Approval/version/change authority |
-| 42 | `TEST_PLAN_v2.0.0.md` | 2.0.0 | Active Canonical | Testing/validation | Test/validation authority |
+| 42 | `TEST_PLAN_v3.0.0.md` | 3.0.0 | Active Canonical | Testing/validation | Validation authority for Trade Physics, exact-stage execution, observability and regression |
 | 43 | `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md` | 1.0.0 | Active Canonical | Human comprehension / operational memory | Mandatory self-explaining control-surface and operational-memory authority |
 
 ---
@@ -261,6 +262,9 @@ Upon successful atomic promotion, at minimum these active versions are intended 
 - `AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v2.0.0.md`
 - `STRATEGY_PARAMETER_CONTROL_SPEC_v2.0.0.md`
 - `MODULE_INTERFACE_SPEC_v2.0.0.md`
+- `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md`
+- `SYSTEM_INVARIANTS_v2.0.0.md`
+- `TEST_PLAN_v2.0.0.md`
 - `CANON_BATCH_EVALUATION_v2.0.0.md` as supporting record where promoted replacement is used.
 
 Superseded files remain historically preserved; they do not remain competing active truth.
@@ -284,6 +288,7 @@ This index is not promotion-ready until all pass:
 
 - [ ] 43 intended functional specifications are present/verified;
 - [ ] every changed structural specification is complete/self-contained;
+- [ ] `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md`, `SYSTEM_INVARIANTS_v3.0.0.md`, and `TEST_PLAN_v3.0.0.md` pass cross-document audit;
 - [ ] no duplicate same-domain/same-version proposed authority remains;
 - [ ] all reference-only repairs are enumerated;
 - [ ] supersession/move plan is explicit;
@@ -300,7 +305,7 @@ This index is not promotion-ready until all pass:
 | Version | Date | Description |
 |---|---|---|
 | 1.0.0 | 2026-07-12 | Initial authoritative reconciled index. |
-| 2.0.0 | 2026-09-01 | Proposed structural inventory update for staged execution + current-scope Trade Physics; corrects unique inventory presentation and adds two Trade Physics authorities. |
+| 2.0.0 | 2026-09-01 | Proposed structural inventory update for staged execution + current-scope Trade Physics; corrects unique inventory presentation, adds two Trade Physics authorities, and aligns system architecture/invariants/testing successors. |
 
 ---
 
@@ -308,4 +313,4 @@ This index is not promotion-ready until all pass:
 
 The Master Index is a map of authority, not a mechanism for creating authority by itself.
 
-After promotion, the active canonical graph must contain exactly one current authority per domain, 43 unique functional specifications, explicit Trade Physics ownership, and no active references that require engineers to guess which superseded version governs implementation.
+After promotion, the active canonical graph must contain exactly one current authority per domain, 43 unique functional specifications, explicit Trade Physics ownership, system-level architecture/invariant/test coverage, and no active references that require engineers to guess which superseded version governs implementation.
