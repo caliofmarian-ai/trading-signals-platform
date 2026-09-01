@@ -1,8 +1,9 @@
 """Canonical, deterministic description of the observed market.
 
 This layer calculates market facts only.  It does not score a setup, choose an
-expiry, emit a signal, or execute a trade.  Inputs follow the repository-wide
-newest-first candle contract.
+expiry, emit a signal, or execute a trade. Inputs follow the repository-wide
+newest-first candle contract. Direction-aware movement evidence is derived here
+for the active Time Model and Trade Physics contracts.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import Any, Mapping, Sequence
 from .decision_object import MarketContext
 
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "2.0.0"
 
 
 class MarketModelUnavailable(ValueError):
@@ -124,6 +125,38 @@ def _is_crypto(symbol: str) -> bool:
     return "/" in normalized and normalized.split("/", 1)[0] in crypto_bases
 
 
+def _directional_movement(
+    recent_closes_chronological: Sequence[float], direction: str
+) -> tuple[float, float, float | None]:
+    """Return canonical recency-weighted directional speed, gross speed and flow efficiency."""
+
+    if len(recent_closes_chronological) != 21:
+        raise MarketModelUnavailable("directional movement requires exactly 21 M1 closes")
+    if direction not in {"BUY", "SELL"}:
+        raise MarketModelUnavailable("directional movement requires BUY or SELL")
+
+    directional_total = 0.0
+    gross_total = 0.0
+    weighted_time = 0.0
+    for index in range(1, 21):
+        weight = float(index)
+        delta = recent_closes_chronological[index] - recent_closes_chronological[index - 1]
+        gross_delta = abs(delta)
+        directional_delta = max(delta, 0.0) if direction == "BUY" else max(-delta, 0.0)
+        directional_total += weight * directional_delta
+        gross_total += weight * gross_delta
+        weighted_time += weight
+
+    directional_effective_speed = directional_total / weighted_time
+    weighted_gross_speed = gross_total / weighted_time
+    flow_efficiency = (
+        directional_effective_speed / weighted_gross_speed
+        if weighted_gross_speed > 0
+        else None
+    )
+    return directional_effective_speed, weighted_gross_speed, flow_efficiency
+
+
 def evaluate_market(
     candles_m1: Sequence[Mapping[str, Any]],
     candles_m5: Sequence[Mapping[str, Any]],
@@ -224,6 +257,9 @@ def evaluate_market(
 
     recent_closes = [float(candle["close"]) for candle in reversed(candles_m1[:21])]
     price_speed = sum(abs(recent_closes[index] - recent_closes[index - 1]) for index in range(1, 21)) / 20
+    directional_effective_speed, weighted_gross_speed, flow_efficiency = _directional_movement(
+        recent_closes, direction
+    )
 
     context = MarketContext(
         latest_price=latest_price,
@@ -233,6 +269,9 @@ def evaluate_market(
         volatility_state=volatility_state,
         noise_context="UNSTABLE" if noise_reasons else "STABLE",
         target_distance=None,
+        directional_effective_speed=directional_effective_speed,
+        weighted_gross_speed=weighted_gross_speed,
+        flow_efficiency=flow_efficiency,
     )
     return MarketModelResult(
         schema_version=SCHEMA_VERSION,

@@ -90,6 +90,7 @@ def test_decision_serializes_to_plain_json_ready_evidence(canonical_runtime_root
     assert isinstance(payload["score"]["components"], dict)
     assert isinstance(payload["fsm_inputs"], dict)
     assert isinstance(payload["reject"]["hard_blockers"], list)
+    assert isinstance(payload["score"]["trade_physics"], dict)
 
 
 def test_mixed_cycles_and_directions_are_rejected(canonical_runtime_root: Path) -> None:
@@ -125,10 +126,12 @@ def test_signal_identity_follows_real_opportunity_not_runtime_cycle_id(
     second = assemble_decision(*stack, timeframe="M1", cycle_id="runtime-cycle-b")
     assert first.signal_id == second.signal_id
 
-    later_market = replace(stack[0], evaluated_ts=stack[0].evaluated_ts + 60)
-    later_corridor = replace(stack[1], evaluated_ts=stack[1].evaluated_ts + 60)
-    later_time = replace(stack[2], evaluated_ts=stack[2].evaluated_ts + 60)
-    later_scoring = replace(stack[3], evaluated_ts=stack[3].evaluated_ts + 60)
+    later_ts = stack[0].evaluated_ts + 60
+    later_market = replace(stack[0], evaluated_ts=later_ts)
+    later_corridor = replace(stack[1], evaluated_ts=later_ts)
+    later_time = replace(stack[2], evaluated_ts=later_ts)
+    later_trade_physics = replace(stack[3].trade_physics, evaluated_ts=later_ts)
+    later_scoring = replace(stack[3], evaluated_ts=later_ts, trade_physics=later_trade_physics)
     later = assemble_decision(
         later_market,
         later_corridor,

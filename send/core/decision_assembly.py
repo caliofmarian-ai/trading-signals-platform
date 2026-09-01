@@ -86,6 +86,7 @@ def assemble_decision(
         (corridor.symbol, corridor.evaluated_ts),
         (time.symbol, time.evaluated_ts),
         (scoring.symbol, scoring.evaluated_ts),
+        (scoring.trade_physics.symbol, scoring.trade_physics.evaluated_ts),
     }
     if len(identities) != 1:
         raise DecisionAssemblyUnavailable("all strategy layers must describe the same evaluation")
@@ -100,6 +101,7 @@ def assemble_decision(
     ):
         raise DecisionAssemblyUnavailable("opportunity_signal_id must be non-empty text")
 
+    trade_physics = scoring.trade_physics
     valid_structure = corridor.structure.feasibility_state == "VALID"
     feasible_time = time.temporally_feasible and time.context.time_state == "READY"
     unstable_market = (
@@ -108,8 +110,6 @@ def assemble_decision(
     rejectable = not scoring.eligible
     low_confidence = scoring.context.tier == "BELOW_PRE"
     borderline = scoring.context.tier in {"SCORE_PRE_BAND", "SCORE_CONFIRM_BAND"}
-    # WAIT/PREPARE/CONFIRM are legitimate maturity stages, not degraded
-    # evidence. Strategic hard blockers are represented separately by REJECT.
     degraded_setup = False
 
     blockers = tuple(scoring.hard_blockers)
@@ -128,6 +128,8 @@ def assemble_decision(
         low_confidence=low_confidence,
         rejectable=rejectable,
         borderline=borderline,
+        trade_physics_ready=trade_physics.ready,
+        physically_constrained=trade_physics.physically_constrained,
     )
 
     explanations = (
@@ -135,6 +137,7 @@ def assemble_decision(
         corridor.structure.explanation,
         time.explanation,
         scoring.explanation,
+        trade_physics.explanation,
         "No strategic hard blocker is present." if not blockers else f"Hard blockers: {', '.join(blockers)}.",
         "Corridor time pressure is unavailable until a calibrated canonical formula exists."
         if time.context.corridor_time_pressure is None else
@@ -148,6 +151,9 @@ def assemble_decision(
         "valid_structure": valid_structure,
         "feasible_time": feasible_time,
         "unstable_market": unstable_market,
+        "trade_physics_readiness": trade_physics.readiness_state,
+        "TPS": trade_physics.TPS,
+        "physically_constrained": trade_physics.physically_constrained,
         "hard_blockers": blockers,
     })
     kind = _decision_kind(scoring)

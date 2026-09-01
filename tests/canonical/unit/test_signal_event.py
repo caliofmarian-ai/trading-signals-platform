@@ -33,7 +33,7 @@ def _decision(kind: str = "OPEN_NOW") -> DecisionObject:
     )
 
 
-def test_builds_complete_internal_v2_candidate_without_distribution() -> None:
+def test_builds_complete_internal_v3_candidate_without_distribution() -> None:
     event = build_signal_event(_decision(), buffer_mode="medium", created_ts=1_720_000_002)
 
     assert event.stage == "OPEN_NOW"
@@ -42,7 +42,7 @@ def test_builds_complete_internal_v2_candidate_without_distribution() -> None:
     assert event.expiry_minutes == 5
     assert event.entry_price == pytest.approx(1.11234)
     assert event.distribution_enabled is False
-    assert event.payload["canonical_specification"] == "ALGO_SPEC_v2.0.0"
+    assert event.payload["canonical_specification"] == "ALGO_SPEC_v3.0.0"
 
 
 def test_legacy_buffer_price_is_only_explicit_distance_alias() -> None:

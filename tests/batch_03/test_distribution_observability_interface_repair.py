@@ -214,7 +214,7 @@ def test_load_config_uses_file_values_and_env_override(tmp_path: Path, monkeypat
     cfg = router.load_config()
     assert cfg["limits"]["FREE"] == 9
     assert cfg["admin"]["group_id"] == 6543
-    assert obs.get_event_schema()["schema_version"] == "2.0.0"
+    assert obs.get_event_schema()["schema_version"] == "3.0.0"
 
 
 def test_live_distribution_event_types_build_and_validate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

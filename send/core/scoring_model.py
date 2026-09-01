@@ -1,8 +1,9 @@
 """Canonical transparent strategic scoring model.
 
-Scoring aggregates upstream evidence.  It does not decide FSM state, emit a
-signal, choose execution timing, or place a trade.  Hard blockers remain
-visible even when the arithmetic score is high.
+Scoring aggregates upstream evidence and the deterministic Trade Physics
+submodel. Classical score and TPS remain separate truths. This layer does not
+decide FSM state, emit a signal, choose execution timing, or place a trade.
+Hard blockers remain visible even when either arithmetic score is high.
 """
 
 from __future__ import annotations
@@ -15,9 +16,10 @@ from .decision_object import ScoreContext
 from .market_model import MarketModelResult
 from .sr_corridor_engine import CorridorResult
 from .time_model import TimeModelResult
+from .trade_physics import TradePhysicsResult, evaluate_trade_physics
 
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "2.0.0"
 
 
 class ScoringUnavailable(ValueError):
@@ -56,6 +58,7 @@ class ScoringEvidence:
     structural_room_ratio: float | None
     time_reach_ratio: float | None
     component_maxima: Mapping[str, float]
+    trade_physics_schema_version: str
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,7 @@ class ScoringResult:
     hard_blockers: tuple[str, ...]
     explanation: str
     evidence: ScoringEvidence
+    trade_physics: TradePhysicsResult
 
 
 def _required_mapping(value: Any, name: str) -> Mapping[str, Any]:
@@ -99,7 +103,7 @@ def evaluate_score(
     time: TimeModelResult,
     params: Mapping[str, Any],
 ) -> ScoringResult:
-    """Aggregate canonical upstream evidence using established score math."""
+    """Aggregate classical score and current-scope deterministic Trade Physics."""
 
     identities = {(market.symbol, market.evaluated_ts), (corridor.symbol, corridor.evaluated_ts), (time.symbol, time.evaluated_ts)}
     if len(identities) != 1:
@@ -169,6 +173,7 @@ def evaluate_score(
         "time_feasibility": feasibility_score,
     })
     total = _clamp(sum(components.values()), 0.0, 100.0)
+    trade_physics = evaluate_trade_physics(market, corridor, time)
 
     blockers: list[str] = []
     if market.context.volatility_state != "ACTIVE":
@@ -179,19 +184,24 @@ def evaluate_score(
         blockers.append("STRUCTURE_NOT_VALID")
     if time.context.time_state != "READY" or not time.temporally_feasible:
         blockers.append("TIME_NOT_FEASIBLE")
+    if not trade_physics.ready:
+        blockers.append(f"TRADE_PHYSICS_{trade_physics.readiness_state}")
+    elif trade_physics.physically_constrained:
+        blockers.append("TRADE_PHYSICS_INSUFFICIENT_SPACE")
+
     eligible = not blockers
 
     if not eligible:
         tier = "BLOCKED"
-        explanation = "The arithmetic score is informational only because one or more strategic gates are blocked."
+        explanation = "The arithmetic scores are informational only because one or more strategic gates are blocked."
     elif total >= threshold_open:
-        tier, explanation = "SCORE_OPEN_BAND", "The eligible score reached the configured OPEN band."
+        tier, explanation = "SCORE_OPEN_BAND", "The eligible classical score reached the configured OPEN band."
     elif total >= threshold_confirm:
-        tier, explanation = "SCORE_CONFIRM_BAND", "The eligible score reached the configured CONFIRM band."
+        tier, explanation = "SCORE_CONFIRM_BAND", "The eligible classical score reached the configured CONFIRM band."
     elif total >= threshold_pre:
-        tier, explanation = "SCORE_PRE_BAND", "The eligible score reached the configured PRE band."
+        tier, explanation = "SCORE_PRE_BAND", "The eligible classical score reached the configured PRE band."
     else:
-        tier, explanation = "BELOW_PRE", "The eligible score remains below the configured PRE band."
+        tier, explanation = "BELOW_PRE", "The eligible classical score remains below the configured PRE band."
 
     context = ScoreContext(
         total=total,
@@ -199,6 +209,7 @@ def evaluate_score(
         components=components,
         penalties=FrozenScores({}),
         tier=tier,
+        trade_physics=trade_physics.to_context(),
     )
     return ScoringResult(
         schema_version=SCHEMA_VERSION,
@@ -221,5 +232,7 @@ def evaluate_score(
                 "structure_corridor": 20.0,
                 "time_feasibility": 15.0,
             }),
+            trade_physics_schema_version=trade_physics.schema_version,
         ),
+        trade_physics=trade_physics,
     )

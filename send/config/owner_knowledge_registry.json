@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "registry_id": "owner-knowledge-layer",
-  "human_comprehension_canon": "HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md",
+  "human_comprehension_canon": "HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.1.md",
   "aliases": {
     "audit": "security_audit",
     "decision": "decision_visibility",
@@ -35,8 +35,8 @@
         "Telegram is not a source of strategy truth."
       ],
       "canonical_sources": [
-        "TELEGRAM_UX_v2.0.0.md",
-        "ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md"
+        "TELEGRAM_UX_v2.0.1.md",
+        "ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md"
       ],
       "glossary": [],
       "public": true,
@@ -61,9 +61,9 @@
         "UNKNOWN means sufficient evidence was not available; it must not be read as healthy or failed."
       ],
       "canonical_sources": [
-        "OBSERVABILITY_SPEC_v2.0.0.md",
-        "ADMIN_CONTROL_SPEC_v2.0.0.md",
-        "TELEGRAM_UX_v2.0.0.md"
+        "OBSERVABILITY_SPEC_v3.0.0.md",
+        "ADMIN_CONTROL_SPEC_v2.0.1.md",
+        "TELEGRAM_UX_v2.0.1.md"
       ],
       "glossary": [
         [
@@ -107,8 +107,8 @@
         "A listed command may still require the configured admin context and an explicit permission."
       ],
       "canonical_sources": [
-        "TELEGRAM_UX_v2.0.0.md",
-        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md"
+        "TELEGRAM_UX_v2.0.1.md",
+        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.1.md"
       ],
       "glossary": [],
       "public": true,
@@ -133,10 +133,10 @@
         "Owner authority still acts through governed interfaces and audit rules."
       ],
       "canonical_sources": [
-        "ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md",
-        "ADMIN_CONTROL_SPEC_v2.0.0.md",
-        "ADMIN_TREE_MAP_v2.0.0.md",
-        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md"
+        "ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md",
+        "ADMIN_CONTROL_SPEC_v2.0.1.md",
+        "ADMIN_TREE_MAP_v2.0.1.md",
+        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.1.md"
       ],
       "glossary": [],
       "public": false,
@@ -162,8 +162,8 @@
         "The current page must not imply that unimplemented freeze or recovery controls exist."
       ],
       "canonical_sources": [
-        "ADMIN_CONTROL_SPEC_v2.0.0.md",
-        "ADMIN_OPERATIONS_SPEC_v2.0.0.md"
+        "ADMIN_CONTROL_SPEC_v2.0.1.md",
+        "ADMIN_OPERATIONS_SPEC_v2.0.1.md"
       ],
       "glossary": [],
       "public": false,
@@ -189,9 +189,9 @@
         "Decision count measures observed processing, not successful trades."
       ],
       "canonical_sources": [
-        "SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md",
-        "OBSERVABILITY_SPEC_v2.0.0.md",
-        "ADMIN_OPERATIONS_SPEC_v2.0.0.md"
+        "SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md",
+        "OBSERVABILITY_SPEC_v3.0.0.md",
+        "ADMIN_OPERATIONS_SPEC_v2.0.1.md"
       ],
       "glossary": [
         [
@@ -232,8 +232,8 @@
         "Parameter changes must not rewrite historical decisions or outcomes."
       ],
       "canonical_sources": [
-        "STRATEGY_PARAMETER_CONTROL_SPEC_v2.0.0.md",
-        "ALGO_SPEC_v2.0.0.md"
+        "STRATEGY_PARAMETER_CONTROL_SPEC_v3.0.0.md",
+        "ALGO_SPEC_v3.0.0.md"
       ],
       "glossary": [],
       "public": false,
@@ -261,8 +261,8 @@
         "No strategy can guarantee that every trade will win or produce profit."
       ],
       "canonical_sources": [
-        "ALGO_SPEC_v2.0.0.md",
-        "ADMIN_CONTROL_SPEC_v2.0.0.md"
+        "ALGO_SPEC_v3.0.0.md",
+        "ADMIN_CONTROL_SPEC_v2.0.1.md"
       ],
       "glossary": [
         [
@@ -298,9 +298,9 @@
         "Thresholds do not predict or guarantee profit."
       ],
       "canonical_sources": [
-        "STRATEGY_PARAMETER_CONTROL_SPEC_v2.0.0.md",
-        "ALGO_SPEC_v2.0.0.md",
-        "SYSTEM_INVARIANTS_v2.0.0.md"
+        "STRATEGY_PARAMETER_CONTROL_SPEC_v3.0.0.md",
+        "ALGO_SPEC_v3.0.0.md",
+        "SYSTEM_INVARIANTS_v3.0.0.md"
       ],
       "glossary": [
         [
@@ -340,9 +340,9 @@
         "A failed mandatory structural-space gate cannot be treated as an informal suggestion."
       ],
       "canonical_sources": [
-        "SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md",
-        "ALGO_SPEC_v2.0.0.md",
-        "SYSTEM_INVARIANTS_v2.0.0.md"
+        "SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md",
+        "ALGO_SPEC_v3.0.0.md",
+        "SYSTEM_INVARIANTS_v3.0.0.md"
       ],
       "glossary": [
         [
@@ -374,8 +374,8 @@
         "ATR is a volatility measure, not a direction forecast."
       ],
       "canonical_sources": [
-        "ALGO_SPEC_v2.0.0.md",
-        "SYSTEM_INVARIANTS_v2.0.0.md"
+        "ALGO_SPEC_v3.0.0.md",
+        "SYSTEM_INVARIANTS_v3.0.0.md"
       ],
       "glossary": [
         [
@@ -417,9 +417,9 @@
         "Coverage changes apply prospectively."
       ],
       "canonical_sources": [
-        "ADMIN_CONTROL_SPEC_v2.0.0.md",
-        "CANONICAL_STRATEGY_STACK_v1.0.0.md",
-        "SYSTEM_INVARIANTS_v2.0.0.md"
+        "ADMIN_CONTROL_SPEC_v2.0.1.md",
+        "CANONICAL_STRATEGY_STACK_v2.0.0.md",
+        "SYSTEM_INVARIANTS_v3.0.0.md"
       ],
       "glossary": [],
       "public": false,
@@ -445,9 +445,9 @@
         "Missing evidence must remain unknown; the panel must not invent a reason."
       ],
       "canonical_sources": [
-        "DECISION_AUDIT_SPEC_v2.0.0.md",
-        "TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md",
-        "ADMIN_CONTROL_SPEC_v2.0.0.md"
+        "DECISION_AUDIT_SPEC_v3.0.0.md",
+        "TRADE_TEMPORAL_TELEMETRY_SPEC_v3.0.0.md",
+        "ADMIN_CONTROL_SPEC_v2.0.1.md"
       ],
       "glossary": [
         [
@@ -487,9 +487,9 @@
         "Configured route text is not proof of live end-to-end delivery."
       ],
       "canonical_sources": [
-        "SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md",
-        "SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md",
-        "CHANNEL_CONFIG_SPEC_v2.0.0.md"
+        "SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.1.md",
+        "SIGNAL_DISTRIBUTION_SPEC_v2.0.1.md",
+        "CHANNEL_CONFIG_SPEC_v2.0.1.md"
       ],
       "glossary": [],
       "public": false,
@@ -516,9 +516,9 @@
         "Historical performance does not guarantee future results."
       ],
       "canonical_sources": [
-        "PERFORMANCE_ANALYTICS_SPEC_v2.0.0.md",
-        "OUTCOME_TRACKING_SPEC_v2.0.0.md",
-        "RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v2.0.0.md"
+        "PERFORMANCE_ANALYTICS_SPEC_v3.0.0.md",
+        "OUTCOME_TRACKING_SPEC_v3.0.0.md",
+        "RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v3.0.0.md"
       ],
       "glossary": [],
       "public": false,
@@ -543,9 +543,9 @@
         "No displayed recommendation is approval, canonical change, or profit guarantee."
       ],
       "canonical_sources": [
-        "AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v2.0.0.md",
-        "RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v2.0.0.md",
-        "GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md"
+        "AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v3.0.0.md",
+        "RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v3.0.0.md",
+        "GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md"
       ],
       "glossary": [],
       "public": false,
@@ -570,8 +570,8 @@
         "The surface must not expose other affiliates' private scope or internal strategy truth."
       ],
       "canonical_sources": [
-        "AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.0.md",
-        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md"
+        "AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.1.md",
+        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.1.md"
       ],
       "glossary": [],
       "public": false,
@@ -597,8 +597,8 @@
         "Owner private chat intentionally cannot perform the role-reload mutation."
       ],
       "canonical_sources": [
-        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md",
-        "ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md"
+        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.1.md",
+        "ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md"
       ],
       "glossary": [],
       "public": false,
@@ -625,9 +625,9 @@
         "Only allow-listed paths and sanitized exports may be exposed."
       ],
       "canonical_sources": [
-        "OBSERVABILITY_SPEC_v2.0.0.md",
-        "ADMIN_OPERATIONS_SPEC_v2.0.0.md",
-        "SECURITY_MODEL_v2.0.0.md"
+        "OBSERVABILITY_SPEC_v3.0.0.md",
+        "ADMIN_OPERATIONS_SPEC_v2.0.1.md",
+        "SECURITY_MODEL_v2.0.1.md"
       ],
       "glossary": [],
       "public": false,
@@ -655,8 +655,8 @@
         "Telegram summaries do not replace the complete canonical documents."
       ],
       "canonical_sources": [
-        "CANONICAL_MASTER_INDEX_v1.0.0.md",
-        "GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md"
+        "CANONICAL_MASTER_INDEX_v2.0.0.md",
+        "GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md"
       ],
       "glossary": [],
       "public": false,
@@ -682,9 +682,9 @@
         "A generated audit is a snapshot, not a permanent guarantee of health."
       ],
       "canonical_sources": [
-        "OBSERVABILITY_SPEC_v2.0.0.md",
-        "ADMIN_OPERATIONS_SPEC_v2.0.0.md",
-        "SECURITY_MODEL_v2.0.0.md"
+        "OBSERVABILITY_SPEC_v3.0.0.md",
+        "ADMIN_OPERATIONS_SPEC_v2.0.1.md",
+        "SECURITY_MODEL_v2.0.1.md"
       ],
       "glossary": [],
       "public": false,
@@ -714,9 +714,9 @@
         "Unknown evidence must remain visibly unknown."
       ],
       "canonical_sources": [
-        "OBSERVABILITY_SPEC_v2.0.0.md",
-        "ADMIN_OPERATIONS_SPEC_v2.0.0.md",
-        "SYSTEM_INVARIANTS_v2.0.0.md"
+        "OBSERVABILITY_SPEC_v3.0.0.md",
+        "ADMIN_OPERATIONS_SPEC_v2.0.1.md",
+        "SYSTEM_INVARIANTS_v3.0.0.md"
       ],
       "glossary": [],
       "public": false,
@@ -742,9 +742,9 @@
         "Absence of a displayed event is not proof that an event did not occur unless the canonical evidence contract says so."
       ],
       "canonical_sources": [
-        "SECURITY_MODEL_v2.0.0.md",
-        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md",
-        "ADMIN_OPERATIONS_SPEC_v2.0.0.md"
+        "SECURITY_MODEL_v2.0.1.md",
+        "ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.1.md",
+        "ADMIN_OPERATIONS_SPEC_v2.0.1.md"
       ],
       "glossary": [],
       "public": false,
