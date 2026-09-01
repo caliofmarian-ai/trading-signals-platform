@@ -36,10 +36,9 @@ _REST_REQUEST_LOCK = threading.Lock()
 
 
 def configured_provider() -> str:
-    provider = os.getenv("MARKET_DATA_PROVIDER", "TWELVE_DATA").strip().upper()
-    if provider not in {"TWELVE_DATA", "FINNHUB"}:
-        raise RuntimeError(f"Unsupported MARKET_DATA_PROVIDER: {provider}")
-    return provider
+    from core.market_data_provider_control import get_active_provider
+
+    return get_active_provider()
 
 
 def _twelve_data_streaming_enabled() -> bool:
