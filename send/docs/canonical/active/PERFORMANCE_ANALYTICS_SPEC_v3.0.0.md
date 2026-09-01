@@ -6,7 +6,7 @@ Status: ACTIVE CANONICAL
 Owner: BinaryBot / DROPi Signals  
 Scope: Multi-truth performance analytics, Trade Physics effectiveness, model calibration, drift, segmentation, evidence for research/governance
 
-Supersession intent: `PERFORMANCE_ANALYTICS_SPEC_v2.0.0.md`
+Supersedes: `PERFORMANCE_ANALYTICS_SPEC_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 ---

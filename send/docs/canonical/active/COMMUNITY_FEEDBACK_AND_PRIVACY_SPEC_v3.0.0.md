@@ -7,7 +7,7 @@ Owner: BinaryBot / DROPi Signals
 Supersedes: `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v2.0.0.md`  
 Scope: community/self-reported feedback, member execution experience, private member statistics, optional leaderboard, privacy, and reconciliation with objective/operational truth
 
-Linked proposed/current authorities:
+Linked authorities:
 - `SIGNAL_DISTRIBUTION_SPEC` current promoted successor
 - `CHANNEL_CONFIG_SPEC` current promoted successor
 - `TELEGRAM_UX` current promoted successor

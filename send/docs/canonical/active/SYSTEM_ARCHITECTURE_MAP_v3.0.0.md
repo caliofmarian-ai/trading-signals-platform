@@ -6,7 +6,7 @@ Owner: BinaryBot / DROPi Signals
 Scope: top-level system architecture, layer ownership, current-scope Trade Physics, staged execution and evidence/intelligence flow  
 Supersedes: `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md`  
 
-Linked proposed/current authorities:
+Linked authorities:
 - `CANONICAL_STRATEGY_STACK_v2.0.0.md`
 - `SYSTEM_INVARIANTS_v3.0.0.md`
 - `MODULE_INTERFACE_SPEC_v3.0.0.md`

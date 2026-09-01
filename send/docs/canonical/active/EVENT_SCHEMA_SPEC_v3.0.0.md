@@ -14,8 +14,8 @@ Scope includes:
 - Trade Physics evidence/version lineage;
 - learned-probability identity separation.
 
-Linked proposed/current authorities:
-- Root Strategy Stack successor
+Linked authorities:
+- `CANONICAL_STRATEGY_STACK_v2.0.0.md`
 - `ALGO_SPEC_v3.0.0.md`
 - `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
 - `TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md`

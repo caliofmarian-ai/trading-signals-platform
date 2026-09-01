@@ -6,8 +6,8 @@ Owner: BinaryBot / DROPi Signals
 Scope: operational lifecycle interpretation between DecisionObject and Signal Engine, including exact-stage handoff semantics  
 Supersedes: `FSM_DECISION_ENGINE_SPEC_v1.0.0.md`  
 
-Linked proposed/current authorities:
-- Root Strategy Stack successor
+Linked authorities:
+- `CANONICAL_STRATEGY_STACK_v2.0.0.md`
 - `ALGO_SPEC_v3.0.0.md`
 - `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
 - `DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`

@@ -6,7 +6,7 @@ Status: ACTIVE CANONICAL
 Owner: BinaryBot / DROPi Signals  
 Scope: Evidence-led research, Trade Physics hypothesis/testing/model validation, experiment governance, learning without silent production mutation
 
-Supersession intent: `RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v2.0.0.md`
+Supersedes: `RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 ---

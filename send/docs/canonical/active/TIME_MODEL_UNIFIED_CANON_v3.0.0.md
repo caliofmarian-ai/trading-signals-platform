@@ -6,7 +6,7 @@ Status: ACTIVE CANONICAL
 Owner: BinaryBot / DROPi Signals  
 Scope: Unified Model Time, Execution Time, Telemetry Time, directional-speed time feasibility, Trade Physics time handoff, DecisionObject time contract
 
-Supersession intent: `TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
+Supersedes: `TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 Linked documents:

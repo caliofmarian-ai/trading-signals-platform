@@ -6,7 +6,7 @@ Owner: BinaryBot / DROPi Signals
 Scope: implementation-level structured logging for strategy, Trade Physics, FSM, signal execution, distribution, telemetry, outcome and governance evidence  
 Supersedes: `OBSERVABILITY_LOGGING_SPEC_v2.0.0.md`  
 
-Linked proposed/current authorities:
+Linked authorities:
 - `EVENT_SCHEMA_SPEC_v3.0.0.md`
 - `OBSERVABILITY_SPEC_v3.0.0.md`
 - `ALGO_SPEC_v3.0.0.md`

@@ -6,7 +6,7 @@ Status: ACTIVE CANONICAL
 Owner: BinaryBot / DROPi Signals  
 Scope: Support/resistance, corridor interpretation, directional structural-space truth, Trade Physics structural handoff, pre-Time-Model feasibility
 
-Supersession intent: `SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`
+Supersedes: `SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 Linked documents:

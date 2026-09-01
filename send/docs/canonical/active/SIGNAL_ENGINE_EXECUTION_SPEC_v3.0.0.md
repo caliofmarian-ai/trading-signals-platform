@@ -6,8 +6,8 @@ Owner: BinaryBot / DROPi Signals
 Scope: post-FSM signal execution, SignalEvent candidate construction, execution outcomes, distribution handoff, execution observability, Trade Physics downstream boundary  
 Supersedes: `SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`  
 
-Linked proposed/current authorities:
-- Root Strategy Stack successor
+Linked authorities:
+- `CANONICAL_STRATEGY_STACK_v2.0.0.md`
 - `ALGO_SPEC_v3.0.0.md`
 - `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
 - `TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md`

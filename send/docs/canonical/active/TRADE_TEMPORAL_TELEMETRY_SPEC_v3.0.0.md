@@ -6,8 +6,8 @@ Owner: BinaryBot / DROPi Signals
 Scope: post-executable market truth, temporal checkpoints, Trade Physics feature/outcome lineage  
 Supersedes: `TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md`  
 
-Linked proposed/current authorities:
-- `CANONICAL_STRATEGY_STACK` successor
+Linked authorities:
+- `CANONICAL_STRATEGY_STACK_v2.0.0.md`
 - `ALGO_SPEC_v3.0.0.md`
 - `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
 - `TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md`

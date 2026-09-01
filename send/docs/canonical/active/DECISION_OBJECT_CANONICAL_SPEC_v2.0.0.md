@@ -6,10 +6,10 @@ Status: ACTIVE CANONICAL
 Owner: BinaryBot / DROPi Signals  
 Scope: Official strategic output contract between strategy/scoring and FSM, including complete current Trade Physics evidence
 
-Supersession intent: `DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
+Supersedes: `DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
-Linked proposed/current documents:
+Linked documents:
 - `canonical/active/ALGO_SPEC_v3.0.0.md`
 - `canonical/active/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
 - `canonical/active/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`

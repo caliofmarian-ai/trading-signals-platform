@@ -6,7 +6,7 @@ Status: ACTIVE CANONICAL
 Owner: BinaryBot / DROPi Signals  
 Scope: Governed strategy evolution, Trade Physics/model recommendations, staging, approval, rollback, bounded authority
 
-Supersession intent: `AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v2.0.0.md`
+Supersedes: `AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 ---

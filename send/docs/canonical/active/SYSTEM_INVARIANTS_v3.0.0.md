@@ -6,7 +6,7 @@ Status: ACTIVE CANONICAL
 Owner: BinaryBot / DROPi Signals  
 Supersedes: `SYSTEM_INVARIANTS_v2.0.0.md`  
 
-Linked proposed/current authorities:
+Linked authorities:
 - `CANONICAL_STRATEGY_STACK_v2.0.0.md`
 - `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md`
 - `ALGO_SPEC_v3.0.0.md`

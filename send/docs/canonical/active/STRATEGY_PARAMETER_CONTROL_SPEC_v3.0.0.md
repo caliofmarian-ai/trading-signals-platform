@@ -6,7 +6,7 @@ Status: ACTIVE CANONICAL
 Owner: BinaryBot / DROPi Signals  
 Scope: Governed runtime/experimental strategy parameter control, Trade Physics constants, model authority controls, validation, persistence, rollback
 
-Supersession intent: `STRATEGY_PARAMETER_CONTROL_SPEC_v2.0.0.md`
+Supersedes: `STRATEGY_PARAMETER_CONTROL_SPEC_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 ---

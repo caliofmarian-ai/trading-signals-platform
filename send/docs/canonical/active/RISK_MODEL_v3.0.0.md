@@ -7,7 +7,7 @@ Owner: BinaryBot / DROPi Signals
 Supersedes: `RISK_MODEL_v2.0.0.md`  
 Scope: strategy risk filtering, physical-feasibility protection, instability defense, lifecycle risk constraints and capital-protection discipline
 
-Linked proposed/current authorities:
+Linked authorities:
 - `CANONICAL_STRATEGY_STACK_v2.0.0.md`
 - `ALGO_SPEC_v3.0.0.md`
 - `SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`

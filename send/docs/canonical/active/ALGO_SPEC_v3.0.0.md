@@ -6,7 +6,7 @@ Status: ACTIVE CANONICAL
 Owner: BinaryBot / DROPi Signals  
 Scope: Strategic market model, corridor-first decision pipeline, classical scoring, current Trade Physics integration, DecisionObject production contract
 
-Supersession intent: `ALGO_SPEC_v2.0.0.md`
+Supersedes: `ALGO_SPEC_v2.0.0.md`
 
 Governance basis:
 - `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md`
@@ -14,7 +14,7 @@ Governance basis:
 - Change ID `20260901-TRADE-PHYSICS-01`
 - merged governance PR #78
 
-Linked proposed/current documents:
+Linked documents:
 - `canonical/superseded/CANONICAL_STRATEGY_STACK_v1.0.0.md`
 - `canonical/superseded/TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
 - `canonical/superseded/SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`

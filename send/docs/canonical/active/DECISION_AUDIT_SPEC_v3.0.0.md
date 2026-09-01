@@ -6,7 +6,7 @@ Status: ACTIVE CANONICAL
 Owner: BinaryBot / DROPi Signals  
 Scope: Pre-FSM strategy-decision audit, Trade Physics decision evidence, rejection taxonomy, lifecycle reasoning, downstream correlation
 
-Supersession intent: `DECISION_AUDIT_SPEC_v2.0.0.md`
+Supersedes: `DECISION_AUDIT_SPEC_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 Linked documents:

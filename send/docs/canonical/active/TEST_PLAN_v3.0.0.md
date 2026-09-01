@@ -6,7 +6,7 @@ Owner: BinaryBot / DROPi Signals
 Scope: canonical validation protocol for strategy, Trade Physics, staged execution, evidence, telemetry, learned models and production readiness  
 Supersedes: `TEST_PLAN_v2.0.0.md`  
 
-Linked proposed/current authorities:
+Linked authorities:
 - `SYSTEM_INVARIANTS_v3.0.0.md`
 - `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md`
 - `CANONICAL_STRATEGY_STACK_v2.0.0.md`
