@@ -144,6 +144,22 @@ def test_malformed_permissions_block_startup(
         preflight.run_startup_preflight(require_deployment_inputs=True)
 
 
+def test_railway_runtime_context_infers_strict_deployment_validation(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RAILWAY_READINESS_EVALUATED", "1")
+    _write_json(
+        canonical_runtime_root / "config" / "admin_permissions.json",
+        {"permissions": {"admin.view": "owner"}},
+    )
+
+    preflight = _fresh_preflight(fresh_imports)
+    with pytest.raises(preflight.StartupPreflightError, match="role list"):
+        preflight.run_startup_preflight(require_shadow_mode=False)
+
+
 def test_corrupt_persisted_fsm_state_blocks_startup(
     canonical_runtime_root: Path,
     fresh_imports,
@@ -214,6 +230,12 @@ def test_system_boot_preflight_failure_creates_zero_live_threads(
     assert result is False
     assert created_threads == []
     assert notifications[-1][0] == "STARTUP BLOCKED"
+    assert boot.runtime_status.read_status()["phase"] == "blocked"
+    assert boot.runtime_status.read_status()["startup_preflight_state"] == "UNSAFE_BLOCKED"
+
+    notification_count = len(notifications)
+    boot._mark_graceful_shutdown()
+    assert len(notifications) == notification_count
     assert boot.runtime_status.read_status()["phase"] == "blocked"
     assert boot.runtime_status.read_status()["startup_preflight_state"] == "UNSAFE_BLOCKED"
 
