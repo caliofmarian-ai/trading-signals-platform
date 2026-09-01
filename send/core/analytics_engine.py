@@ -53,11 +53,7 @@ def _member_ref_for_user(user_id: int) -> Optional[str]:
 
 
 def _invalid(path: str, message: str, record: Any) -> Dict[str, Any]:
-    return {
-        "source_path": path,
-        "message": message,
-        "raw_prefix": str(record)[:200],
-    }
+    return {"source_path": path, "message": message, "raw_prefix": str(record)[:200]}
 
 
 def _rate(wins: int, losses: int, *, field_name: str) -> Dict[str, Any]:
@@ -117,6 +113,7 @@ def _load_market_truth(path: str) -> Dict[str, Any]:
             "losses": 0,
             "draws": 0,
             "total": 0,
+            "distinct_signals": 0,
             "decisive_sample": 0,
             "market_win_rate_percent": None,
             "insufficient_sample": True,
@@ -137,6 +134,7 @@ def _load_market_truth(path: str) -> Dict[str, Any]:
         "losses": losses,
         "draws": draws,
         "total": total,
+        "distinct_signals": len(seen),
         "draw_rate_percent": round(draws / total * 100.0, 2) if total else None,
         "excluded_incomplete": excluded_incomplete,
         "duplicate_count": duplicate_count,
@@ -150,12 +148,10 @@ def _load_market_truth(path: str) -> Dict[str, Any]:
 def _community_record_class(record: Dict[str, Any]) -> Optional[str]:
     if record.get("truth_domain") == TRUTH_COMMUNITY or record.get("truth_source") == COMMUNITY_SOURCE:
         return "EXPLICIT"
-    if (
-        record.get("event_type") == "user_outcome_record"
-        and record.get("truth_domain") is None
-        and record.get("truth_source") is None
-    ):
-        return "LEGACY_INFERRED_FROM_EVENT_TYPE"
+    if record.get("truth_domain") is None and record.get("truth_source") is None:
+        # outcomes.jsonl historically stored only ELITE user feedback. Preserve those
+        # rows as COMMUNITY_TRUTH, but make the migration visible in analytics.
+        return "LEGACY_INFERRED_FROM_COMMUNITY_STORE"
     return None
 
 
@@ -166,6 +162,7 @@ def _load_community_truth(path: str, *, user_id: Any = None) -> Dict[str, Any]:
     duplicate_count = 0
     legacy_inferred_count = 0
     seen: set[tuple[str, str]] = set()
+    signals: set[str] = set()
 
     try:
         for record, err in iter_jsonl(path):
@@ -195,7 +192,8 @@ def _load_community_truth(path: str, *, user_id: Any = None) -> Dict[str, Any]:
                 duplicate_count += 1
                 continue
             seen.add(dedup_key)
-            if classification == "LEGACY_INFERRED_FROM_EVENT_TYPE":
+            signals.add(signal_id)
+            if classification == "LEGACY_INFERRED_FROM_COMMUNITY_STORE":
                 legacy_inferred_count += 1
             if outcome == "WIN":
                 wins += 1
@@ -208,14 +206,15 @@ def _load_community_truth(path: str, *, user_id: Any = None) -> Dict[str, Any]:
             "truth_domain": TRUTH_COMMUNITY,
             "truth_source": COMMUNITY_SOURCE,
             "authoritative_for_strategy_performance": False,
-            "migration_policy": "legacy user_outcome_record without truth labels is COMMUNITY_TRUTH only",
+            "migration_policy": "unlabeled legacy rows in the dedicated community store remain COMMUNITY_TRUTH only",
             "no_data": True,
-            "reason": "community_outcomes_file_not_found",
+            "reason": "outcomes_file_not_found",
             "path": path,
             "wins": 0,
             "loses": 0,
             "missed": 0,
             "total": 0,
+            "distinct_signals": 0,
             "decisive_sample": 0,
             "community_win_rate_percent": None,
             "community_missed_rate_percent": None,
@@ -233,13 +232,14 @@ def _load_community_truth(path: str, *, user_id: Any = None) -> Dict[str, Any]:
         "truth_domain": TRUTH_COMMUNITY,
         "truth_source": COMMUNITY_SOURCE,
         "authoritative_for_strategy_performance": False,
-        "migration_policy": "legacy user_outcome_record without truth labels is COMMUNITY_TRUTH only",
+        "migration_policy": "unlabeled legacy rows in the dedicated community store remain COMMUNITY_TRUTH only",
         "no_data": total == 0,
         "path": path,
         "wins": wins,
         "loses": loses,
         "missed": missed,
         "total": total,
+        "distinct_signals": len(signals),
         "community_missed_rate_percent": round(missed / total * 100.0, 2) if total else None,
         "excluded_other_truth": excluded_other_truth,
         "legacy_inferred_count": legacy_inferred_count,
@@ -252,8 +252,12 @@ def _load_community_truth(path: str, *, user_id: Any = None) -> Dict[str, Any]:
 
 
 def _load_outcomes(path: str) -> Dict[str, Any]:
-    """Compatibility name for the community-feedback store only."""
-    return _load_community_truth(path)
+    """Legacy private helper; explicitly returns COMMUNITY_TRUTH only."""
+    result = _load_community_truth(path)
+    result["legacy_compatibility_only"] = True
+    result["win_rate"] = result.get("community_win_rate_percent")
+    result["win_rate_truth_domain"] = TRUTH_COMMUNITY
+    return result
 
 
 def _load_operational_truth(path: str) -> Dict[str, Any]:
@@ -294,6 +298,7 @@ def _load_operational_truth(path: str) -> Dict[str, Any]:
             "loses": 0,
             "missed": 0,
             "total": 0,
+            "distinct_signals": 0,
             "decisive_sample": 0,
             "operational_win_rate_percent": None,
             "execution_rate_percent": None,
@@ -325,6 +330,7 @@ def _load_operational_truth(path: str) -> Dict[str, Any]:
         "loses": loses,
         "missed": missed,
         "total": total,
+        "distinct_signals": len(by_signal),
         "execution_rate_percent": round(executed / total * 100.0, 2) if total else None,
         "missed_rate_percent": round(missed / total * 100.0, 2) if total else None,
         "excluded_other_truth": excluded_other_truth,
@@ -393,6 +399,11 @@ def recompute(now_ts: int) -> Dict[str, Any]:
             "community_excluded_other_truth": community.get("excluded_other_truth", 0),
             "community_legacy_inferred_count": community.get("legacy_inferred_count", 0),
         },
+        # Temporary compatibility counts are explicitly community-vote counts.
+        # No generic top-level win/loss/win_rate is emitted.
+        "total_votes": community.get("total", 0),
+        "signals_tracked": community.get("distinct_signals", 0),
+        "legacy_count_semantics": "COMMUNITY_TRUTH_ONLY",
     }
     storage.save_json_atomic(AGGREGATES_PATH, aggregates)
     return aggregates
