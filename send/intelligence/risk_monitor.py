@@ -1,54 +1,60 @@
-# /opt/binarybot/intelligence/risk_monitor.py
-# BinaryBot — Risk Monitoring Engine
+# send/intelligence/risk_monitor.py
+# BinaryBot — evidence-quality risk monitor
 
 from __future__ import annotations
 
-from typing import Dict, Any
+from typing import Any, Dict
 
 from intelligence import research_engine
 from core import observability_logger
 
 
-LOSS_STREAK_LIMIT = 5
-WIN_RATE_MIN = 40
-
-
 def evaluate_risk() -> Dict[str, Any]:
+    """Evaluate evidence readiness without inventing a performance-risk threshold.
 
+    The former implementation treated a hardcoded 40% win-rate value as a
+    canonical minimum. No such authority is established for this module, so
+    strategy-performance risk remains unclassified until a governed threshold
+    exists. Data-quality/readiness problems remain observable.
+    """
     report = research_engine.build_research_report()
+    market = report.get("strategy_performance") or {}
+    readiness = (report.get("research") or {}).get("readiness") or {}
 
-    outcomes = report.get("outcomes", {})
-
-    wins = outcomes.get("wins", 0)
-    loses = outcomes.get("loses", 0)
-    missed = outcomes.get("missed", 0)
-
-    total = wins + loses + missed
-
-    if total == 0:
-        return {"risk_level": "UNKNOWN"}
-
-    win_rate = outcomes.get("win_rate", 0)
-
-    if win_rate < WIN_RATE_MIN:
-
-        observability_logger.log_warning(
-            warn_type="LOW_WIN_RATE",
-            message="Risk monitor detected win rate below the canonical minimum",
-            context={
-                "reason": "low_win_rate",
-                "win_rate": win_rate,
-                "win_rate_min": WIN_RATE_MIN,
-                "total_outcomes": total,
-            },
-            source={"module": "risk_monitor", "function": "evaluate_risk"},
-        )
-
+    if market.get("no_data") or market.get("insufficient_sample", True):
         return {
-            "risk_level": "HIGH",
-            "reason": "LOW_WIN_RATE"
+            "risk_level": "UNKNOWN",
+            "assessment_status": "INSUFFICIENT_MARKET_TRUTH",
+            "truth_domain": "MARKET_TRUTH",
+            "market_win_rate_percent": market.get("market_win_rate_percent"),
+            "decisive_sample": market.get("decisive_sample", 0),
+            "production_action_authorized": False,
         }
 
+    evidence_issues = int(market.get("invalid_count", 0) or 0) + int(market.get("excluded_incomplete", 0) or 0)
+    if evidence_issues > 0:
+        try:
+            observability_logger.log_warning(
+                warn_type="MARKET_TRUTH_EVIDENCE_QUALITY",
+                message="Risk monitor observed incomplete or invalid objective market evidence",
+                context={
+                    "truth_domain": "MARKET_TRUTH",
+                    "invalid_count": market.get("invalid_count", 0),
+                    "excluded_incomplete": market.get("excluded_incomplete", 0),
+                    "decisive_sample": market.get("decisive_sample", 0),
+                },
+                source={"module": "risk_monitor", "function": "evaluate_risk"},
+            )
+        except Exception:
+            pass
+
     return {
-        "risk_level": "NORMAL"
+        "risk_level": "UNCLASSIFIED",
+        "assessment_status": "NO_GOVERNED_PERFORMANCE_RISK_THRESHOLD",
+        "truth_domain": "MARKET_TRUTH",
+        "market_win_rate_percent": market.get("market_win_rate_percent"),
+        "decisive_sample": market.get("decisive_sample", 0),
+        "evidence_quality_issues": evidence_issues,
+        "descriptive_research_status": readiness.get("descriptive_research_status"),
+        "production_action_authorized": False,
     }
