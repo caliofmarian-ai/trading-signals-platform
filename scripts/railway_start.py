@@ -20,7 +20,9 @@ def main() -> int:
 
         from runtime.system_boot import start_system
 
-        start_system()
+        boot_result = start_system()
+        if boot_result is False:
+            raise RuntimeError("Runtime system boot returned a blocked startup state")
         return 0
     except Exception as exc:
         send_control_notification("STARTUP BLOCKED", f"Railway startup failed safely: {exc}")
