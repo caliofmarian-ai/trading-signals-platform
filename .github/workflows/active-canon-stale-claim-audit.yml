@@ -1,0 +1,22 @@
+name: Active Canon Stale Claim Audit
+
+on:
+  push:
+    branches:
+      - governance/active-canon-metadata-cleanup-20260901
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: governance/active-canon-metadata-cleanup-20260901
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Scan active canon for stale promotion claims
+        run: python scripts/_tmp_active_canon_stale_claim_audit.py
