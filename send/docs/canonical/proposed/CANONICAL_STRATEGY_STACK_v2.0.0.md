@@ -111,25 +111,59 @@ These documents define the primary normative runtime strategy stack.
 
 ---
 
-## 5. Supporting/adjacent canonical authorities
+## 5. Supporting/adjacent canonical authorities after promotion
 
-Critical supporting authorities include:
+The exact supporting/adjacent authority graph is:
+
+### System / interface / validation
 - `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md`
 - `SYSTEM_INVARIANTS_v3.0.0.md`
 - `TEST_PLAN_v3.0.0.md`
 - `MODULE_INTERFACE_SPEC_v3.0.0.md`
+
+### Observability / decision evidence
 - `EVENT_SCHEMA_SPEC_v3.0.0.md`
 - `OBSERVABILITY_LOGGING_SPEC_v3.0.0.md`
 - `DECISION_AUDIT_SPEC_v3.0.0.md`
 - `TRADE_TEMPORAL_TELEMETRY_SPEC_v3.0.0.md`
+
+### Risk / outcomes / feedback
+- `RISK_MODEL_v3.0.0.md`
 - `OUTCOME_TRACKING_SPEC_v3.0.0.md`
+- `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v3.0.0.md`
+
+### Distribution / external surfaces
+- `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.1.md`
+- `SIGNAL_DISTRIBUTION_SPEC_v2.0.1.md`
+- `CHANNEL_CONFIG_SPEC_v2.0.1.md`
+- `TELEGRAM_UX_v2.0.1.md`
+
+### Admin / human control plane
+- `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md`
+- `ADMIN_CONTROL_SPEC_v2.0.1.md`
+- `ADMIN_OPERATIONS_SPEC_v2.0.1.md`
+- `ADMIN_TREE_MAP_v2.0.1.md`
+- `CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.1.md`
+- `ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.1.md`
+- `STRATEGY_PARAMETER_CONTROL_SPEC_v3.0.0.md`
+- `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.1.md`
+
+### Analytics / research / intelligence
 - `PERFORMANCE_ANALYTICS_SPEC_v3.0.0.md`
 - `RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v3.0.0.md`
 - `TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md`
 - `STRATEGY_INTELLIGENCE_SYSTEM_v3.0.0.md`
 - `AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v3.0.0.md`
-- `STRATEGY_PARAMETER_CONTROL_SPEC_v3.0.0.md`
-- active Distribution, Risk, Governance, Security and Deployment authorities.
+
+### Commercial / affiliate
+- `AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.1.md`
+- `SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.1.md`
+
+### Governance / operations / safety
+- `FAILURE_RECOVERY_SPEC_v2.0.1.md`
+- `DEPLOYMENT_PROTOCOL_v2.0.1.md`
+- `SECURITY_MODEL_v2.0.1.md`
+- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md`
 
 Supporting documents may refine mechanics but may not contradict runtime root authorities.
 
@@ -158,8 +192,10 @@ When conflict exists:
 - Observability Logging
 - Decision Audit
 - Telemetry
-- Outcome
-- Distribution/Risk/Governance/Deployment
+- Risk
+- Outcome / Community Feedback according to truth-domain ownership
+- Distribution
+- Governance / Deployment / Recovery / Security
 
 ### Level 3 — Analytics/research/intelligence canon
 - Performance Analytics
@@ -206,7 +242,7 @@ Canonical Trade Physics structural relation:
 
 `available_space = directional distance to nearest relevant structural barrier`
 
-BUY -> relevant resistance direction.
+BUY -> relevant resistance direction.  
 SELL -> relevant support direction.
 
 ---
@@ -270,7 +306,7 @@ Signal Engine, FSM, Distribution, Telemetry and Outcome do not recompute TPS.
 
 The classical strategy score and TPS are distinct first-class strategic metrics.
 
-Classical score measures established signal/context quality.
+Classical score measures established signal/context quality.  
 TPS measures deterministic physical feasibility.
 
 There is no canonical combined score unless a future governed change defines one explicitly.
@@ -366,6 +402,10 @@ A valid candidate while Distribution is intentionally not invoked is DEFERRED, n
 
 ## 17. Distribution ownership
 
+Distribution ownership is governed by:
+- `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.1.md` for topology/module boundaries;
+- `SIGNAL_DISTRIBUTION_SPEC_v2.0.1.md` for entitlement/delivery policy.
+
 Distribution owns:
 - route selection;
 - entitlement;
@@ -386,13 +426,15 @@ Internal candidate creation, FSM acceptance or route intent does not prove exter
 
 ---
 
-## 19. Telemetry/outcome truth
+## 19. Telemetry / outcome / community truth
 
-Trade Temporal Telemetry owns objective post-executable market truth and labels.
+`TRADE_TEMPORAL_TELEMETRY_SPEC_v3.0.0.md` owns objective post-executable market truth and labels.
 
-Outcome Reconciliation owns operational/admin WIN/LOSE/MISSED truth.
+`OUTCOME_TRACKING_SPEC_v3.0.0.md` owns operational/admin WIN/LOSE/MISSED reconciliation truth.
 
-Market and operational truth remain separate and joinable.
+`COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v3.0.0.md` owns self-reported member/community execution experience and privacy.
+
+These truth layers remain distinct, labeled and joinable; none silently overwrites the others.
 
 Trade Physics feature snapshots must be preserved with version/provenance for later research/modeling.
 
@@ -508,7 +550,14 @@ Forbidden as primary active truth unless compatibility-mapped:
 3. Event/Observability
 
 ### Distribution conflicts
-Distribution Architecture/Spec according to their existing topology/policy split.
+1. Distribution Architecture for topology/ownership
+2. Distribution Spec for entitlement/delivery policy
+3. Channel Config / Telegram UX as bounded consumers
+
+### Truth-label conflicts
+1. Telemetry for objective market truth
+2. Outcome Tracking for operational/admin reconciliation
+3. Community Feedback for self-reported member experience
 
 ---
 
@@ -558,9 +607,12 @@ Promotion must be atomic enough that:
 - one Root Stack is active;
 - one version per canonical domain is active;
 - superseded versions are not left as competing active truth;
-- all linked references are updated;
+- all linked references use the exact final successor filenames;
 - Trade Physics is no longer classified future-state;
 - staged-execution semantics and Trade Physics semantics coexist coherently;
+- Risk is `RISK_MODEL_v3.0.0.md`;
+- Community Feedback is `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v3.0.0.md`;
+- the 17 reference-repair successors listed in `CANONICAL_REFERENCE_REPAIR_FINAL_SET_20260901.md` are promoted with the same graph;
 - `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md`, `SYSTEM_INVARIANTS_v3.0.0.md`, and `TEST_PLAN_v3.0.0.md` are promoted with the same canonical graph;
 - runtime remains untouched until post-promotion audit.
 
