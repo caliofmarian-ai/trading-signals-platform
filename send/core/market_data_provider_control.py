@@ -73,9 +73,11 @@ def provider_ready(provider: str) -> tuple[bool, str]:
 def get_active_provider() -> str:
     """Return the single effective provider and synchronize the process env.
 
-    Persisted owner selection wins over the deployment environment.  The
-    environment remains the bootstrap source before the first Telegram owner
-    selection.  FINNHUB is the safe current-project fallback.
+    Persisted owner selection wins over the deployment environment. The
+    deployment environment remains the bootstrap source before the first
+    Telegram selection. The historical TWELVE_DATA fallback is preserved only
+    for compatibility when no explicit deployment or owner selection exists;
+    production can and currently does select FINNHUB explicitly.
     """
     persisted = _load_persisted_state()
     if persisted is not None:
@@ -83,7 +85,7 @@ def get_active_provider() -> str:
         os.environ["MARKET_DATA_PROVIDER"] = provider
         return provider
 
-    raw_env = os.getenv("MARKET_DATA_PROVIDER", PROVIDER_FINNHUB)
+    raw_env = os.getenv("MARKET_DATA_PROVIDER", PROVIDER_TWELVE_DATA)
     provider = _normalize_provider(raw_env)
     os.environ["MARKET_DATA_PROVIDER"] = provider
     return provider
@@ -100,7 +102,7 @@ def set_active_provider(provider: str, *, selected_by: Optional[int] = None) -> 
     """Persist one exclusive provider selection and apply it immediately.
 
     Selection is refused when the target provider has no configured API key;
-    the previous provider remains effective.  Provider switching never changes
+    the previous provider remains effective. Provider switching never changes
     strategy parameters or the persisted Twelve Data symbol selection.
     """
     normalized = _normalize_provider(provider)
