@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
+from collections import Counter
 
 from core.telegram_runtime import command_registry
 
@@ -233,6 +234,67 @@ def render_report_summary(summary: Dict[str, Any]) -> str:
     return _lines(lines)
 
 
+def _v3_decisions(events: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    if not isinstance(events, list):
+        return []
+    return [
+        event for event in events
+        if isinstance(event, dict) and event.get("event_type") == "decision_evaluated"
+        and isinstance(event.get("data"), dict)
+    ]
+
+
+def _decision_blockers(event: Dict[str, Any]) -> List[str]:
+    data = event.get("data", {})
+    decision_object = data.get("decision_object") if isinstance(data.get("decision_object"), dict) else {}
+    reject = decision_object.get("reject") if isinstance(decision_object.get("reject"), dict) else {}
+    blockers = reject.get("hard_blockers")
+    return [str(item) for item in blockers] if isinstance(blockers, list) else []
+
+
+def render_research_analytics_panel(recent_events: Optional[List[Dict[str, Any]]]) -> str:
+    """Descriptive v3 strategy analytics; never strategy mutation authority."""
+    if recent_events is None:
+        return _lines(["Research & Analytics", "", "UNAVAILABLE (engine event log absent or invalid)."])
+    decisions = _v3_decisions(recent_events)
+    if not decisions:
+        return _lines([
+            "Research & Analytics", "", "No v3 strategy evaluations are recorded in the selected evidence window.",
+            "No threshold conclusion can be made.",
+        ])
+
+    kinds = Counter(str(event["data"].get("decision_kind") or "UNKNOWN").upper() for event in decisions)
+    blockers = Counter(blocker for event in decisions for blocker in _decision_blockers(event))
+    scores = [float(event["data"]["score_total"]) for event in decisions if isinstance(event["data"].get("score_total"), (int, float)) and not isinstance(event["data"].get("score_total"), bool)]
+    tps_values = []
+    for event in decisions:
+        trade_physics = event["data"].get("trade_physics")
+        tps = trade_physics.get("TPS") if isinstance(trade_physics, dict) else None
+        if isinstance(tps, (int, float)) and not isinstance(tps, bool):
+            tps_values.append(float(tps))
+
+    lines = [
+        "Research & Analytics", "",
+        f"Evidence window: latest {len(recent_events)} engine events",
+        f"V3 strategy evaluations: {len(decisions)}",
+        f"REJECT: {kinds['REJECT']}",
+        f"NO_SIGNAL: {kinds['NO_SIGNAL']}",
+        f"PRE: {kinds['PRE']}",
+        f"CONFIRM: {kinds['CONFIRM']}",
+        f"OPEN_NOW: {kinds['OPEN_NOW']}",
+        f"Average classical score: {round(sum(scores) / len(scores), 2) if scores else 'UNAVAILABLE'}",
+        f"Average ready TPS: {round(sum(tps_values) / len(tps_values), 2) if tps_values else 'UNAVAILABLE'}",
+        "", "Top Hard Blockers",
+    ]
+    lines.extend([f"- {reason}: {count}" for reason, count in blockers.most_common(5)] or ["- NONE RECORDED"])
+    lines.extend([
+        "", "Evidence qualification",
+        "Descriptive only. The window and sample count are shown explicitly.",
+        "No threshold or production-strategy change is authorized by this view.",
+    ])
+    return _lines(lines)
+
+
 def render_roles(identity: Dict[str, Any], known_roles: Dict[str, List[str]]) -> str:
     lines: List[str] = [
         "Role Matrix",
@@ -349,7 +411,7 @@ def render_intelligence_panel(recent_events: Optional[List[Dict[str, Any]]] = No
         ])
         return _lines(lines)
 
-    decisions = [e for e in events if e.get("event_type") in ("decision", "signal_decision", "decision_evaluated")]
+    decisions = _v3_decisions(events)
     rejects = [e for e in events if e.get("event_type") in ("reject", "signal_reject")]
     all_kinds = [str(e.get("data", {}).get("decision_kind", "") or "").upper() for e in events if isinstance(e.get("data"), dict)]
     open_now_count = sum(1 for k in all_kinds if k == "OPEN_NOW")
@@ -387,6 +449,17 @@ def render_intelligence_panel(recent_events: Optional[List[Dict[str, Any]]] = No
         lines.extend(["", "Rejection Pattern Summary:"])
         for reason, count in sorted(reject_reasons.items(), key=lambda x: -x[1])[:5]:
             lines.append(f"  {reason}: {count}")
+
+        total_reject_reasons = sum(reject_reasons.values())
+        dominant_reason, dominant_count = max(reject_reasons.items(), key=lambda item: item[1])
+        dominant_share = dominant_count / total_reject_reasons if total_reject_reasons else 0.0
+        lines.extend([
+            "", "Bottleneck Observation",
+            f"Dominant blocker set: {dominant_reason}",
+            f"Observed share: {dominant_count}/{total_reject_reasons} ({dominant_share:.1%})",
+            "Interpretation: descriptive candidate bottleneck; evidence adequacy is not yet certified.",
+            "Recommendation: continue evidence collection and investigate this layer before changing score thresholds.",
+        ])
 
     lines.extend([
         "",
