@@ -1,8 +1,9 @@
 """Binary Strategy V2 — the canonical binary-trading decision engine.
 
-The engine follows ALGO_SPEC_v2.0.0 in the required order:
-market model -> corridor -> time -> score -> DecisionObject -> FSM.
-It is deterministic and has no file, Telegram, distribution, or broker access.
+The engine follows ALGO_SPEC_v3.0.0 in the required order:
+market model -> corridor -> time -> classical score + Trade Physics ->
+DecisionObject -> FSM. It is deterministic and has no file, Telegram,
+distribution, or broker access.
 """
 
 from __future__ import annotations
@@ -18,10 +19,11 @@ from .market_model import MarketModelResult, evaluate_market
 from .scoring_model import ScoringResult, evaluate_score
 from .sr_corridor_engine import CorridorResult, evaluate_corridor
 from .time_model import TimeModelResult, evaluate_time
+from .trade_physics import TradePhysicsResult
 
 
 STRATEGY_VERSION = "2.0.0"
-CANONICAL_SPEC = "ALGO_SPEC_v2.0.0"
+CANONICAL_SPEC = "ALGO_SPEC_v3.0.0"
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,7 @@ class BinaryStrategyV2Evaluation:
     corridor: CorridorResult
     time: TimeModelResult
     scoring: ScoringResult
+    trade_physics: TradePhysicsResult
     decision: DecisionObject
     fsm: FSMInterpretation
     execution_time: ExecutionTimeResult
@@ -55,7 +58,7 @@ def decide(
 
     ``want_open_now`` is accepted only to preserve the public call boundary
     during migration. It cannot force or promote an outcome; V2 derives the
-    outcome exclusively from the canonical evidence and FSM.
+    outcome exclusively from canonical evidence and FSM.
     """
 
     del want_open_now
@@ -95,6 +98,7 @@ def decide(
         corridor=corridor,
         time=time_result,
         scoring=scoring,
+        trade_physics=scoring.trade_physics,
         decision=decision,
         fsm=fsm,
         execution_time=execution_time,
