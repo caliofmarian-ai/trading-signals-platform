@@ -45,19 +45,6 @@ class CorridorResult:
     evidence: CorridorEvidence
 
 
-def _required_number(mapping: Mapping[str, Any], key: str) -> float:
-    value = mapping.get(key)
-    if isinstance(value, bool):
-        raise CorridorUnavailable(f"{key} configuration is required")
-    try:
-        number = float(value)
-    except (TypeError, ValueError) as exc:
-        raise CorridorUnavailable(f"{key} configuration is required") from exc
-    if not isfinite(number) or number <= 0:
-        raise CorridorUnavailable(f"{key} must be finite and positive")
-    return number
-
-
 def _validate_m5(candles: Sequence[Mapping[str, Any]]) -> None:
     if len(candles) < LEGACY_STRUCTURE_LOOKBACK:
         raise CorridorUnavailable(
@@ -139,8 +126,13 @@ def evaluate_corridor(
     _validate_m5(candles_m5)
     if market.direction_bias not in {"BUY", "SELL"}:
         raise CorridorUnavailable("market direction must be BUY or SELL")
-    required_multiplier = _required_number(params, "sr_required_multiplier")
-    required_distance = market.context.buffer_distance * required_multiplier
+
+    # Canonical Trade Physics v1 owns required_space and defines it exactly as
+    # buffer_distance.  Keep params in the public interface for pipeline
+    # compatibility, but do not let the legacy sr_required_multiplier tighten
+    # or relax this hard structural-feasibility gate.
+    _ = params
+    required_distance = float(market.context.buffer_distance)
     if not isfinite(required_distance) or required_distance <= 0:
         raise CorridorUnavailable("required structural distance cannot be established")
 
@@ -176,11 +168,11 @@ def evaluate_corridor(
         if corridor_width is not None and corridor_width < required_distance:
             conflicts.append("CORRIDOR_COMPRESSED")
         boundary = "resistance" if market.direction_bias == "BUY" else "support"
-        explanation = f"The setup is too close to {boundary} for the configured structural distance."
+        explanation = f"The setup is too close to {boundary} for the canonical required distance."
     else:
         feasibility = "VALID"
         position = "INTERIOR"
-        explanation = "The observed corridor provides the configured structural room in the evaluated direction."
+        explanation = "The observed corridor provides the canonical required structural room in the evaluated direction."
 
     structure = StructureContext(
         support=support,
