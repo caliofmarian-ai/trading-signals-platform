@@ -18,6 +18,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from core import candle_adapter
+from core import distribution_router  # compatibility surface only; run_once does not invoke routing
 from core import fsm_runtime
 from core import observability_logger
 from core.decision_object import ACTIONABLE_DECISION_KINDS
