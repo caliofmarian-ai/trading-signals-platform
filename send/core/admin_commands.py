@@ -315,7 +315,10 @@ def _decision_debug_observation() -> Dict[str, Any]:
             "availability": "UNAVAILABLE (engine event log absent or invalid)",
             "event": None,
         }
-    decisions = [event for event in events if event.get("event_type") == "decision"]
+    decisions = [
+        event for event in events
+        if event.get("event_type") in {"decision_evaluated", "decision"}
+    ]
     if not decisions:
         return {
             "availability": "AVAILABLE (no decision recorded in event log)",
@@ -333,7 +336,10 @@ def _engine_status() -> Dict[str, Any]:
     decisions = (
         None
         if events is None
-        else [event for event in events if event.get("event_type") == "decision"]
+        else [
+            event for event in events
+            if event.get("event_type") in {"decision_evaluated", "decision"}
+        ]
     )
     last = decisions[-1] if decisions else None
     event_gap = "UNAVAILABLE (engine event log absent or invalid)"
