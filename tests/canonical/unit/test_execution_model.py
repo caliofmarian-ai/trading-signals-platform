@@ -16,11 +16,13 @@ from send.core.execution_model import (
     ExecutionCalibration,
     ExecutionModelError,
     derive_execution_time,
+    derive_execution_time_for_stage,
+    load_execution_calibration_from_env,
 )
 from send.core.fsm_decision_adapter import interpret_decision
 
 
-def _decision(tier: str) -> DecisionObject:
+def _decision(tier: str, *, model_expiry: float = 5.0) -> DecisionObject:
     kind = {
         "BELOW_PRE": "NO_SIGNAL",
         "SCORE_PRE_BAND": "PRE",
@@ -33,7 +35,7 @@ def _decision(tier: str) -> DecisionObject:
         setup=SetupContext("EUR/USD", "BUY", 1_700_000_000, "M1", "cycle-1", "test"),
         market_context=MarketContext(1.1, 0.001, 0.002, "UP", "NORMAL", "LOW"),
         structure=StructureContext(1.09, 1.12, 1.09, 1.12, 0.03, 0.02, "INSIDE", "VALID"),
-        time=TimeContext(4.0, 4.0, 5.0, 0.8, None, "READY"),
+        time=TimeContext(4.0, 4.0, model_expiry, 4.0 / model_expiry, None, "READY"),
         score=ScoreContext(80.0, 0.8, {"trend": 24.0}, tier=tier),
         strategic_flags=StrategicFlags(True, True, False, False, False, False, False),
         reject=RejectContext(),
@@ -67,6 +69,22 @@ def test_open_now_is_exact_and_inside_the_confirm_range() -> None:
     assert result.signal_handoff_ready is False
 
 
+def test_stage_helper_uses_same_execution_authority_as_shadow_fsm() -> None:
+    decision = _decision("SCORE_OPEN_BAND")
+    shadow = derive_execution_time(decision, interpret_decision(decision), _calibration())
+    live_stage = derive_execution_time_for_stage(decision, "OPEN_NOW", _calibration())
+    assert live_stage == shadow
+
+
+def test_no_arbitrary_rounding_at_integer_minute_boundary() -> None:
+    decision = _decision("SCORE_OPEN_BAND", model_expiry=2.01)
+    calibration = ExecutionCalibration(1.0, 0.0, 1.0, 15.0, "boundary-test")
+    result = derive_execution_time_for_stage(decision, "OPEN_NOW", calibration)
+
+    assert result.open_now_expiry_minutes == pytest.approx(2.01)
+    assert result.open_now_expiry_minutes != 3.0
+
+
 def test_open_now_outside_confirm_range_is_rejected_not_silently_clamped() -> None:
     decision = _decision("SCORE_OPEN_BAND")
     inconsistent = ExecutionCalibration(0.1, 0.5, 2.0, 15.0, "inconsistent-test")
@@ -98,6 +116,31 @@ def test_mismatched_cycles_are_rejected() -> None:
 
     with pytest.raises(ExecutionModelError, match="same cycle"):
         derive_execution_time(other, interpret_decision(decision), _calibration())
+
+
+def test_execution_calibration_env_has_no_numeric_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "EXECUTION_CONFIRM_DELTA_MINUTES",
+        "EXECUTION_PRESSURE_BIAS",
+        "EXECUTION_MIN_EXPIRY_MINUTES",
+        "EXECUTION_MAX_EXPIRY_MINUTES",
+        "EXECUTION_CALIBRATION_SOURCE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert load_execution_calibration_from_env() is None
+
+
+def test_partial_execution_calibration_env_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EXECUTION_PRESSURE_BIAS", "0.1")
+    for name in (
+        "EXECUTION_CONFIRM_DELTA_MINUTES",
+        "EXECUTION_MIN_EXPIRY_MINUTES",
+        "EXECUTION_MAX_EXPIRY_MINUTES",
+        "EXECUTION_CALIBRATION_SOURCE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(ExecutionModelError, match="partial"):
+        load_execution_calibration_from_env()
 
 
 @pytest.mark.parametrize(
