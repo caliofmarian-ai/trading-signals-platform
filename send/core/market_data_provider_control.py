@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from typing import Any, Dict, Optional
 
@@ -70,6 +71,57 @@ def provider_ready(provider: str) -> tuple[bool, str]:
     return True, "READY"
 
 
+def _stop_feed(feed: Any) -> None:
+    stop = getattr(feed, "stop", None)
+    if callable(stop):
+        try:
+            stop()
+        except Exception:
+            # Provider switching must still complete even when an already-stale
+            # transport fails while being shut down. The selected provider is
+            # enforced independently by market_client.configured_provider().
+            pass
+
+
+def _deactivate_inactive_runtime_provider(active_provider: str) -> None:
+    """Best-effort shutdown of already-created feeds from the inactive provider.
+
+    The market client owns the feed instances. We intentionally avoid importing
+    it here because market_client itself resolves its provider through this
+    module. Looking up an already-loaded module prevents a circular import and
+    lets a Telegram provider switch stop stale background streams immediately.
+    """
+    client = sys.modules.get("runtime.market_client")
+    if client is None:
+        return
+
+    if active_provider == PROVIDER_FINNHUB:
+        feeds = getattr(client, "_TWELVE_DATA_FEEDS", None)
+        if isinstance(feeds, dict):
+            for feed in list(feeds.values()):
+                _stop_feed(feed)
+            feeds.clear()
+        cache = getattr(client, "_TWELVE_DATA_REST_CACHE", None)
+        if isinstance(cache, dict):
+            cache.clear()
+        return
+
+    feed = getattr(client, "_FINNHUB_FEED", None)
+    if feed is not None:
+        _stop_feed(feed)
+        try:
+            setattr(client, "_FINNHUB_FEED", None)
+        except Exception:
+            pass
+
+
+def _apply_provider(provider: str) -> str:
+    normalized = _normalize_provider(provider)
+    os.environ["MARKET_DATA_PROVIDER"] = normalized
+    _deactivate_inactive_runtime_provider(normalized)
+    return normalized
+
+
 def get_active_provider() -> str:
     """Return the single effective provider and synchronize the process env.
 
@@ -81,14 +133,10 @@ def get_active_provider() -> str:
     """
     persisted = _load_persisted_state()
     if persisted is not None:
-        provider = _normalize_provider(str(persisted["active_provider"]))
-        os.environ["MARKET_DATA_PROVIDER"] = provider
-        return provider
+        return _apply_provider(str(persisted["active_provider"]))
 
     raw_env = os.getenv("MARKET_DATA_PROVIDER", PROVIDER_TWELVE_DATA)
-    provider = _normalize_provider(raw_env)
-    os.environ["MARKET_DATA_PROVIDER"] = provider
-    return provider
+    return _apply_provider(raw_env)
 
 
 def selection_source() -> str:
@@ -127,7 +175,7 @@ def set_active_provider(provider: str, *, selected_by: Optional[int] = None) -> 
     with storage.with_lock("market_data_provider"):
         storage.save_json_atomic(path, payload)
 
-    os.environ["MARKET_DATA_PROVIDER"] = normalized
+    _apply_provider(normalized)
     return payload
 
 
