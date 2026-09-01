@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from math import ceil
 from typing import Any, Dict, Optional
 
 from . import fsm_runtime
@@ -52,16 +51,15 @@ def _symbol_state_name(state: Dict[str, Any], symbol: str) -> str:
 
 def _runtime_input(decision: DecisionObject, state: Dict[str, Any]) -> Dict[str, Any]:
     current_id = current_opportunity_signal_id(state, decision.setup.symbol)
-    model_expiry = decision.time.model_expiry
-    expiry_compat = int(ceil(model_expiry)) if isinstance(model_expiry, (int, float)) and model_expiry > 0 else None
     return {
         "kind": decision.kind,
         "signal_id": decision.signal_id or current_id,
         "symbol": decision.setup.symbol,
         "score_total": decision.score.total,
         "candle_ts": decision.setup.evaluated_ts,
-        # Legacy FSM TTL compatibility only. Canonical model-time truth remains model_expiry.
-        "expiry_minutes": expiry_compat,
+        # Keep legacy FSM focus/cooldown TTL behavior unchanged. Model Time is
+        # strategic evidence and is not silently repurposed as lifecycle TTL.
+        "expiry_minutes": None,
     }
 
 
