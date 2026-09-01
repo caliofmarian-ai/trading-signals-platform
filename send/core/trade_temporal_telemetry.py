@@ -42,6 +42,15 @@ def _require_number(value: Any, field_name: str) -> float:
     return result
 
 
+def _require_expiry_minutes(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("expiry_minutes must be an integer or fractional number")
+    result = float(value)
+    if not isfinite(result) or result <= 0:
+        raise ValueError("expiry_minutes must be finite and positive")
+    return result
+
+
 def _load_registry() -> Dict[str, Any]:
     registry = storage.load_json(OPEN_TRADES_REGISTRY_JSON, default={"version": TELEMETRY_VERSION, "trades": {}})
     if not isinstance(registry, dict):
@@ -72,9 +81,7 @@ def _build_trade_record(event: Dict[str, Any], now_ts: int) -> Dict[str, Any]:
     if stage != "OPEN_NOW":
         raise ValueError("stage must be OPEN_NOW")
 
-    expiry_minutes = _require_number(event.get("expiry_minutes"), "expiry_minutes")
-    if expiry_minutes <= 0:
-        raise ValueError("expiry_minutes must be positive")
+    expiry_minutes = _require_expiry_minutes(event.get("expiry_minutes"))
 
     open_ts = _require_int(event.get("created_ts"), "created_ts")
     candle_ts = _require_int(event.get("candle_ts"), "candle_ts")
