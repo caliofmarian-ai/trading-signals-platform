@@ -60,6 +60,7 @@ _load_env_file()
 from runtime.engine_loop import ENGINE_TICK_SECONDS, start_engine
 from runtime.telegram_updates import poll_updates
 from runtime.distribution_scheduler import scheduler_loop
+from runtime.telemetry_market_worker import telemetry_market_loop
 from runtime import runtime_status
 from core import fsm_runtime
 from core import distribution_router
@@ -165,7 +166,7 @@ def start_system() -> None:
     _register_shutdown_hooks()
 
     # Guard against stale restart_guard.lock (or any other startup state error)
-    # preventing the bot from starting.  A TimeoutError from a stale lock file
+    # preventing the bot from starting. A TimeoutError from a stale lock file
     # is treated as a degraded-but-safe startup: the restart counter is unknown
     # but we must not leave Telegram polling permanently blocked.
     try:
@@ -234,7 +235,7 @@ def start_system() -> None:
                     "result": "UNSAFE_BLOCKED",
                     "blocked": True,
                     "restart_count": int(start_info["restart_count"]),
-                    "blocked_operations": ["engine_start", "telegram_poll", "scheduler_loop"],
+                    "blocked_operations": ["engine_start", "telegram_poll", "scheduler_loop", "telemetry_market_loop"],
                 },
                 source={"module": "system_boot", "function": "start_system"},
             )
@@ -268,7 +269,7 @@ def start_system() -> None:
                     "result": "UNSAFE_BLOCKED",
                     "blocked": True,
                     "restart_count": int(start_info["restart_count"]),
-                    "blocked_operations": ["engine_start", "telegram_poll", "scheduler_loop"],
+                    "blocked_operations": ["engine_start", "telegram_poll", "scheduler_loop", "telemetry_market_loop"],
                 },
                 source={"module": "system_boot", "function": "start_system"},
             )
@@ -323,12 +324,17 @@ def start_system() -> None:
         source={"module": "system_boot", "function": "start_system"},
     )
 
-    # engine thread
     engine_thread = threading.Thread(target=start_engine, daemon=True)
-
-    # scheduler thread
     scheduler_thread = threading.Thread(target=scheduler_loop, daemon=True)
+    telemetry_thread = threading.Thread(
+        target=telemetry_market_loop,
+        name="trade-temporal-telemetry",
+        daemon=True,
+    )
 
+    # Start objective telemetry before the strategy engine so persisted pending
+    # records can perform restart recovery before new runtime decisions flow.
+    telemetry_thread.start()
     engine_thread.start()
     telegram_enabled = _should_start_telegram_thread()
     if telegram_enabled:
@@ -341,6 +347,7 @@ def start_system() -> None:
         telegram_enabled=telegram_enabled,
         telegram_polling_started=telegram_enabled,
         engine_tick_seconds=ENGINE_TICK_SECONDS,
+        telemetry_market_worker_started=True,
         shadow_mode=_env_flag("SHADOW_MODE", default=False),
         readiness_evaluated=_env_flag("RAILWAY_READINESS_EVALUATED", default=False),
         recovery_required=bool(start_info["recovery_required"]),
@@ -352,7 +359,6 @@ def start_system() -> None:
     if _env_flag("RAILWAY_READINESS_EVALUATED", default=False):
         send_control_notification("BOT LIVE", "BinaryBot runtime is live.")
 
-    # keep main thread alive; emit periodic poller liveness diagnostics
     _heartbeat_check_interval = 60
     _heartbeat_warn_logged = False
     while True:
@@ -376,7 +382,6 @@ def start_system() -> None:
                     _heartbeat_warn_logged = True
             else:
                 _heartbeat_warn_logged = False
-
 
 
 if __name__ == "__main__":
