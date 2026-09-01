@@ -283,26 +283,25 @@ def test_designated_stream_symbol_uses_live_feed_without_rest_poll(
                 "last_persisted_ts": 123,
             }
 
-    market._TWELVE_DATA_FEED = _Feed()
+    market._TWELVE_DATA_FEEDS = {"EUR/USD": _Feed()}
     monkeypatch.setattr(
         market,
         "fetch_klines",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("live pair must not poll REST")),
     )
 
-    candles = market.get_candles("EUR/USD", "1min")
+    candles = market.get_candles("EUR/USD", "1min", prefer_live=True)
     assert candles[0]["symbol"] == "EUR/USD"
     status = importlib.import_module("runtime.runtime_status").read_status()
     assert status["market_data_state"] == "READY"
     assert status["market_data_stream_state"] == "LIVE"
 
 
-def test_stream_subscription_failure_falls_back_to_bounded_rest_cache(
+def test_focus_stream_subscription_failure_is_fail_closed_while_wide_can_use_cache(
     canonical_runtime_root, fresh_imports, monkeypatch
 ):
     monkeypatch.setenv("MARKET_DATA_PROVIDER", "TWELVE_DATA")
     monkeypatch.setenv("TWELVE_DATA_STREAMING_ENABLED", "1")
-    monkeypatch.setenv("TWELVE_DATA_STREAM_SYMBOL", "EUR/USD")
     market = fresh_imports("runtime.market_client")
     td = importlib.import_module("runtime.twelvedata_market_data")
 
@@ -310,11 +309,13 @@ def test_stream_subscription_failure_falls_back_to_bounded_rest_cache(
         def get_candles(self, timeframe):
             raise td.TwelveDataStreamingUnavailable("trial subscription unavailable")
 
-    market._TWELVE_DATA_FEED = _Feed()
+    market._TWELVE_DATA_FEEDS = {"EUR/USD": _Feed()}
     fallback = [{"symbol": "EUR/USD", "timeframe": "1min", "ts": 321}]
     monkeypatch.setattr(market, "_cached_rest_candles", lambda symbol, timeframe: fallback)
 
     assert market.get_candles("EUR/USD", "1min") == fallback
+    with pytest.raises(market.MarketDataUnavailableError, match="trial subscription unavailable"):
+        market.get_candles("EUR/USD", "1min", prefer_live=True)
     status = importlib.import_module("runtime.runtime_status").read_status()
-    assert status["market_data_state"] == "READY"
-    assert status["market_data_stream_state"] == "REST_FALLBACK"
+    assert status["market_data_state"] == "MARKET_DATA_UNAVAILABLE"
+    assert status["market_data_stream_state"] == "UNAVAILABLE"
