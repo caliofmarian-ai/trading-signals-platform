@@ -16,6 +16,24 @@ OWNER_ID = 818181
 
 
 def _purge() -> None:
+    # Remove both sys.modules entries and cached package attributes. Python can
+    # otherwise return runtime.market_client from the package object after the
+    # module entry itself was deleted, which defeats test isolation.
+    runtime_package = sys.modules.get("runtime")
+    if runtime_package is not None and hasattr(runtime_package, "market_client"):
+        delattr(runtime_package, "market_client")
+
+    core_package = sys.modules.get("core")
+    if core_package is not None:
+        for attr in (
+            "market_data_provider_control",
+            "admin_commands",
+            "admin_permissions",
+            "telegram_admin_ui",
+        ):
+            if hasattr(core_package, attr):
+                delattr(core_package, attr)
+
     for name in [
         "core.market_data_provider_control",
         "core.admin_commands",
