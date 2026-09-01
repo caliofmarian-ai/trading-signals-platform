@@ -70,10 +70,12 @@ Acceptance:
 
 ### R-003 — Truth-source separation in outcomes and analytics
 Severity: CRITICAL
-Status: IN PROGRESS
-Issue: #102
-PR: #103 (Draft until final audit/CI completion)
+Status: CLOSED
+Issue: #102 — CLOSED
+PR: #103
+Merged main commit: `60b1e885ee01126d4b99e8aaa5cc34d995c6ce8e`
 Depends on: R-002 — SATISFIED
+Validation: 991 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed.
 
 Problem:
 - community self-reports are currently aggregated into a generic `win_rate` that can be mistaken for strategy performance.
@@ -92,8 +94,11 @@ Acceptance:
 
 ### R-004 — Research/intelligence input sanitation before autonomy
 Severity: CRITICAL FOR FUTURE AUTONOMY
-Status: PENDING
-Depends on: R-003
+Status: IN PROGRESS
+Issue: #104
+PR: #105 (Draft until final audit completion)
+Depends on: R-003 — SATISFIED
+Current validation: 998 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; GitHub Actions run 33561964658 SUCCESS.
 
 Problem:
 - offline research/intelligence modules consume analytics derived from community outcomes; adaptive parameter and optimizer code also contains legacy-schema assumptions.
@@ -351,3 +356,5 @@ The repository-wide remediation program is complete only when:
 - 2026-09-01: R-002 started on branch `remediation/audit-2026-09-01-r002-objective-telemetry`; PR #101 opened Draft.
 - 2026-09-01: R-002 merged through PR #101; main advanced to `ceba3c983936d68d9429a0c28d59b7e179bd0b0a`; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 983 passed.
 - 2026-09-01: R-003 started on branch `remediation/audit-2026-09-01-r003-truth-source-separation`; Issue #102 and Draft PR #103 created.
+- 2026-09-01: R-003 merged through PR #103; main advanced to `60b1e885ee01126d4b99e8aaa5cc34d995c6ce8e`; Issue #102 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 991 passed.
+- 2026-09-01: R-004 started on branch `remediation/audit-2026-09-01-r004-intelligence-input-sanitation`; Issue #104 and Draft PR #105 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 998 passed, GitHub Actions run 33561964658 SUCCESS.

@@ -1,42 +1,50 @@
-# /opt/binarybot/intelligence/adaptive_params.py
-# BinaryBot — Adaptive Parameters Engine
+# send/intelligence/adaptive_params.py
+# BinaryBot — governed parameter recommendation boundary
 
 from __future__ import annotations
 
-from typing import Dict, Any
+from typing import Any, Dict
 
 from core import params_loader
 from intelligence import research_engine
 
 
 def adjust_parameters() -> Dict[str, Any]:
+    """Compatibility entry point that never adjusts production parameters automatically.
 
+    The previous implementation created threshold changes from ungoverned win-rate
+    heuristics and a legacy `thresholds` schema. Active canon requires evidence,
+    experiment governance, approval, and rollback readiness before any mutation.
+    Therefore this function now returns a recommendation/readiness bundle only.
+    """
     params = params_loader.load_algo_params()
-
     research = research_engine.build_research_report()
+    market = research.get("strategy_performance") or {}
+    readiness = (research.get("research") or {}).get("readiness") or {}
 
-    win_rate = research.get("outcomes", {}).get("win_rate", 0)
+    return {
+        "action": "NO_AUTOMATIC_PARAMETER_CHANGE",
+        "advisory_only": True,
+        "auto_apply": False,
+        "production_mutation_authorized": False,
+        "truth_domain": "MARKET_TRUTH",
+        "current_algo_version": params.get("algo_version"),
+        "current_params_checksum": params_loader.compute_checksum(params),
+        "market_evidence": {
+            "no_data": market.get("no_data", True),
+            "decisive_sample": market.get("decisive_sample", 0),
+            "market_win_rate_percent": market.get("market_win_rate_percent"),
+            "insufficient_sample": market.get("insufficient_sample", True),
+        },
+        "readiness": readiness,
+        "proposed_changes": [],
+        "reason": (
+            "Automatic or heuristic parameter adjustment is not authorized. "
+            "Create a governed hypothesis/experiment and obtain required approval before any parameter change."
+        ),
+    }
 
-    thresholds = params.get("thresholds", {})
 
-    pre = thresholds.get("pre", 40)
-    confirm = thresholds.get("confirm", 60)
-    open_now = thresholds.get("open", 80)
-
-    if win_rate < 45:
-        pre += 2
-        confirm += 2
-        open_now += 2
-
-    elif win_rate > 65:
-        pre -= 1
-        confirm -= 1
-        open_now -= 1
-
-    thresholds["pre"] = max(30, min(pre, 70))
-    thresholds["confirm"] = max(40, min(confirm, 80))
-    thresholds["open"] = max(60, min(open_now, 95))
-
-    params["thresholds"] = thresholds
-
-    return params
+def propose_parameter_adjustments() -> Dict[str, Any]:
+    """Explicitly named advisory alias for new callers."""
+    return adjust_parameters()
