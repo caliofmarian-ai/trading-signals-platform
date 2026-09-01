@@ -1,0 +1,45 @@
+name: P0-01 Execution Time Validation
+
+on:
+  pull_request:
+    paths:
+      - 'send/core/execution_model.py'
+      - 'send/core/signal_event.py'
+      - 'send/core/signal_execution_gate.py'
+      - 'send/core/distribution_router.py'
+      - 'send/core/outcome_service.py'
+      - 'send/core/trade_temporal_telemetry.py'
+      - 'tests/**'
+      - '.github/workflows/p0-01-execution-time-validation.yml'
+
+jobs:
+  execution-time-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install -r requirements.txt
+      - name: Compile changed modules
+        run: |
+          python -m py_compile \
+            send/core/execution_model.py \
+            send/core/signal_event.py \
+            send/core/signal_execution_gate.py
+      - name: Focused execution-time tests
+        env:
+          PYTHONPATH: send
+        run: |
+          python -m pytest -q \
+            tests/canonical/unit/test_execution_model.py \
+            tests/canonical/unit/test_signal_event.py \
+            tests/canonical/unit/test_signal_execution_gate.py
+      - name: Full repository tests
+        env:
+          PYTHONPATH: send
+        run: python -m pytest -q
