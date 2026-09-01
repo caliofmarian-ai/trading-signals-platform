@@ -61,7 +61,7 @@ def test_persistence_failure_blocks_execution_and_distribution(monkeypatch: pyte
             return None
 
         @staticmethod
-        def get_candles(symbol, timeframe):
+        def get_candles(symbol, timeframe, **kwargs):
             return [{"stub": True}]
 
     monkeypatch.setattr("runtime.market_client.configured_symbols", _MarketClient.configured_symbols)

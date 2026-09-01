@@ -267,7 +267,7 @@ def test_signal_engine_does_not_route_when_fsm_persistence_fails(tmp_path: Path,
     signal_engine = modules["signal_engine"]
     fsm_runtime = modules["fsm_runtime"]
 
-    monkeypatch.setattr("runtime.market_client.get_candles", lambda symbol, timeframe: [{"t": 1, "o": 1.0, "h": 1.1, "l": 0.9, "c": 1.0} for _ in range(250)])
+    monkeypatch.setattr("runtime.market_client.get_candles", lambda symbol, timeframe, **kwargs: [{"t": 1, "o": 1.0, "h": 1.1, "l": 0.9, "c": 1.0} for _ in range(250)])
     monkeypatch.setattr(signal_engine.candle_adapter, "normalize", lambda raw, symbol, timeframe: [{"symbol": symbol, "timeframe": timeframe, "ts": idx, "open": 1.0, "high": 1.1, "low": 0.9, "close": 1.0, "volume": None} for idx, _ in enumerate(raw, start=1)])
     monkeypatch.setattr(signal_engine.candle_adapter, "validate", lambda candles: None)
     monkeypatch.setattr(signal_engine, "decide", lambda **kwargs: _base_decision("PRE"))

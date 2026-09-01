@@ -27,7 +27,7 @@ class MarketDataUnavailableError(RuntimeError):
 
 
 _FINNHUB_FEED = None
-_TWELVE_DATA_FEED = None
+_TWELVE_DATA_FEEDS = {}
 _TWELVE_DATA_REST_CACHE = {}
 
 
@@ -41,13 +41,6 @@ def configured_provider() -> str:
 def _twelve_data_streaming_enabled() -> bool:
     value = os.getenv("TWELVE_DATA_STREAMING_ENABLED", "1").strip().lower()
     return value not in {"0", "false", "off", "no"}
-
-
-def _twelve_data_stream_symbol() -> str:
-    value = os.getenv("TWELVE_DATA_STREAM_SYMBOL", "EUR/USD").strip().upper().replace("_", "/")
-    if not value or "/" not in value:
-        raise RuntimeError(f"Invalid TWELVE_DATA_STREAM_SYMBOL: {value!r}")
-    return value
 
 
 def configured_symbols():
@@ -65,16 +58,15 @@ def _finnhub_feed():
     return _FINNHUB_FEED
 
 
-def _twelve_data_feed():
-    global _TWELVE_DATA_FEED
-    if _TWELVE_DATA_FEED is None:
+def _twelve_data_feed(symbol: str):
+    normalized = str(symbol).strip().upper().replace("_", "/")
+    feed = _TWELVE_DATA_FEEDS.get(normalized)
+    if feed is None:
         from runtime.twelvedata_market_data import TwelveDataRealtimeFeed
 
-        _TWELVE_DATA_FEED = TwelveDataRealtimeFeed(
-            symbol=_twelve_data_stream_symbol(),
-            token=_api_key(),
-        )
-    return _TWELVE_DATA_FEED
+        feed = TwelveDataRealtimeFeed(symbol=normalized, token=_api_key())
+        _TWELVE_DATA_FEEDS[normalized] = feed
+    return feed
 
 
 def _api_key() -> str:
@@ -246,7 +238,7 @@ def _update_twelve_data_stream_status(feed, *, state: str, note: str) -> None:
     )
 
 
-def get_candles(symbol: str, timeframe: str):
+def get_candles(symbol: str, timeframe: str, *, prefer_live: bool = False):
     """
     Provider-independent wrapper used by the engine.
     """
@@ -307,11 +299,7 @@ def get_candles(symbol: str, timeframe: str):
         return candles
 
     requested_symbol = str(symbol).strip().upper().replace("_", "/")
-    use_live_stream = (
-        _twelve_data_streaming_enabled()
-        and requested_symbol == _twelve_data_stream_symbol()
-    )
-    if not use_live_stream:
+    if not (_twelve_data_streaming_enabled() and prefer_live):
         return _cached_rest_candles(symbol, timeframe)
 
     from runtime.twelvedata_market_data import (
@@ -321,7 +309,7 @@ def get_candles(symbol: str, timeframe: str):
         TwelveDataStreamingUnavailable,
     )
 
-    feed = _twelve_data_feed()
+    feed = _twelve_data_feed(symbol)
     try:
         candles = feed.get_candles(timeframe)
     except TwelveDataRateLimitError as exc:
@@ -341,19 +329,18 @@ def get_candles(symbol: str, timeframe: str):
         )
         raise MarketDataRateLimitError(str(exc)) from exc
     except TwelveDataStreamingUnavailable as exc:
-        candles = _cached_rest_candles(symbol, timeframe)
         runtime_status.update_status(
-            market_data_state="READY",
+            market_data_state="MARKET_DATA_UNAVAILABLE",
             market_data_note=(
-                "Twelve Data WebSocket unavailable; bounded REST cache fallback active: "
-                f"{exc}"
+                "Twelve Data live stream unavailable for focus symbol; "
+                "actionable evaluation is fail-closed: " + str(exc)
             ),
             market_data_provider="TWELVE_DATA",
             market_data_symbol=requested_symbol,
-            market_data_history_ready=True,
-            market_data_stream_state="REST_FALLBACK",
+            market_data_history_ready=False,
+            market_data_stream_state="UNAVAILABLE",
         )
-        return candles
+        raise MarketDataUnavailableError(str(exc)) from exc
     except TwelveDataInsufficientHistory as exc:
         _update_twelve_data_stream_status(
             feed, state="MARKET_DATA_COLLECTING", note=str(exc)
