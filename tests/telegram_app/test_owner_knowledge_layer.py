@@ -750,3 +750,36 @@ def test_decision_visibility_renders_canonical_v3_decision_object():
     assert "Trade Physics" in text
     assert "TPS: 51.25" in text
     assert "Hard Blockers\n- TIME_NOT_FEASIBLE" in text
+
+
+def test_research_and_intelligence_consume_v3_decision_evidence():
+    from core.admin_views import render_intelligence_panel, render_research_analytics_panel
+
+    def event(kind, score, tps, blockers):
+        return {
+            "event_type": "decision_evaluated",
+            "data": {
+                "decision_kind": kind,
+                "score_total": score,
+                "trade_physics": {"TPS": tps},
+                "decision_object": {"reject": {"hard_blockers": blockers}},
+            },
+        }
+
+    events = [
+        event("REJECT", 62.0, 50.0, ["TIME_NOT_FEASIBLE"]),
+        event("REJECT", 68.0, 55.0, ["TIME_NOT_FEASIBLE"]),
+        event("NO_SIGNAL", 66.0, 60.0, []),
+    ]
+
+    research = render_research_analytics_panel(events)
+    intelligence = render_intelligence_panel(events)
+
+    assert "V3 strategy evaluations: 3" in research
+    assert "REJECT: 2" in research
+    assert "NO_SIGNAL: 1" in research
+    assert "Average classical score: 65.33" in research
+    assert "TIME_NOT_FEASIBLE: 2" in research
+    assert "No threshold or production-strategy change is authorized" in research
+    assert "Dominant blocker set: TIME_NOT_FEASIBLE" in intelligence
+    assert "investigate this layer before changing score thresholds" in intelligence
