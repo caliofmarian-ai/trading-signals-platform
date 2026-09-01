@@ -1167,6 +1167,12 @@ def render_status_page(
     candle_counts = snapshot.get("market_data_candle_counts")
     minimum_candles = snapshot.get("market_data_minimum_candles")
     history_ready = snapshot.get("market_data_history_ready")
+    bootstrap_state = snapshot.get("market_data_bootstrap_state")
+    stream_state = snapshot.get("market_data_stream_state")
+    rate_limit_state = snapshot.get("market_data_rate_limit_state")
+    rest_requests = snapshot.get("market_data_rest_requests_last_minute")
+    rest_limit = snapshot.get("market_data_rest_requests_per_minute_limit")
+    retry_after_ts = snapshot.get("market_data_retry_after_ts")
     persistence_state = snapshot.get("market_data_persistence_state")
     store_load_state = snapshot.get("market_data_store_load_state")
     store_write_state = snapshot.get("market_data_store_write_state")
@@ -1209,6 +1215,16 @@ def render_status_page(
             if history_ready
             else "\nStrategy history: COLLECTING — decisions remain blocked"
         )
+    if isinstance(bootstrap_state, str) and bootstrap_state.strip():
+        current_state += f"\nHistory bootstrap: {bootstrap_state.strip()}"
+    if isinstance(stream_state, str) and stream_state.strip():
+        current_state += f"\nLive stream: {stream_state.strip()}"
+    if isinstance(rate_limit_state, str) and rate_limit_state.strip():
+        current_state += f"\nProvider rate limit: {rate_limit_state.strip()}"
+    if isinstance(rest_requests, int) and isinstance(rest_limit, int):
+        current_state += f"\nREST usage (rolling minute): {rest_requests}/{rest_limit}"
+    if isinstance(retry_after_ts, int):
+        current_state += f"\nREST retry permitted after Unix time: {retry_after_ts}"
     if isinstance(persistence_state, str) and persistence_state.strip():
         current_state += f"\nPersistent history: {persistence_state.strip()}"
     if isinstance(store_load_state, str) and isinstance(store_write_state, str):
