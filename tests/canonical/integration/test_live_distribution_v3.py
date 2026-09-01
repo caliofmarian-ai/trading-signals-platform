@@ -78,8 +78,8 @@ def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return root, obs, legacy, router, outcome
 
 
-def _candidate(stage: str = "PRE", signal_id: str = "sig-v3-live") -> dict[str, Any]:
-    return {
+def _candidate(stage: str = "PRE", signal_id: str = "sig-v3-live", *, exact_expiry: float = 4.5) -> dict[str, Any]:
+    event: dict[str, Any] = {
         "event_type": "SIGNAL_CANDIDATE",
         "schema_version": "3.0.0",
         "stage": stage,
@@ -92,13 +92,28 @@ def _candidate(stage: str = "PRE", signal_id: str = "sig-v3-live") -> dict[str, 
         "buffer_distance": 0.0008,
         "buffer_price": 0.0008,
         "model_expiry": 5.0,
-        "expiry_minutes": 5,
+        "execution_time_available": False,
+        "confirm_expiry_min_minutes": None,
+        "confirm_expiry_max_minutes": None,
+        "open_now_expiry_minutes": None,
+        "execution_calibration_source": None,
+        "expiry_minutes": None,
         "candle_ts": 1_720_000_000,
         "created_ts": 1_720_000_005,
         "entry_price": 1.11234,
         "payload": {"trade_physics": {"TPS": 82.0}},
         "distribution_enabled": False,
     }
+    if stage == "OPEN_NOW":
+        event.update(
+            execution_time_available=True,
+            confirm_expiry_min_minutes=4.0,
+            confirm_expiry_max_minutes=6.0,
+            open_now_expiry_minutes=exact_expiry,
+            execution_calibration_source="test-calibration-v1",
+            expiry_minutes=exact_expiry,
+        )
+    return event
 
 
 def test_free_default_is_six_and_missing_routes_become_disabled(
@@ -106,9 +121,11 @@ def test_free_default_is_six_and_missing_routes_become_disabled(
 ) -> None:
     root, obs, legacy, router, _ = _setup(tmp_path, monkeypatch)
     sends: list[int] = []
+    rendered: list[str] = []
 
     def _send_message(chat_id: int, text: str, reply_markup=None, thread_id=None):
         sends.append(chat_id)
+        rendered.append(text)
         return {"ok": True, "result": {"message_id": 501}}
 
     monkeypatch.setattr(legacy.telegram_publisher, "send_message", _send_message)
@@ -120,6 +137,8 @@ def test_free_default_is_six_and_missing_routes_become_disabled(
     assert summary["published_count"] == 1
     assert summary["failed_count"] == 0
     assert summary["skipped_count"] == 3
+    assert rendered and "Exp: None" not in rendered[0]
+    assert "Exp:" not in rendered[0]
 
     state = legacy.load_state()
     assert state["tier_state"]["FREE"] == "ACTIVE"
@@ -147,6 +166,27 @@ def test_free_default_is_six_and_missing_routes_become_disabled(
     assert all(obs.validate_event(event) == event for event in primary_results + visible + attempts)
 
 
+def test_open_now_without_governed_execution_time_is_blocked_before_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, _, legacy, router, _ = _setup(tmp_path, monkeypatch)
+    sends: list[int] = []
+    monkeypatch.setattr(
+        legacy.telegram_publisher,
+        "send_message",
+        lambda **kwargs: sends.append(kwargs["chat_id"]),
+    )
+    forged = _candidate("PRE", "sig-forged")
+    forged["stage"] = "OPEN_NOW"
+    forged["expiry_minutes"] = forged["model_expiry"]
+
+    summary = router.route(forged, now_ts=1_720_000_100)
+
+    assert summary["blocked"] is True
+    assert summary["block_reason"] == "EXECUTION_TIME_UNAVAILABLE"
+    assert sends == []
+
+
 def test_open_now_counts_only_success_and_silences_free_at_six(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -154,14 +194,15 @@ def test_open_now_counts_only_success_and_silences_free_at_six(
     state = legacy._default_state()
     state["open_signals_today"]["FREE"] = 5
     legacy.save_state(state)
+    rendered: list[str] = []
 
-    monkeypatch.setattr(
-        legacy.telegram_publisher,
-        "send_message",
-        lambda **kwargs: {"ok": True, "result": {"message_id": 601}},
-    )
+    def _send_message(**kwargs):
+        rendered.append(kwargs["text"])
+        return {"ok": True, "result": {"message_id": 601}}
 
-    summary = router.route(_candidate("OPEN_NOW", "sig-v3-open"), now_ts=1_720_000_100)
+    monkeypatch.setattr(legacy.telegram_publisher, "send_message", _send_message)
+
+    summary = router.route(_candidate("OPEN_NOW", "sig-v3-open", exact_expiry=4.77), now_ts=1_720_000_100)
     final_state = legacy.load_state()
 
     assert summary["published_count"] == 1
@@ -169,6 +210,28 @@ def test_open_now_counts_only_success_and_silences_free_at_six(
     assert final_state["tier_state"]["FREE"] == "SILENT"
     assert len(summary["publication_evidence"]) == 1
     assert summary["publication_evidence"][0]["route"] == "FREE"
+    assert rendered and "Exp: 4.77m" in rendered[0]
+    assert "Exp: 5m" not in rendered[0]
+
+
+def test_distribution_rejects_mismatched_execution_expiry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, _, legacy, router, _ = _setup(tmp_path, monkeypatch)
+    sends: list[int] = []
+    monkeypatch.setattr(
+        legacy.telegram_publisher,
+        "send_message",
+        lambda **kwargs: sends.append(kwargs["chat_id"]),
+    )
+    event = _candidate("OPEN_NOW", "sig-mismatch", exact_expiry=4.77)
+    event["expiry_minutes"] = 5.0
+
+    summary = router.route(event, now_ts=1_720_000_100)
+
+    assert summary["blocked"] is True
+    assert summary["block_reason"] == "EXECUTION_TIME_COMPATIBILITY_MISMATCH"
+    assert sends == []
 
 
 def test_failed_publication_never_creates_visibility_or_counter(
@@ -196,7 +259,7 @@ def test_failed_publication_never_creates_visibility_or_counter(
     assert free_result[0]["data"]["publish_result"] == "FAILED"
 
 
-def test_community_feedback_uses_ten_minute_grace_and_self_report_truth(
+def test_community_feedback_preserves_fractional_execution_time(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _, obs, _, _, outcome = _setup(tmp_path, monkeypatch)
@@ -205,24 +268,27 @@ def test_community_feedback_uses_ten_minute_grace_and_self_report_truth(
         elite_chat_id=1004,
         open_message_id=700,
         open_now_ts=1_720_000_000,
-        expiry_minutes=5,
+        expiry_minutes=4.77,
         symbol="EUR/USD",
         direction="BUY",
         timeframe="M1",
     )
     meta = result["meta"]
-    assert meta["vote_end_ts"] - meta["activation_ts"] == 10 * 60
+    assert meta["expiry_minutes"] == pytest.approx(4.77)
+    assert meta["expiry_ts"] - meta["open_now_ts"] == pytest.approx(4.77 * 60)
+    assert meta["vote_end_ts"] - meta["activation_ts"] == pytest.approx(10 * 60)
 
     record = outcome._build_vote_record(
         signal_id="sig-feedback-v3",
         outcome="WIN",
         member_ref="M-TEST123",
-        now_ts=meta["activation_ts"],
+        now_ts=int(meta["activation_ts"] + 1),
         meta=meta,
         callback_context={"route": "ELITE"},
     )
     assert record["truth_source"] == "COMMUNITY_SELF_REPORT"
     assert record["record_schema_version"] == "3.0.0"
+    assert record["expiry_minutes"] == pytest.approx(4.77)
 
     event = obs.build_event(
         "user_outcome",
@@ -273,6 +339,9 @@ def test_post_distribution_emitted_requires_publication_evidence(
         setup_correlation_id="cycle-post-v3",
         stage_handoff_ready=True,
         trade_execution_ready=False,
+        execution_time_available=False,
+        execution_calibration_source=None,
+        execution_time_explanation="No trader-facing timing for PRE.",
         candidate=SimpleNamespace(schema_version="3.0.0"),
     )
     summary = {
