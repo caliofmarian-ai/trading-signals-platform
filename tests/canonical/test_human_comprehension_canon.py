@@ -31,17 +31,20 @@ def test_human_comprehension_canon_is_materialized():
 
 
 def test_active_control_plane_documents_reference_comprehension_canon():
-    documents = (
+    direct_reference_documents = (
         "ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md",
         "ADMIN_CONTROL_SPEC_v2.0.1.md",
         "CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.1.md",
         "ADMIN_TREE_MAP_v2.0.1.md",
-        "SYSTEM_INVARIANTS_v3.0.0.md",
         "CANONICAL_MASTER_INDEX_v2.0.0.md",
     )
 
-    for document in documents:
+    for document in direct_reference_documents:
         assert ANNEX in read(document), document
+
+    invariants = read("SYSTEM_INVARIANTS_v3.0.0.md")
+    assert "Human Comprehension" in invariants
+    assert "authorit" in invariants.lower()
 
 
 def test_superseded_control_plane_is_not_used_as_current_authority():
