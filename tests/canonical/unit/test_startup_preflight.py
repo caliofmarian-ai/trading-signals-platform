@@ -66,7 +66,7 @@ def test_preflight_requires_only_active_provider_key(
 
     preflight = _fresh_preflight(fresh_imports)
     with pytest.raises(preflight.StartupPreflightError, match="FINNHUB_API_KEY"):
-        preflight.run_startup_preflight()
+        preflight.run_startup_preflight(require_deployment_inputs=True)
 
 
 def test_corrupt_persisted_provider_state_blocks_instead_of_falling_back(
@@ -82,7 +82,7 @@ def test_corrupt_persisted_provider_state_blocks_instead_of_falling_back(
 
     preflight = _fresh_preflight(fresh_imports)
     with pytest.raises(preflight.StartupPreflightError, match="market_data_provider is invalid JSON"):
-        preflight.run_startup_preflight()
+        preflight.run_startup_preflight(require_deployment_inputs=True)
 
 
 def test_finnhub_effective_universe_must_include_eur_usd(
@@ -99,7 +99,7 @@ def test_finnhub_effective_universe_must_include_eur_usd(
 
     preflight = _fresh_preflight(fresh_imports)
     with pytest.raises(preflight.StartupPreflightError, match="EUR/USD"):
-        preflight.run_startup_preflight()
+        preflight.run_startup_preflight(require_deployment_inputs=True)
 
 
 def test_empty_active_symbol_universe_blocks_startup(
@@ -141,7 +141,7 @@ def test_malformed_permissions_block_startup(
 
     preflight = _fresh_preflight(fresh_imports)
     with pytest.raises(preflight.StartupPreflightError, match="role list"):
-        preflight.run_startup_preflight()
+        preflight.run_startup_preflight(require_deployment_inputs=True)
 
 
 def test_corrupt_persisted_fsm_state_blocks_startup(
