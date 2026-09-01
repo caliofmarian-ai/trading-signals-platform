@@ -64,6 +64,24 @@ def test_direction_selects_the_relevant_available_distance(canonical_runtime_roo
     assert sell.structure.available_distance == pytest.approx(sell.evidence.distance_to_support)
 
 
+def test_current_wick_is_not_misclassified_as_a_structural_barrier(
+    canonical_runtime_root: Path,
+) -> None:
+    params, _, m5, market = _inputs(canonical_runtime_root)
+    price = market.context.latest_price
+    # A raw wick immediately above price is not a confirmed swing.  The prior
+    # confirmed M5 pivot must remain the relevant resistance.
+    m5[0]["open"] = price
+    m5[0]["close"] = price
+    m5[0]["high"] = price + 0.000005
+    m5[0]["low"] = price - 0.000005
+
+    result = evaluate_corridor(m5, replace(market, direction_bias="BUY"), params)
+
+    assert result.structure.resistance != pytest.approx(price + 0.000005)
+    assert result.structure.available_distance > 0.000005
+
+
 def test_required_room_comes_from_buffer_and_versioned_multiplier(canonical_runtime_root: Path) -> None:
     params, _, m5, market = _inputs(canonical_runtime_root)
     result = evaluate_corridor(m5, market, params)

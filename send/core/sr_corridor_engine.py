@@ -17,6 +17,7 @@ from .market_model import MarketModelResult
 SCHEMA_VERSION = "1.0.0"
 LEGACY_STRUCTURE_LOOKBACK = 80
 LEGACY_LEVEL_CLUSTER_TOLERANCE = 0.002
+STRUCTURAL_PIVOT_SPAN = 2
 
 
 class CorridorUnavailable(ValueError):
@@ -87,12 +88,39 @@ def _cluster_levels(levels: Sequence[float], tolerance: float) -> tuple[float, .
 
 
 def _structural_levels(candles: Sequence[Mapping[str, Any]]) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Return confirmed local swing levels, not every raw candle extreme.
+
+    A raw high/low is not automatically a structural barrier.  Requiring two
+    candles on both sides of a local extremum implements the canonical
+    relevance rule and prevents the current candle's wick from manufacturing
+    near-zero corridor room.
+    """
     recent = candles[:LEGACY_STRUCTURE_LOOKBACK]
     highs = [float(candle["high"]) for candle in recent]
     lows = [float(candle["low"]) for candle in recent]
     observed_range = max(highs) - min(lows)
     tolerance = observed_range * LEGACY_LEVEL_CLUSTER_TOLERANCE if observed_range > 0 else 1e-9
-    return _cluster_levels(lows, tolerance), _cluster_levels(highs, tolerance)
+    pivot_highs: list[float] = []
+    pivot_lows: list[float] = []
+    span = STRUCTURAL_PIVOT_SPAN
+    for index in range(span, len(recent) - span):
+        neighboring_highs = highs[index - span:index] + highs[index + 1:index + span + 1]
+        neighboring_lows = lows[index - span:index] + lows[index + 1:index + span + 1]
+        if highs[index] >= max(neighboring_highs) and any(
+            highs[index] > value for value in neighboring_highs
+        ):
+            pivot_highs.append(highs[index])
+        if lows[index] <= min(neighboring_lows) and any(
+            lows[index] < value for value in neighboring_lows
+        ):
+            pivot_lows.append(lows[index])
+    # A repeatedly tested horizontal boundary is structurally relevant even
+    # when it forms a perfectly flat plateau with no single strict pivot.
+    if not pivot_highs and max(highs) - min(highs) <= tolerance:
+        pivot_highs.append(highs[0])
+    if not pivot_lows and max(lows) - min(lows) <= tolerance:
+        pivot_lows.append(lows[0])
+    return _cluster_levels(pivot_lows, tolerance), _cluster_levels(pivot_highs, tolerance)
 
 
 def _identity(symbol: str, support: float | None, resistance: float | None) -> str:

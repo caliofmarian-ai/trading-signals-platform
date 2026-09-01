@@ -156,6 +156,8 @@ def render_debug_last(
             f"Feasibility: {_clean(structure.get('feasibility_state'))}",
             f"Available distance: {_clean(structure.get('available_distance'))}",
             f"Required distance: {_clean(structure.get('required_distance'))}",
+            f"Room ratio: {_clean(structure.get('room_ratio'))}",
+            f"Relevant levels: support {_clean(structure.get('support_level_count'))}; resistance {_clean(structure.get('resistance_level_count'))}",
         ])
 
     if time_context:
@@ -191,6 +193,9 @@ def render_debug_last(
             f"Trend: {_clean(market.get('trend_context'))}",
             f"Volatility: {_clean(market.get('volatility_state'))}",
             f"Noise: {_clean(market.get('noise_context'))}",
+            f"Average M1 range: {_clean(market.get('average_m1_range'))}",
+            f"Minimum M1 range: {_clean(market.get('minimum_m1_range'))}",
+            f"M5 ATR: {_clean(market.get('atr_m5'))}",
         ])
 
     if sr_gate:
@@ -244,6 +249,26 @@ def _v3_decisions(events: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]
     ]
 
 
+def _unique_candle_decisions(decisions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep the latest evaluation for each symbol/timeframe/candle.
+
+    Engine ticks are operational evidence, but repeated evaluations of one M1
+    candle are not independent strategy samples.
+    """
+    unique: Dict[tuple[str, str, int], Dict[str, Any]] = {}
+    unkeyed: List[Dict[str, Any]] = []
+    for event in decisions:
+        data = event.get("data", {})
+        symbol = str(event.get("symbol") or "").strip().upper()
+        timeframe = str(event.get("timeframe") or "").strip().upper()
+        candle_ts = data.get("candle_ts")
+        if symbol and timeframe and isinstance(candle_ts, int) and not isinstance(candle_ts, bool):
+            unique[(symbol, timeframe, candle_ts)] = event
+        else:
+            unkeyed.append(event)
+    return list(unique.values()) + unkeyed
+
+
 def _decision_blockers(event: Dict[str, Any]) -> List[str]:
     data = event.get("data", {})
     decision_object = data.get("decision_object") if isinstance(data.get("decision_object"), dict) else {}
@@ -256,7 +281,8 @@ def render_research_analytics_panel(recent_events: Optional[List[Dict[str, Any]]
     """Descriptive v3 strategy analytics; never strategy mutation authority."""
     if recent_events is None:
         return _lines(["Research & Analytics", "", "UNAVAILABLE (engine event log absent or invalid)."])
-    decisions = _v3_decisions(recent_events)
+    raw_decisions = _v3_decisions(recent_events)
+    decisions = _unique_candle_decisions(raw_decisions)
     if not decisions:
         return _lines([
             "Research & Analytics", "", "No v3 strategy evaluations are recorded in the selected evidence window.",
@@ -276,7 +302,8 @@ def render_research_analytics_panel(recent_events: Optional[List[Dict[str, Any]]
     lines = [
         "Research & Analytics", "",
         f"Evidence window: latest {len(recent_events)} engine events",
-        f"V3 strategy evaluations: {len(decisions)}",
+        f"Raw strategy evaluations: {len(raw_decisions)}",
+        f"V3 strategy evaluations (unique candles): {len(decisions)}",
         f"REJECT: {kinds['REJECT']}",
         f"NO_SIGNAL: {kinds['NO_SIGNAL']}",
         f"PRE: {kinds['PRE']}",
@@ -411,9 +438,10 @@ def render_intelligence_panel(recent_events: Optional[List[Dict[str, Any]]] = No
         ])
         return _lines(lines)
 
-    decisions = _v3_decisions(events)
+    raw_decisions = _v3_decisions(events)
+    decisions = _unique_candle_decisions(raw_decisions)
     rejects = [e for e in events if e.get("event_type") in ("reject", "signal_reject")]
-    all_kinds = [str(e.get("data", {}).get("decision_kind", "") or "").upper() for e in events if isinstance(e.get("data"), dict)]
+    all_kinds = [str(e.get("data", {}).get("decision_kind", "") or "").upper() for e in decisions if isinstance(e.get("data"), dict)]
     open_now_count = sum(1 for k in all_kinds if k == "OPEN_NOW")
     confirm_count = sum(1 for k in all_kinds if k == "CONFIRM")
     pre_count = sum(1 for k in all_kinds if k == "PRE")
@@ -422,6 +450,8 @@ def render_intelligence_panel(recent_events: Optional[List[Dict[str, Any]]] = No
     lines.extend([
         "Decision Intelligence",
         f"Recent events analyzed: {len(events)}",
+        f"Raw strategy evaluations: {len(raw_decisions)}",
+        f"V3 strategy evaluations (unique candles): {len(decisions)}",
         f"  OPEN_NOW signals: {open_now_count}",
         f"  CONFIRM signals: {confirm_count}",
         f"  PRE signals: {pre_count}",
@@ -429,7 +459,7 @@ def render_intelligence_panel(recent_events: Optional[List[Dict[str, Any]]] = No
     ])
 
     reject_reasons: Dict[str, int] = {}
-    for e in events:
+    for e in decisions:
         data = e.get("data") if isinstance(e.get("data"), dict) else {}
         reason = (
             data.get("rejected_reason")

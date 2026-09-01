@@ -775,7 +775,8 @@ def test_research_and_intelligence_consume_v3_decision_evidence():
     research = render_research_analytics_panel(events)
     intelligence = render_intelligence_panel(events)
 
-    assert "V3 strategy evaluations: 3" in research
+    assert "Raw strategy evaluations: 3" in research
+    assert "V3 strategy evaluations (unique candles): 3" in research
     assert "REJECT: 2" in research
     assert "NO_SIGNAL: 1" in research
     assert "Average classical score: 65.33" in research
@@ -783,3 +784,33 @@ def test_research_and_intelligence_consume_v3_decision_evidence():
     assert "No threshold or production-strategy change is authorized" in research
     assert "Dominant blocker set: TIME_NOT_FEASIBLE" in intelligence
     assert "investigate this layer before changing score thresholds" in intelligence
+
+
+def test_research_deduplicates_repeated_engine_ticks_for_the_same_candle():
+    from core.admin_views import render_intelligence_panel, render_research_analytics_panel
+
+    def event(candle_ts, score):
+        return {
+            "event_type": "decision_evaluated",
+            "symbol": "EUR/USD",
+            "timeframe": "M1",
+            "data": {
+                "candle_ts": candle_ts,
+                "decision_kind": "REJECT",
+                "score_total": score,
+                "trade_physics": {"TPS": None},
+                "decision_object": {"reject": {"hard_blockers": ["STRUCTURE_NOT_VALID"]}},
+            },
+        }
+
+    events = [event(1000, 20.0), event(1000, 30.0), event(1060, 40.0)]
+
+    research = render_research_analytics_panel(events)
+    intelligence = render_intelligence_panel(events)
+
+    assert "Raw strategy evaluations: 3" in research
+    assert "V3 strategy evaluations (unique candles): 2" in research
+    assert "Average classical score: 35.0" in research
+    assert "STRUCTURE_NOT_VALID: 2" in research
+    assert "V3 strategy evaluations (unique candles): 2" in intelligence
+    assert "Rejections: 2" in intelligence

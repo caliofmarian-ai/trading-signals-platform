@@ -123,6 +123,23 @@ def _trade_physics_dict(decision_dict: Dict[str, Any]) -> Dict[str, Any]:
 def _log_decision_evaluated(evaluation, buffer_mode: str) -> None:
     decision = evaluation.decision
     decision_dict = decision.to_dict()
+    # Preserve the canonical DecisionObject while enriching its observable
+    # contexts with the upstream evidence required to diagnose calibration.
+    market_context = decision_dict.get("market_context")
+    if isinstance(market_context, dict):
+        market_context.update({
+            "average_m1_range": evaluation.market.evidence.average_m1_range,
+            "minimum_m1_range": evaluation.market.evidence.minimum_m1_range,
+            "atr_m5": evaluation.market.evidence.atr_m5,
+        })
+    structure = decision_dict.get("structure")
+    if isinstance(structure, dict):
+        structure.update({
+            "required_distance": evaluation.corridor.evidence.required_distance,
+            "room_ratio": evaluation.corridor.evidence.room_ratio,
+            "support_level_count": len(evaluation.corridor.evidence.support_levels),
+            "resistance_level_count": len(evaluation.corridor.evidence.resistance_levels),
+        })
     correlation: Dict[str, Any] = {
         "setup_correlation_id": evaluation.cycle_id,
         "signal_id": decision.signal_id,
