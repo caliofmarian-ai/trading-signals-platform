@@ -114,6 +114,7 @@ def advance_persistent_fsm(
     last_stage_candle_field = {
         "PRE": "last_pre_candle_ts",
         "CONFIRM": "last_confirm_candle_ts",
+        "OPEN_NOW": "last_open_candle_ts",
     }.get(decision.kind)
     if (
         last_stage_candle_field is not None
@@ -171,9 +172,21 @@ def advance_persistent_fsm(
                 next_state=state,
                 transition_event=None,
             )
+
+        # OPEN_NOW must not reuse the legacy fsm_runtime transition because that
+        # transition marks LIVE_SENT before downstream publication succeeds. The
+        # FSM nevertheless owns duplicate lifecycle suppression, so persist only
+        # the fact that this opportunity/stage/candle was released. This marker
+        # is restart-safe and does not claim distribution or broker execution.
+        if not isinstance(symbol_state, dict):
+            raise RuntimeError("FSM invariant violated: missing per-symbol state for OPEN_NOW")
+        symbol_state["last_open_candle_ts"] = decision.setup.evaluated_ts
+        symbol_state["last_transition_ts"] = now_ts
+        state_changed = working != state
+
         return _result(
             accepted=True,
-            state_changed=False,
+            state_changed=state_changed,
             requested_stage="OPEN_NOW",
             accepted_stage="OPEN_NOW",
             signal_id=decision.signal_id,
@@ -183,9 +196,21 @@ def advance_persistent_fsm(
             reason_family="STAGE_ACCEPTED",
             stage_handoff_ready=True,
             trade_execution_ready=True,
-            next_state=state,
+            next_state=working,
             transition_event=None,
         )
+
+    # A newly accepted PRE establishes a new opportunity identity. Clear the
+    # prior opportunity's OPEN_NOW marker before applying the PRE transition so
+    # an unrelated opportunity evaluated on the same candle cannot be falsely
+    # suppressed by the old identity's marker.
+    if (
+        decision.kind == "PRE"
+        and isinstance(symbol_state, dict)
+        and current_id is not None
+        and current_id != decision.signal_id
+    ):
+        symbol_state["last_open_candle_ts"] = None
 
     try:
         next_state, event = fsm_runtime.apply_transition(working, payload, now_ts)
