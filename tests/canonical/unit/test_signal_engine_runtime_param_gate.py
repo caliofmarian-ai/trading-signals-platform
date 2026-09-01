@@ -98,7 +98,9 @@ def test_signal_engine_blocks_invalid_params_before_strategy_or_distribution(
     monkeypatch.setattr(
         signal_engine,
         "_load_algo_params",
-        lambda: (_ for _ in ()).throw(runtime_param_gate.RuntimeParameterError("invalid bundle")),
+        lambda: (_ for _ in ()).throw(
+            signal_engine.runtime_param_gate.RuntimeParameterError("invalid bundle")
+        ),
     )
 
     decide_calls: list[object] = []
