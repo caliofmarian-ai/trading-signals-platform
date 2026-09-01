@@ -352,12 +352,43 @@ def test_operational_snapshot_preserves_market_collection_evidence():
         "market_data_candle_counts": {"M1": 7, "M5": 2},
         "market_data_minimum_candles": 201,
         "market_data_history_ready": False,
+        "market_data_bootstrap_state": "READY",
+        "market_data_stream_state": "LIVE",
+        "market_data_rate_limit_state": "WITHIN_LOCAL_BUDGET",
+        "market_data_rest_requests_last_minute": 3,
+        "market_data_rest_requests_per_minute_limit": 8,
+        "market_data_retry_after_ts": 1_800_000_060,
     })
 
     assert snapshot["overall_state"].startswith("MARKET_DATA_COLLECTING")
     assert snapshot["market_data_candle_counts"] == {"M1": 7, "M5": 2}
     assert snapshot["market_data_minimum_candles"] == 201
     assert snapshot["market_data_history_ready"] is False
+    assert snapshot["market_data_bootstrap_state"] == "READY"
+    assert snapshot["market_data_stream_state"] == "LIVE"
+    assert snapshot["market_data_rate_limit_state"] == "WITHIN_LOCAL_BUDGET"
+    assert snapshot["market_data_rest_requests_last_minute"] == 3
+    assert snapshot["market_data_rest_requests_per_minute_limit"] == 8
+    assert snapshot["market_data_retry_after_ts"] == 1_800_000_060
+
+
+def test_status_page_exposes_live_provider_evidence():
+    from core.telegram_app_nav import render_status_page
+
+    text, _markup = render_status_page(_make_snapshot(
+        market_data_bootstrap_state="READY",
+        market_data_stream_state="LIVE",
+        market_data_rate_limit_state="WITHIN_LOCAL_BUDGET",
+        market_data_rest_requests_last_minute=3,
+        market_data_rest_requests_per_minute_limit=8,
+        market_data_retry_after_ts=1_800_000_060,
+    ))
+
+    assert "History bootstrap: READY" in text
+    assert "Live stream: LIVE" in text
+    assert "Provider rate limit: WITHIN_LOCAL_BUDGET" in text
+    assert "REST usage (rolling minute): 3/8" in text
+    assert "REST retry permitted after Unix time: 1800000060" in text
 
     def test_status_has_refresh_button(self):
         from core.telegram_app_nav import render_status_page, ACT_STATUS
