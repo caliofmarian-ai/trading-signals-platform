@@ -1,0 +1,31 @@
+name: Active Canon Stale Claim Repair
+
+on:
+  push:
+    branches:
+      - governance/active-canon-metadata-cleanup-20260901
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: governance/active-canon-metadata-cleanup-20260901
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply exact stale-claim repairs
+        run: python scripts/_tmp_active_canon_stale_claim_repair.py
+      - name: Commit repairs
+        run: |
+          git status --short
+          git config user.name 'caliofmarian-ai'
+          git config user.email 'caliofmarian@gmail.com'
+          git add send/docs/canonical/active
+          git commit -m 'Remove residual pre-promotion claims from active canon'
+          git push origin HEAD:governance/active-canon-metadata-cleanup-20260901
