@@ -40,13 +40,17 @@ def run_telemetry_cycle(
 ) -> Dict[str, Any]:
     """Process one objective telemetry sampling cycle.
 
-    Only the currently governed provider may contribute a market sample. A
-    pending trade registered under another provider is left untouched rather
-    than silently mixed with the active feed.
+    Only the currently governed provider may contribute a market sample. When a
+    checkpoint becomes due while a different provider is active, that checkpoint
+    becomes an explicit evidence gap rather than being backfilled later or mixed.
     """
 
     resolved_now = float(now_ts if now_ts is not None else time.time())
     active_provider = market_client.configured_provider().strip().upper()
+    provider_gap_result = trade_temporal_telemetry.mark_due_provider_mismatch(
+        active_provider,
+        now_ts=int(resolved_now),
+    )
     requests = trade_temporal_telemetry.pending_market_requests()
     processed = 0
     updated = 0
@@ -85,6 +89,8 @@ def run_telemetry_cycle(
         "processed_request_count": processed,
         "updated_trade_count": updated,
         "finalized_trade_count": finalized,
+        "provider_evidence_gap_count": int(provider_gap_result.get("evidence_gap_count") or 0),
+        "provider_gap_finalized_count": int(provider_gap_result.get("finalized_incomplete_count") or 0),
         "skipped_provider_mismatch_count": skipped_provider_mismatch,
         "unavailable": unavailable,
     }
