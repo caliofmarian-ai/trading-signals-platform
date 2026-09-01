@@ -711,3 +711,42 @@ def test_aliases_do_not_duplicate_canonical_entries():
     assert get_knowledge("symbols") is KNOWLEDGE_REGISTRY["symbols_coverage"]
     assert get_knowledge("sr") is KNOWLEDGE_REGISTRY["sr_corridor"]
     assert get_knowledge("audit") is KNOWLEDGE_REGISTRY["security_audit"]
+
+
+def test_decision_visibility_renders_canonical_v3_decision_object():
+    from core.admin_views import render_debug_last
+
+    event = {
+        "event_type": "decision_evaluated",
+        "symbol": "EUR/USD",
+        "timeframe": "M1",
+        "data": {
+            "decision_kind": "REJECT",
+            "direction": "BUY",
+            "score_total": 64.5,
+            "score_tier": "BLOCKED",
+            "decision_object": {
+                "setup": {"symbol": "EUR/USD", "timeframe": "M1", "direction": "BUY"},
+                "market_context": {"trend_context": "WITH_TREND", "volatility_state": "ACTIVE", "noise_context": "STABLE"},
+                "structure": {"feasibility_state": "VALID", "available_distance": 0.0012, "required_distance": 0.0010},
+                "time": {"time_state": "BLOCKED", "t_needed": 180.0, "t_needed_adjusted": 200.0, "model_time_reach_ratio": 1.2},
+                "score": {
+                    "total": 64.5,
+                    "tier": "BLOCKED",
+                    "components": {"context_trend": 30.0, "momentum_rsi": 10.0},
+                    "trade_physics": {"readiness_state": "READY", "TPS": 51.25, "S": 0.8, "T": 0.2, "P": 0.5, "V": 0.6, "space_to_buffer_ratio": 1.2, "time_to_buffer_ratio": 1.1},
+                },
+                "reject": {"reason": "TIME_NOT_FEASIBLE", "hard_blockers": ["TIME_NOT_FEASIBLE"]},
+            },
+        },
+    }
+
+    text = render_debug_last(event, availability="AVAILABLE (persisted engine event log)")
+
+    assert "RESULT: REJECT" in text
+    assert "Score Composition" in text
+    assert "S/R Corridor" in text
+    assert "Time Model" in text
+    assert "Trade Physics" in text
+    assert "TPS: 51.25" in text
+    assert "Hard Blockers\n- TIME_NOT_FEASIBLE" in text

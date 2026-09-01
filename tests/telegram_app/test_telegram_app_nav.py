@@ -391,7 +391,7 @@ def test_status_page_exposes_live_provider_evidence():
     assert "REST retry permitted after Unix time: 1800000060" in text
 
 
-def test_status_page_exposes_last_strategy_evaluation():
+def test_status_page_does_not_mix_strategy_diagnostics_into_system_health():
     from core.telegram_app_nav import render_status_page
 
     text, _markup = render_status_page(_make_snapshot(
@@ -405,11 +405,11 @@ def test_status_page_exposes_last_strategy_evaluation():
         last_strategy_hard_blockers=["TIME_NOT_FEASIBLE"],
     ))
 
-    assert "Strategy evaluations since runtime start: 42" in text
-    assert "Last strategy result: REJECT on EUR/USD" in text
-    assert "Last classical score: 64.5 (BLOCKED)" in text
-    assert "Last Trade Physics TPS: 51.25" in text
-    assert "Last hard blockers: TIME_NOT_FEASIBLE" in text
+    assert "Strategy evaluations since runtime start" not in text
+    assert "Last strategy result" not in text
+    assert "Last classical score" not in text
+    assert "Last Trade Physics TPS" not in text
+    assert "Last hard blockers" not in text
 
     def test_status_has_refresh_button(self):
         from core.telegram_app_nav import render_status_page, ACT_STATUS
