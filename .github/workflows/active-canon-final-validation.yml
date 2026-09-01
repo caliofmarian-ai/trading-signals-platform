@@ -19,4 +19,19 @@ jobs:
         with:
           python-version: '3.12'
       - name: Strict final active canon validation
-        run: python scripts/_tmp_active_canon_final_validation.py
+        id: validation
+        shell: bash
+        run: |
+          set +e
+          python scripts/_tmp_active_canon_final_validation.py > final-active-canon-validation.txt 2>&1
+          rc=$?
+          cat final-active-canon-validation.txt
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-active-canon-validation
+          path: final-active-canon-validation.txt
+      - name: Enforce validation result
+        run: |
+          test "${{ steps.validation.outputs.exit_code }}" = "0"
