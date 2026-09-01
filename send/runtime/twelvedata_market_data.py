@@ -159,11 +159,16 @@ class TwelveDataRealtimeFeed:
         except (OSError, ValueError, TypeError):
             self._store_load_state = "ERROR"
             return
-        if (
-            not isinstance(payload, dict)
-            or payload.get("provider") != "TWELVE_DATA"
-            or normalize_symbol(payload.get("symbol")) != self.symbol
-        ):
+        if not isinstance(payload, dict) or payload.get("provider") != "TWELVE_DATA":
+            self._store_load_state = "ERROR"
+            return
+        stored_symbol = payload.get("symbol")
+        try:
+            stored_symbol = normalize_symbol(stored_symbol)
+        except TwelveDataConfigurationError:
+            self._store_load_state = "ERROR"
+            return
+        if stored_symbol != self.symbol:
             self._store_load_state = "ERROR"
             return
 

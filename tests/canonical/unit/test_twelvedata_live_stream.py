@@ -123,7 +123,7 @@ def test_live_price_updates_current_m1_m5_from_real_tick(tmp_path):
         {"event": "price", "symbol": "EUR/USD", "timestamp": now_ts, "price": "1.1234"}
     )
     feed.ingest_message(
-        {"event": "price", "symbol": "EUR/USD", "timestamp": now_ts + 1, "price": "1.1238"}
+        {"event": "price", "symbol": "EUR/USD", "timestamp": now_ts, "price": "1.1238"}
     )
 
     m1 = feed.get_candles("1min")[0]
