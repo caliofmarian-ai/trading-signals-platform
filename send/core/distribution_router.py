@@ -38,7 +38,7 @@ TIERS = ("FREE", "BASIC", "PRO", "ELITE")
 # -----------------------------
 
 DEFAULT_LIMITS = {
-    "FREE": 5,
+    "FREE": 6,
     "BASIC": 20,
     "PRO": 50,
     "ELITE": None,  # unlimited

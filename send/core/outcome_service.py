@@ -16,7 +16,7 @@ OUTCOMES_JSONL = storage.root_path("outcomes", "outcomes.jsonl")
 OPEN_REGISTRY_JSON = storage.root_path("outcomes", "open_now_registry.json")
 OUTCOMES_INDEX_JSON = storage.root_path("outcomes", "outcomes_index.json")
 
-VOTE_WINDOW_GRACE_SECONDS = 5 * 60
+VOTE_WINDOW_GRACE_SECONDS = 10 * 60
 ALLOWED_OUTCOMES = {"WIN", "LOSE", "MISSED"}
 _ALLOWED_MEMBER_STATUSES = {"member", "administrator", "creator"}
 
@@ -155,6 +155,8 @@ def _build_vote_record(
 ) -> Dict[str, Any]:
     record: Dict[str, Any] = {
         "event_type": "user_outcome_record",
+        "record_schema_version": "3.0.0",
+        "truth_source": "COMMUNITY_SELF_REPORT",
         "signal_id": signal_id,
         "tier": "ELITE",
         "user_id": member_ref,
@@ -197,6 +199,7 @@ def _log_user_outcome_event(
             "user_outcome",
             {
                 "outcome": outcome,
+                "truth_source": "COMMUNITY_SELF_REPORT",
                 "policy": "LOCK_FIRST_WRITE_WINS",
                 "accepted": accepted,
                 "rejected_reason": rejected_reason,
