@@ -1,0 +1,26 @@
+name: Active Canon Promotion Language Artifact
+
+on:
+  push:
+    branches:
+      - governance/active-canon-metadata-cleanup-20260901
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: governance/active-canon-metadata-cleanup-20260901
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Capture promotion-language findings
+        run: python scripts/_tmp_active_canon_promotion_language_audit.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: active-canon-promotion-language-findings
+          path: audit/active-canon-metadata-cleanup-20260901/PROMOTION_LANGUAGE_FINDINGS.md
