@@ -44,12 +44,13 @@ def test_v2_pipeline_preserves_one_real_evaluation(canonical_runtime_root: Path)
     assert (result.corridor.symbol, result.corridor.evaluated_ts) == identity
     assert (result.time.symbol, result.time.evaluated_ts) == identity
     assert (result.scoring.symbol, result.scoring.evaluated_ts) == identity
+    assert (result.trade_physics.symbol, result.trade_physics.evaluated_ts) == identity
     assert result.decision.setup.cycle_id == "cycle-full"
     assert result.decision.setup.source == "binary_strategy_v2"
     assert result.decision.compatibility_mode is False
     assert result.decision.kind in {"NO_SIGNAL", "PRE", "CONFIRM", "OPEN_NOW", "REJECT"}
     assert result.strategy_version == STRATEGY_VERSION == "2.0.0"
-    assert result.canonical_spec == CANONICAL_SPEC == "ALGO_SPEC_v2.0.0"
+    assert result.canonical_spec == CANONICAL_SPEC == "ALGO_SPEC_v3.0.0"
     assert result.signal_handoff_ready is False
 
 
@@ -75,7 +76,10 @@ def test_runtime_blocker_stops_even_a_complete_v2_pipeline(canonical_runtime_roo
 
 def test_calibration_cannot_bypass_v2_signal_contract(canonical_runtime_root: Path) -> None:
     m1, m5, params = _inputs(canonical_runtime_root)
-    calibration = ExecutionCalibration(1.0, 0.1, 2.0, 15.0, "integration-test")
+    # Zero pressure bias keeps the downstream execution candidate inside the
+    # canonical CONFIRM interval for any valid clamped model_expiry. The point
+    # of this test is the handoff boundary, not calibration quality.
+    calibration = ExecutionCalibration(1.0, 0.0, 2.0, 15.0, "integration-test")
     result = decide(
         m1, m5, params, cycle_id="cycle-calibrated", buffer_mode="SMALL",
         execution_calibration=calibration,
