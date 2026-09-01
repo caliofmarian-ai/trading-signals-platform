@@ -1,0 +1,41 @@
+name: Live Distribution V3 Validation
+on:
+  push:
+    branches: [feature/live-distribution-telegram-v3]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest
+      - name: Compile changed modules
+        run: |
+          python -m py_compile \
+            send/core/distribution_router_v3.py \
+            send/core/distribution_router.py \
+            send/core/observability_logger.py \
+            send/core/outcome_service.py \
+            send/core/signal_execution_gate.py \
+            send/core/signal_engine.py \
+            send/state_store/state_store.py
+      - name: Focused canonical distribution suite
+        env:
+          PYTHONPATH: send
+        run: |
+          python -m pytest -q \
+            tests/canonical/integration/test_live_distribution_v3.py \
+            tests/canonical/unit/test_signal_execution_gate.py \
+            tests/canonical/unit/test_signal_engine_persistence_boundary_v3.py \
+            tests/canonical/unit/test_event_schema_v3.py \
+            tests/batch_03/test_distribution_observability_interface_repair.py \
+            tests/batch_04/test_canonical_outcome_and_telemetry_flow.py
+      - name: Full repository regression suite
+        env:
+          PYTHONPATH: send
+        run: python -m pytest -q
