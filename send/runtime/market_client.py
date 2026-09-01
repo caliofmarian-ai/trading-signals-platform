@@ -3,6 +3,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
+from math import isfinite
 
 import requests
 
@@ -272,6 +273,66 @@ def _update_twelve_data_stream_status(feed, *, state: str, note: str) -> None:
         market_data_stream_state=health.get("stream_state"),
         market_data_bootstrap_state=health.get("bootstrap_state"),
     )
+
+
+def _latest_sample_from_feed(provider: str, symbol: str, feed, candles):
+    if not isinstance(candles, list) or not candles:
+        raise MarketDataUnavailableError(f"{provider} has no live M1 candle for telemetry")
+    health = feed.health()
+    observed_ts = health.get("last_price_ts")
+    if isinstance(observed_ts, bool) or not isinstance(observed_ts, (int, float)) or observed_ts <= 0:
+        raise MarketDataUnavailableError(f"{provider} has no live observation timestamp")
+    newest = candles[0]
+    if not isinstance(newest, dict):
+        raise MarketDataUnavailableError(f"{provider} live M1 candle is invalid")
+    price = newest.get("close")
+    if isinstance(price, bool) or not isinstance(price, (int, float)):
+        raise MarketDataUnavailableError(f"{provider} live price is unavailable")
+    resolved_price = float(price)
+    if not isfinite(resolved_price) or resolved_price <= 0:
+        raise MarketDataUnavailableError(f"{provider} live price is invalid")
+    candle_ts = newest.get("ts")
+    if isinstance(candle_ts, bool) or not isinstance(candle_ts, (int, float)):
+        raise MarketDataUnavailableError(f"{provider} live M1 timestamp is invalid")
+    if not float(candle_ts) <= float(observed_ts) < float(candle_ts) + 60.0:
+        raise MarketDataUnavailableError(
+            f"{provider} live price timestamp does not match the current M1 candle"
+        )
+    return {
+        "provider": provider,
+        "symbol": str(symbol).strip().upper().replace("_", "/"),
+        "price": resolved_price,
+        "observed_ts": float(observed_ts),
+        "source": "LIVE_STREAM_CURRENT_M1_CLOSE",
+    }
+
+
+def get_latest_price_sample(symbol: str):
+    """Return one provider-exclusive real live price observation for telemetry.
+
+    The sample comes from the active provider's streaming feed only. The current
+    incomplete M1 close is the latest real tick price already ingested by that
+    feed; its timestamp comes from the feed's last real price observation. No
+    cross-provider fallback, interpolation, model estimate, or historical candle
+    substitution is permitted.
+    """
+
+    provider = configured_provider()
+    normalized_symbol = str(symbol).strip().upper().replace("_", "/")
+    try:
+        if provider == "FINNHUB":
+            feed = _finnhub_feed()
+            candles = feed.get_candles(normalized_symbol, "M1")
+            return _latest_sample_from_feed(provider, normalized_symbol, feed, candles)
+        if provider == "TWELVE_DATA":
+            feed = _twelve_data_feed(normalized_symbol)
+            candles = feed.get_candles("M1")
+            return _latest_sample_from_feed(provider, normalized_symbol, feed, candles)
+    except MarketDataUnavailableError:
+        raise
+    except Exception as exc:
+        raise MarketDataUnavailableError(str(exc)) from exc
+    raise MarketDataUnavailableError(f"Unsupported active market-data provider: {provider}")
 
 
 def get_candles(symbol: str, timeframe: str, *, prefer_live: bool = False):

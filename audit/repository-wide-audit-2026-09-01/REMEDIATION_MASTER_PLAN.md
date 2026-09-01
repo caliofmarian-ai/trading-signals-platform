@@ -22,7 +22,10 @@ Base audited commit: `7b26d33e34cf30790c52583a75d1ed36a2b9cf52`
 
 ### R-001 — Execution Time authority end-to-end
 Severity: CRITICAL
-Status: IN PROGRESS
+Status: CLOSED
+PR: #100
+Merged main commit: `480303bc1e52c3610c0e9ffab3e539fcad358c16`
+Validation: 971 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed.
 
 Problem:
 - External `expiry_minutes` is currently derived from `ceil(model_expiry)` in SignalEvent compatibility behavior.
@@ -43,8 +46,9 @@ Acceptance:
 
 ### R-002 — Objective Trade Temporal Telemetry completion
 Severity: CRITICAL
-Status: PENDING
-Depends on: R-001
+Status: IN PROGRESS
+PR: #101 (Draft until final audit/CI completion)
+Depends on: R-001 — SATISFIED
 
 Problem:
 - OPEN trade telemetry is registered, but objective expiry and post-expiry prices/results remain placeholders.
@@ -339,3 +343,6 @@ The repository-wide remediation program is complete only when:
 
 - 2026-09-01: repository-wide audit completed against main commit `7b26d33e34cf30790c52583a75d1ed36a2b9cf52`.
 - 2026-09-01: remediation program created; R-001 started on branch `remediation/audit-2026-09-01-r001-execution-time`.
+- 2026-09-01: R-001 merged through PR #100; main advanced to `480303bc1e52c3610c0e9ffab3e539fcad358c16`; Issue #98 closed automatically.
+- 2026-09-01: R-002 started on branch `remediation/audit-2026-09-01-r002-objective-telemetry`; PR #101 opened Draft.
+- 2026-09-01: R-002 current CI evidence on head prior to this plan update: provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 980 passed.

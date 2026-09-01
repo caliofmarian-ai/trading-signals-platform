@@ -22,8 +22,10 @@ from typing import Any, Dict, Mapping, Optional
 from zoneinfo import ZoneInfo
 
 from core import distribution_router as legacy
+from core import market_data_provider_control
 from core import observability_logger
 from core import outcome_service
+from core import trade_temporal_telemetry
 
 
 TIERS = ("FREE", "BASIC", "PRO", "ELITE")
@@ -457,6 +459,32 @@ def _visibility_event(
     )
 
 
+def _register_market_telemetry(
+    event: Dict[str, Any],
+    *,
+    route: str,
+    destination_id: int,
+    message_id: Optional[int],
+    result_event: Dict[str, Any],
+    visibility_event: Dict[str, Any],
+    now_ts: int,
+) -> Dict[str, Any]:
+    """Register objective telemetry only after governed OPEN_NOW visibility."""
+
+    return trade_temporal_telemetry.register_open_now_trade(
+        event,
+        market_provider=market_data_provider_control.get_active_provider(),
+        publication_evidence={
+            "route_result_event_id": str(result_event["event_id"]),
+            "visibility_event_id": str(visibility_event["event_id"]),
+            "route": route,
+            "destination_id": int(destination_id),
+            "message_id": message_id,
+        },
+        now_ts=now_ts,
+    )
+
+
 def _record_summary_result(
     summary: Dict[str, Any],
     result_event: Dict[str, Any],
@@ -519,6 +547,7 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
         "block_reason": None,
         "route_results": [],
         "publication_evidence": [],
+        "telemetry_errors": [],
     }
 
     if os.getenv("MARKET_DATA_PROVIDER", "TWELVE_DATA").strip().upper() == "FINNHUB":
@@ -987,13 +1016,44 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
                     thread_id=thread_id,
                     feedback_enabled=feedback_enabled,
                 )
-                _visibility_event(
+                visibility_event = _visibility_event(
                     event,
                     route=route_name,
                     destination_id=int(chat_id),
                     message_id=message_id,
                     result_event_id=result_event["event_id"],
                 )
+                if stage == "OPEN_NOW":
+                    try:
+                        _register_market_telemetry(
+                            event,
+                            route=route_name,
+                            destination_id=int(chat_id),
+                            message_id=message_id,
+                            result_event=result_event,
+                            visibility_event=visibility_event,
+                            now_ts=now_ts,
+                        )
+                    except Exception as telemetry_exc:
+                        summary["telemetry_errors"].append(
+                            {
+                                "signal_id": signal_id,
+                                "route": route_name,
+                                "error": str(telemetry_exc),
+                            }
+                        )
+                        observability_logger.log_warning(
+                            warn_type="TRADE_TEMPORAL_TELEMETRY_REGISTRATION_FAILED",
+                            message="OPEN_NOW was published but objective telemetry registration failed",
+                            context={
+                                "signal_id": signal_id,
+                                "route": route_name,
+                                "publication_event_id": result_event["event_id"],
+                                "visibility_event_id": visibility_event["event_id"],
+                                "error": str(telemetry_exc),
+                            },
+                            source={"module": "distribution_router_v3", "function": "route"},
+                        )
                 if is_tier and tier == "ELITE" and stage == "OPEN_NOW" and feedback_enabled and message_id:
                     outcome_service.register_open_now(
                         signal_id=signal_id,
