@@ -211,15 +211,22 @@ def _validate_runtime_state() -> Dict[str, Any]:
 def run_startup_preflight(
     *,
     require_shadow_mode: bool = False,
-    require_deployment_inputs: bool = True,
+    require_deployment_inputs: bool | None = None,
 ) -> Dict[str, Any]:
     """Validate critical startup inputs without network access or live mutations.
 
-    Governed Railway/shadow startup uses ``require_deployment_inputs=True`` and
-    therefore validates provider readiness plus Admin/distribution configuration.
-    Generic test/development boot may set it false, but still cannot bypass
-    governed algo params, active-symbol, broker-safety, or persisted-state checks.
+    Governed Railway/shadow startup always validates provider readiness plus
+    Admin/distribution configuration. Generic test/development boot still cannot
+    bypass governed algo params, active symbols, broker safety or persisted-state
+    validation. Callers can explicitly force deployment-level validation.
     """
+
+    if require_deployment_inputs is None:
+        require_deployment_inputs = bool(
+            require_shadow_mode
+            or _env_flag("RAILWAY_READINESS_EVALUATED", default=False)
+            or _env_flag("SHADOW_MODE", default=False)
+        )
 
     try:
         if require_shadow_mode and not _env_flag("SHADOW_MODE", default=False):
