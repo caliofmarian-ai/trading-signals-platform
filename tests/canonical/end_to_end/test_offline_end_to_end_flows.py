@@ -46,7 +46,12 @@ def test_successful_signal_lifecycle_offline(canonical_runtime_root: Path, monke
     report = research.build_research_report()
     research.persist_research_report(report)
 
-    assert aggregates["wins"] >= 1
+    assert aggregates["community_truth"]["truth_domain"] == "COMMUNITY_TRUTH"
+    assert aggregates["community_truth"]["authoritative_for_strategy_performance"] is False
+    assert aggregates["community_truth"]["wins"] >= 1
+    assert "wins" not in aggregates
+    assert "win_rate" not in aggregates
+    assert aggregates["strategy_performance_truth_domain"] == "MARKET_TRUTH"
     assert aggregates["distribution"]["PUBLISHED"] >= 1
     assert report["research"]["advisory_only"] is True
 
