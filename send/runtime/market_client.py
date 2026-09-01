@@ -1,5 +1,7 @@
 import os
+import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 
 import requests
@@ -29,6 +31,8 @@ class MarketDataUnavailableError(RuntimeError):
 _FINNHUB_FEED = None
 _TWELVE_DATA_FEEDS = {}
 _TWELVE_DATA_REST_CACHE = {}
+_REST_REQUEST_TIMESTAMPS = deque()
+_REST_REQUEST_LOCK = threading.Lock()
 
 
 def configured_provider() -> str:
@@ -76,6 +80,36 @@ def _api_key() -> str:
     return token
 
 
+def _reserve_rest_request(now_ts: int) -> None:
+    """Enforce a conservative, configurable local REST budget before I/O."""
+    limit = max(1, int(os.getenv("TWELVE_DATA_REST_REQUESTS_PER_MINUTE", "8")))
+    with _REST_REQUEST_LOCK:
+        cutoff = int(now_ts) - 60
+        while _REST_REQUEST_TIMESTAMPS and _REST_REQUEST_TIMESTAMPS[0] <= cutoff:
+            _REST_REQUEST_TIMESTAMPS.popleft()
+        used = len(_REST_REQUEST_TIMESTAMPS)
+        if used >= limit:
+            retry_after_ts = int(_REST_REQUEST_TIMESTAMPS[0]) + 60
+            runtime_status.update_status(
+                market_data_state="MARKET_DATA_LIMITED",
+                market_data_note="Twelve Data local REST request budget exhausted; scan failed closed",
+                market_data_provider="TWELVE_DATA",
+                market_data_rate_limit_state="LOCAL_BUDGET_EXHAUSTED",
+                market_data_rest_requests_last_minute=used,
+                market_data_rest_requests_per_minute_limit=limit,
+                market_data_retry_after_ts=retry_after_ts,
+            )
+            raise MarketDataRateLimitError(
+                f"Twelve Data local REST budget exhausted: {used}/{limit} requests per minute"
+            )
+        _REST_REQUEST_TIMESTAMPS.append(int(now_ts))
+        runtime_status.update_status(
+            market_data_rate_limit_state="WITHIN_LOCAL_BUDGET",
+            market_data_rest_requests_last_minute=used + 1,
+            market_data_rest_requests_per_minute_limit=limit,
+        )
+
+
 def fetch_klines(symbol: str, interval: str, limit: int = 50):
     """
     Fetch candles from TwelveData API.
@@ -106,6 +140,8 @@ def fetch_klines(symbol: str, interval: str, limit: int = 50):
             market_data_provider="TWELVE_DATA",
         )
         raise MarketDataRateLimitError("Twelve Data HTTP 429 backoff active")
+
+    _reserve_rest_request(now_ts)
 
     last_exc = None
     for attempt in range(3):
@@ -163,6 +199,7 @@ def fetch_klines(symbol: str, interval: str, limit: int = 50):
                 market_data_retry_after_ts=None,
                 market_data_provider="TWELVE_DATA",
                 last_market_data_success_ts=now_ts,
+                market_data_rate_limit_state="CLEAR",
             )
 
             return data["values"]
