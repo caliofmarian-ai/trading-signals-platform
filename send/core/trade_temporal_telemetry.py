@@ -1,18 +1,26 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any, Dict, Optional
 
 from core import observability_logger
 from core import storage
 
 
-TELEMETRY_VERSION = "2.0.0"
+TELEMETRY_VERSION = "2.1.0"
 OPEN_TRADES_REGISTRY_JSON = storage.root_path("observability", "open_trades_registry.json")
 
 
-def _iso_utc(epoch_seconds: int) -> str:
-    return datetime.fromtimestamp(int(epoch_seconds), tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+def _canonical_timestamp(value: float | int) -> float | int:
+    number = float(value)
+    return int(number) if number.is_integer() else number
+
+
+def _iso_utc(epoch_seconds: float | int) -> str:
+    value = float(epoch_seconds)
+    timespec = "seconds" if value.is_integer() else "milliseconds"
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat(timespec=timespec).replace("+00:00", "Z")
 
 
 def _require_str(value: Any, field_name: str) -> str:
@@ -33,7 +41,10 @@ def _require_int(value: Any, field_name: str) -> int:
 def _require_number(value: Any, field_name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{field_name} must be a number")
-    return float(value)
+    result = float(value)
+    if not isfinite(result):
+        raise ValueError(f"{field_name} must be finite")
+    return result
 
 
 def _load_registry() -> Dict[str, Any]:
@@ -53,8 +64,34 @@ def _save_registry(registry: Dict[str, Any]) -> None:
 
 def _extract_entry_price(event: Dict[str, Any]) -> float:
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
-    entry_price = payload.get("price")
-    return _require_number(entry_price, "payload.price")
+    entry_price = payload.get("latest_price", payload.get("price"))
+    return _require_number(entry_price, "payload.latest_price")
+
+
+def _extract_execution_expiry(event: Dict[str, Any]) -> float:
+    """Return the exact governed OPEN_NOW execution expiry.
+
+    New SignalEvent contracts must prove execution-time availability and expose
+    ``open_now_expiry_minutes``. The legacy ``signal_event`` test/migration
+    envelope may still provide only ``expiry_minutes``; that adapter is not a
+    Model-Time derivation and is retained solely for migration compatibility.
+    """
+
+    if "execution_time_available" in event or "open_now_expiry_minutes" in event:
+        if event.get("execution_time_available") is not True:
+            raise ValueError("governed execution time is required for OPEN_NOW telemetry")
+        expiry = _require_number(event.get("open_now_expiry_minutes"), "open_now_expiry_minutes")
+        compatibility = event.get("expiry_minutes")
+        if compatibility is not None:
+            alias = _require_number(compatibility, "expiry_minutes")
+            if alias != expiry:
+                raise ValueError("expiry_minutes conflicts with governed OPEN_NOW expiry")
+    else:
+        expiry = _require_number(event.get("expiry_minutes"), "expiry_minutes")
+
+    if expiry <= 0:
+        raise ValueError("execution expiry must be positive")
+    return expiry
 
 
 def _build_trade_record(event: Dict[str, Any], now_ts: int) -> Dict[str, Any]:
@@ -66,10 +103,7 @@ def _build_trade_record(event: Dict[str, Any], now_ts: int) -> Dict[str, Any]:
     if stage != "OPEN_NOW":
         raise ValueError("stage must be OPEN_NOW")
 
-    expiry_minutes = _require_int(event.get("expiry_minutes"), "expiry_minutes")
-    if expiry_minutes <= 0:
-        raise ValueError("expiry_minutes must be positive")
-
+    expiry_minutes = _extract_execution_expiry(event)
     open_ts = _require_int(event.get("created_ts"), "created_ts")
     candle_ts = _require_int(event.get("candle_ts"), "candle_ts")
     entry_price = _extract_entry_price(event)
@@ -79,8 +113,10 @@ def _build_trade_record(event: Dict[str, Any], now_ts: int) -> Dict[str, Any]:
     if tps_value is not None:
         tps_value = _require_number(tps_value, "TPS")
 
-    expiry_ts = open_ts + (expiry_minutes * 60)
-    mid_expiry_ts = open_ts + ((expiry_minutes * 60) // 2)
+    expiry_seconds = expiry_minutes * 60.0
+    expiry_ts = _canonical_timestamp(open_ts + expiry_seconds)
+    mid_expiry_ts = _canonical_timestamp(open_ts + (expiry_seconds / 2.0))
+    canonical_expiry = _canonical_timestamp(expiry_minutes)
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
 
     return {
@@ -93,7 +129,7 @@ def _build_trade_record(event: Dict[str, Any], now_ts: int) -> Dict[str, Any]:
         "entry_price": entry_price,
         "open_ts": open_ts,
         "open_ts_utc": _iso_utc(open_ts),
-        "expiry_minutes": expiry_minutes,
+        "expiry_minutes": canonical_expiry,
         "expiry_ts": expiry_ts,
         "expiry_ts_utc": _iso_utc(expiry_ts),
         "mid_expiry_ts": mid_expiry_ts,
@@ -104,6 +140,7 @@ def _build_trade_record(event: Dict[str, Any], now_ts: int) -> Dict[str, Any]:
         "TPS": tps_value,
         "buffer_mode": _require_str(event.get("buffer_mode"), "buffer_mode"),
         "buffer_price": _require_number(event.get("buffer_price"), "buffer_price"),
+        "execution_calibration_source": event.get("execution_calibration_source"),
         "telemetry_status": "OPEN",
         "result_at_expiry": None,
         "mid_expiry_price": None,
