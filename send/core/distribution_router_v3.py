@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime
+from math import isfinite
 import os
 import time
 from typing import Any, Dict, Mapping, Optional
@@ -73,6 +74,51 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
+def _safe_positive_float(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    result = float(value)
+    if not isfinite(result) or result <= 0:
+        return None
+    return result
+
+
+def _format_minutes(value: float) -> str:
+    number = float(value)
+    return str(int(number)) if number.is_integer() else format(number, ".15g")
+
+
+def _render_signal_text(event: Dict[str, Any], tier_label: str) -> str:
+    """Render timing without inventing or rounding trader-facing expiry."""
+
+    stage = str(event.get("stage") or "").upper()
+    symbol = event.get("symbol")
+    direction = event.get("direction")
+    timeframe = event.get("timeframe")
+    score = float(event.get("score_total") or 0.0)
+    buffer_mode = event.get("buffer_mode")
+
+    timing = ""
+    if stage == "OPEN_NOW":
+        expiry = _safe_positive_float(event.get("open_now_expiry_minutes"))
+        if expiry is not None:
+            timing = f" | Exp: {_format_minutes(expiry)}m"
+    elif stage == "CONFIRM" and event.get("execution_time_available") is True:
+        minimum = _safe_positive_float(event.get("confirm_expiry_min_minutes"))
+        maximum = _safe_positive_float(event.get("confirm_expiry_max_minutes"))
+        if minimum is not None and maximum is not None:
+            timing = f" | Exp range: {_format_minutes(minimum)}–{_format_minutes(maximum)}m"
+
+    lines = [
+        f"📡 {stage} — {symbol} ({timeframe})",
+        f"➡️ {direction} | Score: {score:.1f} | Buffer: {buffer_mode}{timing}",
+    ]
+    if tier_label:
+        lines.append(f"Tier: {tier_label}")
+    lines.append(f"ID: {event.get('signal_id')}")
+    return "\n".join(lines)
+
+
 def _parse_limit(value: Any, default: Optional[int]) -> Optional[int]:
     if value is None or value == "":
         return default
@@ -94,7 +140,7 @@ def _load_effective_config() -> Dict[str, Any]:
     enabled = {tier: True for tier in TIERS}
     feedback_capable = {tier: tier == "ELITE" for tier in TIERS}
 
-    raw = legacy._load_channel_config_file()  # migration-compatible config source
+    raw = legacy._load_channel_config_file()
     route_cfgs = raw.get("routes") if isinstance(raw, dict) else None
     if isinstance(route_cfgs, dict):
         for tier in TIERS:
@@ -114,7 +160,6 @@ def _load_effective_config() -> Dict[str, Any]:
                     route_cfg.get("daily_open_now_limit"), DEFAULT_LIMITS[tier]
                 )
 
-    # Canonical baseline wins when no governed override is present.
     if not os.getenv("FREE_LIMIT"):
         raw_free = None
         if isinstance(raw, dict):
@@ -205,7 +250,6 @@ def _maybe_daily_reset(
         )
     legacy.save_state(state)
 
-    # Primary v3 reset/state evidence.
     for tier in TIERS:
         prior = str(before.get("tier_state", {}).get(tier) or "ACTIVE")
         after = str(state["tier_state"].get(tier) or "ACTIVE")
@@ -224,7 +268,6 @@ def _maybe_daily_reset(
         )
         _log_route_state_change(tier, prior, after, "DAILY_RESET")
 
-    # Explicit v2 migration adapter retained for existing analytics/readers.
     adapter = observability_logger.build_event(
         "tier_reset",
         {
@@ -440,6 +483,25 @@ def _record_summary_result(
         summary["skipped_count"] += 1
 
 
+def _valid_open_now_execution(event: Dict[str, Any]) -> tuple[bool, Optional[float], str]:
+    if event.get("execution_time_available") is not True:
+        return False, None, "EXECUTION_TIME_UNAVAILABLE"
+    expiry = _safe_positive_float(event.get("open_now_expiry_minutes"))
+    compatibility_expiry = _safe_positive_float(event.get("expiry_minutes"))
+    minimum = _safe_positive_float(event.get("confirm_expiry_min_minutes"))
+    maximum = _safe_positive_float(event.get("confirm_expiry_max_minutes"))
+    source = event.get("execution_calibration_source")
+    if expiry is None or compatibility_expiry is None or minimum is None or maximum is None:
+        return False, None, "EXECUTION_TIME_INCOMPLETE"
+    if not isinstance(source, str) or not source.strip():
+        return False, None, "EXECUTION_TIME_SOURCE_MISSING"
+    if minimum > maximum or not minimum <= expiry <= maximum:
+        return False, None, "EXECUTION_TIME_INCONSISTENT"
+    if compatibility_expiry != expiry:
+        return False, None, "EXECUTION_TIME_COMPATIBILITY_MISMATCH"
+    return True, expiry, "READY"
+
+
 def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
     """Evaluate and publish one governed SignalEvent candidate.
 
@@ -491,6 +553,26 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
         summary["block_reason"] = "INVALID_SIGNAL_EVENT"
         return summary
 
+    exact_open_now_expiry: Optional[float] = None
+    if stage == "OPEN_NOW":
+        timing_ok, exact_open_now_expiry, timing_reason = _valid_open_now_execution(event)
+        if not timing_ok:
+            observability_logger.log_warning(
+                warn_type="distribution_execution_time_invalid",
+                message="OPEN_NOW distribution requires complete governed Execution Time",
+                context={
+                    "signal_id": signal_id,
+                    "reason": timing_reason,
+                    "execution_time_available": event.get("execution_time_available"),
+                    "open_now_expiry_minutes": event.get("open_now_expiry_minutes"),
+                    "model_expiry": event.get("model_expiry"),
+                },
+                source={"module": "distribution_router_v3", "function": "route"},
+            )
+            summary["blocked"] = True
+            summary["block_reason"] = timing_reason
+            return summary
+
     event["stage"] = stage
     event["signal_id"] = signal_id
     cfg = _load_effective_config()
@@ -523,7 +605,6 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
                 "thread_id": admin_topic_id,
                 "is_tier": False,
                 "applies_limits": False,
-                # Community/member buttons belong to the ELITE member route, not admin mirror.
                 "feedback_enabled": False,
             }
         )
@@ -832,7 +913,7 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
             was_duplicate=False,
         )
 
-        text = legacy.render_signal_text(event, tier if is_tier else "ADMIN")
+        text = _render_signal_text(event, tier if is_tier else "ADMIN")
         feedback_enabled = bool(feedback_available and stage == "OPEN_NOW")
         reply_markup = legacy.build_feedback_markup(signal_id) if feedback_enabled else None
         route_state_after = route_state_before
@@ -919,7 +1000,7 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
                         elite_chat_id=int(chat_id),
                         open_message_id=int(message_id),
                         open_now_ts=int(event.get("created_ts") or now_ts),
-                        expiry_minutes=int(event.get("expiry_minutes") or 0),
+                        expiry_minutes=float(exact_open_now_expiry),
                         symbol=event.get("symbol"),
                         direction=event.get("direction"),
                         timeframe=event.get("timeframe"),
