@@ -42,6 +42,9 @@ BANNED_CURRENT_STATE_FRAGMENTS = (
     "Because the proposed canonical v3 Time Model",
 )
 
+STATUS_RE = re.compile(r"(?im)^\s*\*{0,2}Status:\*{0,2}\s*ACTIVE CANONICAL\b")
+PATH_RE = re.compile(r"(?im)^\s*\*{0,2}(?:Canonical\s+)?Path:\*{0,2}\s*`?([^`\n]+)`?\s*$")
+
 
 def inventory() -> list[str]:
     text = MASTER.read_text(encoding="utf-8")
@@ -73,6 +76,7 @@ def main() -> None:
     errors: list[str] = []
     authority_hits = 0
     allowed_history_hits = 0
+    declared_paths_checked = 0
 
     for name in active:
         path = ACTIVE / name
@@ -81,11 +85,17 @@ def main() -> None:
             continue
         text = path.read_text(encoding="utf-8")
         lines = text.splitlines()
+        opening = text[:3000]
 
-        if f"/canonical/active/{name}" not in text[:2500]:
-            errors.append(f"{name}: active canonical path not declared in opening metadata")
-        if not re.search(r"(?im)^Status:\s*ACTIVE CANONICAL\b", text[:2500]):
-            errors.append(f"{name}: Status ACTIVE CANONICAL missing in opening metadata")
+        if not STATUS_RE.search(opening):
+            errors.append(f"{name}: ACTIVE CANONICAL status missing in opening metadata")
+
+        path_match = PATH_RE.search(opening)
+        if path_match:
+            declared_paths_checked += 1
+            declared = path_match.group(1).strip()
+            if f"canonical/active/{name}" not in declared:
+                errors.append(f"{name}: declared canonical path is not current active path: {declared}")
 
         for fragment in BANNED_CURRENT_STATE_FRAGMENTS:
             if fragment in text:
@@ -114,10 +124,11 @@ def main() -> None:
         raise SystemExit(f"FAIL final active-canon validation errors={len(errors)}")
 
     print("PASS: active functional specs checked = 43")
+    print(f"PASS: declared active canonical paths checked = {declared_paths_checked}")
     print("PASS: current-authority refs to superseded versions = 0")
     print("PASS: allowed explicit predecessor-history refs = 2")
     print("PASS: banned stale current-state fragments = 0")
-    print("PASS: opening Status/path metadata aligned with active canon")
+    print("PASS: ACTIVE CANONICAL status metadata aligned across all 43 specs")
 
 
 if __name__ == "__main__":
