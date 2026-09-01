@@ -436,7 +436,7 @@ Forbidden:
 
 ## 24. CODE ALIGNMENT RULE
 
-After promotion, code must answer clearly:
+Under this active canon, code must answer clearly:
 
 - where the active corridor is derived;
 - how the directional barrier is selected;

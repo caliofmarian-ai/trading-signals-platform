@@ -462,7 +462,7 @@ Private member UX, public signal UX and admin/operator UX remain distinct.
 
 Admin actions are control-plane surfaces only and must not be confused with member-facing feedback flows.
 
-Older UX ideas may inform implementation only where consistent with this active/proposed canon.
+Older UX ideas may inform implementation only where consistent with this active canon.
 
 ---
 

@@ -15,7 +15,7 @@ Linked authorities:
 - `MODULE_INTERFACE_SPEC_v3.0.0.md`
 - `EVENT_SCHEMA_SPEC_v3.0.0.md`
 - `OBSERVABILITY_SPEC_v3.0.0.md`
-- `SYSTEM_INVARIANTS_v2.0.0.md`
+- `SYSTEM_INVARIANTS_v3.0.0.md`
 
 ---
 
@@ -370,7 +370,7 @@ Forbidden:
 
 ## 24. Code alignment questions
 
-After promotion, implementation must answer:
+Implementation under this active canon must answer:
 - how requested/accepted stage are represented;
 - where `stage_handoff_ready` is computed;
 - where `trade_execution_ready` is computed;
@@ -384,11 +384,11 @@ After promotion, implementation must answer:
 
 ## 25. Promotion rule
 
-On promotion:
+Under the executed promotion:
 - v2 becomes single active FSM authority;
 - v1 moves to superseded status;
 - Signal Engine/Module Interface/Event Schema/Observability/Root/Master must reference the compatible version;
-- runtime remains unchanged until post-promotion canonical/code audit.
+- runtime changes remain governed by canon-to-code audit, Test Plan, and Deployment Protocol controls.
 
 ---
 

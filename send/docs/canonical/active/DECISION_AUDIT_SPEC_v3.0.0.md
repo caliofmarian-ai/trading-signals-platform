@@ -491,7 +491,7 @@ Forbidden:
 
 ## 23. CODE ALIGNMENT RULE
 
-After promotion, code must demonstrate:
+Under this active canon, code must demonstrate:
 
 - decision audit occurs from the final pre-FSM DecisionObject;
 - score is computed before DecisionObject;

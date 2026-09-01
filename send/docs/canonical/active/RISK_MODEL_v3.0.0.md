@@ -18,9 +18,9 @@ Linked authorities:
 - `SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md`
 - `SYSTEM_INVARIANTS_v3.0.0.md`
 - `OBSERVABILITY_SPEC_v3.0.0.md`
-- `FAILURE_RECOVERY_SPEC_v2.0.0.md`
-- `SECURITY_MODEL_v2.0.0.md`
-- `TELEGRAM_UX_v2.0.0.md`
+- `FAILURE_RECOVERY_SPEC_v2.0.1.md`
+- `SECURITY_MODEL_v2.0.1.md`
+- `TELEGRAM_UX_v2.0.1.md`
 
 ---
 
@@ -32,7 +32,7 @@ This v3 successor exists because the active v2 document contains legacy parallel
 
 Risk v3 therefore consumes strategy truth from its canonical owners rather than redefining it.
 
-No runtime code change is authorized by this proposal alone.
+No runtime code change is authorized by this active specification alone.
 
 ---
 
@@ -464,7 +464,7 @@ Post-promotion implementation must answer:
 - how learned probability is blocked when not authorized/ready;
 - how cooldown/focus/dedup risk remains downstream-owned and auditable.
 
-Any parallel legacy formula inside Risk/Signal Engine that contradicts promoted canon is implementation drift to remediate after canonical promotion.
+Any parallel legacy formula inside Risk/Signal Engine that contradicts active canon is implementation drift requiring governed remediation.
 
 ---
 

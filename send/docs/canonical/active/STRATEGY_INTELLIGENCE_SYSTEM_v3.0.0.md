@@ -14,7 +14,7 @@ Linked documents:
 - `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
 - `canonical/active/TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md`
 - `canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`
-- active/proposed Performance Analytics, Research/Learning and Autonomous Evolution successors
+- active Performance Analytics, Research/Learning and Autonomous Evolution successors
 
 ---
 
@@ -417,7 +417,7 @@ Forbidden:
 
 ---
 
-## 24. IMPLEMENTATION REQUIREMENTS AFTER PROMOTION
+## 24. IMPLEMENTATION REQUIREMENTS UNDER ACTIVE CANON
 
 The current-scope intelligence implementation must provide, in governed sequence:
 

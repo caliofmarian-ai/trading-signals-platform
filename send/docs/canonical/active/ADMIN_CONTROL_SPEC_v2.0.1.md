@@ -33,7 +33,7 @@ Linked Documents:
 
 ## 0. Patch status
 
-Until atomic promotion, `ADMIN_CONTROL_SPEC_v2.0.0.md` remains active.
+`ADMIN_CONTROL_SPEC_v2.0.1.md` is active canonical under the executed atomic promotion; `ADMIN_CONTROL_SPEC_v2.0.0.md` is superseded.
 
 This v2.0.1 successor preserves the admin control model, roles/action boundaries and operator capabilities of v2.0.0. Changes are reference/truth-source alignment only.
 

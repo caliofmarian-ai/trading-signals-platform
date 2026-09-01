@@ -18,9 +18,9 @@ Linked authorities:
 - `MODULE_INTERFACE_SPEC_v3.0.0.md`
 - `OBSERVABILITY_SPEC_v3.0.0.md`
 - `EVENT_SCHEMA_SPEC_v3.0.0.md`
-- `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md`
-- `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md`
-- `CHANNEL_CONFIG_SPEC_v2.0.0.md`
+- `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.1.md`
+- `SIGNAL_DISTRIBUTION_SPEC_v2.0.1.md`
+- `CHANNEL_CONFIG_SPEC_v2.0.1.md`
 
 ---
 
@@ -34,7 +34,7 @@ It incorporates:
 
 Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
-Merge of this proposal does not authorize runtime changes, distribution activation, Telegram publication, outcome creation, or broker execution.
+This active specification does not by itself authorize runtime changes, distribution activation, Telegram publication, outcome creation, or broker execution.
 
 ---
 
@@ -190,7 +190,7 @@ Signal Engine must not calculate or recalculate:
 - deterministic `TPS`;
 - `trade_success_probability`.
 
-If runtime currently computes TPS inside Signal Engine, that behavior is implementation drift to be corrected after canonical promotion.
+If runtime computes primary strategic TPS inside Signal Engine, that behavior is implementation drift requiring governed remediation against the active canon.
 
 ---
 
@@ -537,7 +537,7 @@ If these answers are unclear, alignment is incomplete.
 
 ## 31. Promotion and migration
 
-On promotion:
+Under the executed promotion:
 - this v3 becomes the single signal-execution authority;
 - v2 moves to superseded storage;
 - active references are repaired atomically;

@@ -17,11 +17,11 @@ Linked authorities:
 - `OUTCOME_TRACKING_SPEC_v3.0.0.md`
 - `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
 - `TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md`
-- `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md`
-- `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md`
+- `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.1.md`
+- `SIGNAL_DISTRIBUTION_SPEC_v2.0.1.md`
 - `STRATEGY_INTELLIGENCE_SYSTEM_v3.0.0.md`
 - `AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v3.0.0.md`
-- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md`
+- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md`
 - `TEST_PLAN_v3.0.0.md`
 
 ---
@@ -508,7 +508,7 @@ This is why deterministic Trade Physics and Trade Physics Intelligence have sepa
 
 Code modules are implementations of canonical ownership, not authority themselves.
 
-After promotion, code audit must identify:
+Under this active canon, code audit must identify:
 - modules that own too much;
 - duplicate formulas;
 - missing contracts;
@@ -521,11 +521,11 @@ After promotion, code audit must identify:
 
 ## 26. Promotion / migration rule
 
-On v3 promotion:
+Under the executed v3 promotion:
 - v2 moves to superseded storage;
 - all active references are repaired to final successor versions;
 - Root Stack/Master Index/System Invariants/Test Plan must be mutually compatible;
-- runtime code remains unchanged until post-promotion audit.
+- runtime changes remain governed by canon-to-code audit, Test Plan, and Deployment Protocol controls.
 
 ---
 

@@ -499,7 +499,7 @@ It does not own:
 - outcome reconciliation;
 - model training.
 
-Any current TPS calculation in Signal Engine is implementation drift against the proposed target contract.
+Any current primary strategic TPS calculation in Signal Engine is implementation drift against the active target contract.
 
 ---
 
@@ -584,7 +584,7 @@ Forbidden:
 
 ## 26. Code alignment requirements
 
-After promotion, code audit must map each module/function to these owners/contracts and identify:
+Under this active canon, code audit must map each module/function to these owners/contracts and identify:
 - missing contract fields;
 - legacy vocabulary;
 - duplicated formulas;
@@ -594,7 +594,7 @@ After promotion, code audit must map each module/function to these owners/contra
 - missing Trade Physics version lineage;
 - missing explicit FSM handoff.
 
-No implementation change occurs before that post-promotion audit.
+Implementation changes remain subject to the governed canon-to-code audit, Test Plan, and Deployment Protocol controls.
 
 ---
 

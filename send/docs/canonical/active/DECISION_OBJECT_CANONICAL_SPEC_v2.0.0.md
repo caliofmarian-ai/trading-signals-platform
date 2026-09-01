@@ -174,7 +174,7 @@ Trade Physics `available_space` must be traceable to this structural domain.
 
 ## 9. TIME DOMAIN
 
-Must use the unified v3 time vocabulary once promoted:
+Must use the active unified v3 time vocabulary:
 
 - `buffer_distance` reference;
 - `directional_effective_speed` reference;
@@ -244,7 +244,7 @@ When not READY, the domain must expose readiness and reason without fabricating 
 
 DecisionObject must distinguish physical-feasibility readiness from arithmetic score existence.
 
-Proposed readiness families:
+Canonical readiness families:
 
 - `READY`;
 - `UNAVAILABLE_MISSING_STRUCTURE`;
@@ -427,7 +427,7 @@ This metadata is necessary for replay and model-dataset lineage.
 
 ## 21. REQUIRED CANONICAL TRUTHS
 
-This v2 proposal locks the following if promoted:
+This active v2 canon locks the following:
 
 1. DecisionObject remains before FSM.
 2. It is the official strategy output.
@@ -550,7 +550,7 @@ Direction:
 
 ## 28. CODE ALIGNMENT RULE
 
-After promotion, implementation must answer:
+Implementation under this active canon must answer:
 
 - where Trade Physics is calculated before DecisionObject;
 - which exact structural/time/speed evidence was used;

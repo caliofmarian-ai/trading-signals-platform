@@ -27,7 +27,7 @@ This document is the active canonical successor to `TIME_MODEL_UNIFIED_CANON_v2.
 
 ## 1. PURPOSE
 
-This document is the proposed unified authority for all BinaryBot time semantics after current Trade Physics integration.
+This document is the active canonical unified authority for all BinaryBot time semantics after current Trade Physics integration.
 
 It preserves three distinct layers:
 
@@ -147,7 +147,7 @@ They may appear only in compatibility/migration mappings or where an explicitly 
 
 ## 7. CANONICAL RELATION BETWEEN TIME METRICS
 
-The proposed v3 Model Time chain is:
+The canonical v3 Model Time chain is:
 
 ```text
 real M1/M5 market evidence
@@ -211,7 +211,7 @@ It may be derived from absolute price movement and is useful for:
 - flow-efficiency derivation;
 - analytics.
 
-It is no longer the preferred primary denominator speed for intended-direction `t_needed` in the proposed v3 model.
+It is no longer the preferred primary denominator speed for intended-direction `t_needed` in the active v3 model.
 
 A high gross speed with low directional speed can indicate choppy or opposing movement and must not falsely imply fast reachability.
 
@@ -515,7 +515,7 @@ Required handoff includes:
 
 TPS T-component is derived from `time_to_buffer_ratio` under Trade Physics canon.
 
-No TPS score may be calculated using legacy generic `expiry_minutes` as the primary model-time source after v3 promotion.
+Under active v3 canon, no TPS score may be calculated using legacy generic `expiry_minutes` as the primary model-time source.
 
 ---
 
@@ -615,7 +615,7 @@ Vocabulary mapping:
 Formula migration:
 
 - old conceptual `t_needed = buffer_distance / gross price_speed`
-- proposed v3 `t_needed = buffer_distance / directional_effective_speed`
+- canonical v3 `t_needed = buffer_distance / directional_effective_speed`
 
 Gross speed remains observable context; it is not silently discarded.
 
@@ -642,7 +642,7 @@ All denominators must be finite and positive.
 Forbidden:
 
 - Time Model before Corridor;
-- gross absolute speed silently standing in for directional speed after v3 promotion;
+- gross absolute speed silently standing in for directional speed under active v3 canon;
 - Signal Engine recalculating authoritative time ratios;
 - `expiry_minutes` used as model expiry without explicit compatibility mapping;
 - ratio orientation left unlabeled;
@@ -655,7 +655,7 @@ Forbidden:
 
 ## 34. IMPLEMENTATION RULE
 
-After promotion, implementation must:
+Implementation under this active canon must:
 
 1. derive deterministic directional speed from real M1 candles using the promoted formula;
 2. keep gross speed as separate context;
@@ -694,7 +694,7 @@ Trade Physics strengthens it by making movement-time feasibility directional:
 
 **the relevant question is not how much the price moves in total, but how efficiently it is moving toward the intended trade direction.**
 
-The canonical proposed chain is:
+The canonical chain is:
 
 `buffer_distance / directional_effective_speed -> t_needed -> adjusted time -> model_expiry -> reachability -> Trade Physics time ratio -> time state`.
 

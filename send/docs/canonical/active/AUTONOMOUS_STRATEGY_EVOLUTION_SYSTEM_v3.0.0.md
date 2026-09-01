@@ -149,7 +149,7 @@ Possible readiness states include:
 
 ## 8. DETERMINISTIC TPS PARAMETER PROPOSALS
 
-The current proposed defaults are structural constants until Parameter Control canon says otherwise.
+The current canonical defaults are structural constants until Parameter Control canon says otherwise.
 
 Evolution may recommend changes only with:
 
@@ -168,7 +168,7 @@ A recommendation to change a deterministic formula may require a MAJOR canonical
 
 ## 9. DIRECTIONAL SPEED EVOLUTION
 
-The initial proposed directional speed uses:
+The current canonical directional speed uses:
 
 - 20 M1 intervals;
 - linear recency weights 1..20;

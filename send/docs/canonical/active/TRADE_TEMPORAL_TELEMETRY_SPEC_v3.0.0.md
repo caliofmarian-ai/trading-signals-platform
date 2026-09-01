@@ -508,7 +508,7 @@ Rotation/compression/aggregation may be added without deleting raw provenance re
 
 ---
 
-## 20. Implementation sequence after promotion
+## 20. Implementation sequence under active canon
 
 1. enforce effective-executable eligibility and stable identity;
 2. persist immutable pre-trade snapshot including full Trade Physics fields;

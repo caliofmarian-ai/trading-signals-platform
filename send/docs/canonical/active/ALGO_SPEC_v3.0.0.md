@@ -9,7 +9,7 @@ Scope: Strategic market model, corridor-first decision pipeline, classical scori
 Supersedes: `ALGO_SPEC_v2.0.0.md`
 
 Governance basis:
-- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md`
+- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md`
 - Owner decision 2026-09-01: complete Trade Physics integration is current-scope
 - Change ID `20260901-TRADE-PHYSICS-01`
 - merged governance PR #78
@@ -58,7 +58,7 @@ Detailed Time Model mathematics remain owned by `TIME_MODEL_UNIFIED_CANON`.
 
 Detailed SR/Corridor semantics remain owned by `SR_CORRIDOR_ENGINE_SPEC`.
 
-Detailed Trade Physics mathematics are delegated to `TRADE_PHYSICS_MODEL_SPEC_v1.0.0` once promoted.
+Detailed Trade Physics mathematics are delegated to the active `TRADE_PHYSICS_MODEL_SPEC_v1.0.0`.
 
 ---
 
@@ -281,7 +281,7 @@ Trade Physics does not erase classical score provenance.
 
 ## 12. TRADE PHYSICS SUBMODEL
 
-Trade Physics is current-scope and mandatory once this successor set is promoted and implemented.
+Trade Physics is current-scope and mandatory in the active strategic contract; implementation remains governed by the active change, test, and deployment controls.
 
 Detailed formulas are governed by `TRADE_PHYSICS_MODEL_SPEC_v1.0.0`.
 
@@ -344,7 +344,7 @@ A high TPS arithmetic result can never override a hard blocker that should have 
 
 The strategy must carry a recognized Trade Physics readiness state.
 
-Proposed readiness families include:
+Canonical readiness families include:
 
 - READY;
 - unavailable due to structure;
@@ -390,7 +390,7 @@ Before `DecisionObject`, the strategy must apply explicit gating for conditions 
 - insufficient directional structural space;
 - severe temporal infeasibility;
 - unstable/noisy market state where canonically blocked;
-- incomplete mandatory Trade Physics evidence after promotion;
+- incomplete mandatory Trade Physics evidence;
 - contradictions among context, structure, time and physical feasibility.
 
 Reject/degrade semantics must remain explicit.
@@ -479,7 +479,7 @@ It MUST NOT:
 - repair missing strategy evidence ad hoc;
 - overwrite DecisionObject Trade Physics truth.
 
-The current runtime TPS calculation inside Signal Engine is implementation drift to be corrected after canonical promotion.
+Any runtime TPS calculation inside Signal Engine that remains primary strategic TPS ownership is implementation drift requiring governed remediation against the active canon.
 
 ---
 
@@ -585,7 +585,7 @@ Forbidden as active canonical behavior:
 
 ## 28. CODE ALIGNMENT RULE
 
-After promotion, every implementation patch must prove:
+Every implementation patch under this active canon must prove:
 
 - Market Model produces required Trade Physics speed evidence;
 - Corridor produces exact directional available-space evidence;
@@ -601,7 +601,7 @@ After promotion, every implementation patch must prove:
 
 ## 29. PATCH PRIORITIES DERIVED FROM THIS SUCCESSOR
 
-If this successor is promoted, implementation order should be:
+Implementation order under this active successor should be:
 
 1. Market Model directional/gross speed evidence;
 2. Corridor available-space contract;

@@ -37,7 +37,7 @@ The major version consolidates:
 - learned-model/readiness observability;
 - telemetry/label lineage requirements.
 
-No code behavior is authorized by this proposal alone.
+No code behavior is authorized by this active specification alone.
 
 ---
 
@@ -433,7 +433,7 @@ Rotation/compression may not destroy required provenance without governed retent
 
 Observability policy is canonical authority.
 
-Runtime JSON schema, log writers, dashboards and report code are implementations that must be audited against this policy after promotion.
+Runtime JSON schema, log writers, dashboards and report code are implementations that must be audited against this active policy.
 
 ---
 

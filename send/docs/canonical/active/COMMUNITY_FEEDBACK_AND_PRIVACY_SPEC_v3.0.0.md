@@ -27,7 +27,7 @@ Linked authorities:
 
 Promotion status: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
-This v3 successor is required because v2 describes Admin Outcome as the single canonical truth used for strategy evaluation. The current proposed canonical graph separates:
+This v3 successor is required because v2 describes Admin Outcome as the single canonical truth used for strategy evaluation. The current canonical graph separates:
 - objective market truth;
 - operational/admin reconciliation truth;
 - community/self-reported truth.
@@ -565,7 +565,7 @@ If implemented according to this specification:
 
 ## 30. Migration from v2
 
-On promotion:
+Under the executed promotion:
 - v2 becomes Superseded;
 - the sentence/semantics that Admin Outcome is the single canonical truth for strategy evaluation are retired;
 - community data is explicitly classified as self-reported truth;

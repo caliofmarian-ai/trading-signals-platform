@@ -543,11 +543,11 @@ Forbidden:
 
 ## 22. Runtime schema alignment
 
-After promotion, `send/schema/event_schema.json` must be re-audited against this canonical spec.
+Under this active canon, `send/schema/event_schema.json` must be audited against this canonical spec.
 
 Runtime schema is implementation, not authority.
 
-Any runtime event type/field drift must be corrected only after canonical promotion and test-plan approval.
+Any runtime event type/field drift must be corrected only through active governance and Test Plan approval.
 
 ---
 

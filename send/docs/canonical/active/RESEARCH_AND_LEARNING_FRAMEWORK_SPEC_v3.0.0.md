@@ -274,7 +274,7 @@ Each is a governed experiment. Current defaults remain canonical until changed t
 
 ## 16. DIRECTIONAL SPEED EXPERIMENT
 
-Because the proposed canonical v3 Time Model materially changes speed semantics, research must maintain an explicit comparison:
+Because the active canonical v3 Time Model materially changes speed semantics, research must maintain an explicit comparison:
 
 Control:
 - prior gross absolute speed logic.

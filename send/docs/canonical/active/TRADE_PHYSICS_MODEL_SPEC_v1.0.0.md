@@ -13,11 +13,11 @@ Source provenance:
 - `send/docs/intake/AI_TRADE_PHYSICS_INTELLIGENCE_SPEC.md`
 - Owner decision dated 2026-09-01: Trade Physics is current-scope and must be integrated now, not retained as a future upgrade.
 
-Proposed authority relationship:
+Authority relationship:
 - `ALGO_SPEC` remains authoritative for the role of scoring inside the strategy and for how TPS affects strategic decision semantics.
 - `SR_CORRIDOR_ENGINE_SPEC` remains authoritative for structural barrier and corridor truth.
 - `TIME_MODEL_UNIFIED_CANON` remains authoritative for time-model mathematics and vocabulary.
-- this document is proposed as the detailed mathematical authority for Trade Physics metric derivation and deterministic TPS.
+- this document is the active detailed mathematical authority for Trade Physics metric derivation and deterministic TPS.
 - `STRATEGY_INTELLIGENCE_SYSTEM`, `RESEARCH_AND_LEARNING_FRAMEWORK_SPEC`, `PERFORMANCE_ANALYTICS_SPEC`, and `AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM` remain authoritative for learned-model evidence, training, calibration, recommendations, and governed evolution.
 
 This document does not authorize broker execution, distribution, or automatic production mutation.
@@ -62,7 +62,7 @@ Therefore:
 
 ## 3. SOURCE RECONCILIATION DECISIONS
 
-The intake sources contain overlapping and conflicting definitions. This proposed canon resolves them as follows.
+The intake sources contain overlapping and conflicting definitions. This active canon resolves them as follows.
 
 ### 3.1 One deterministic TPS
 
@@ -72,7 +72,7 @@ The sigmoid output described in `AI_TRADE_PHYSICS_INTELLIGENCE_SPEC.md` MUST NOT
 
 ### 3.2 Learned probability is separate
 
-A learned/calibrated model output is named `trade_success_probability` in this proposal.
+A learned/calibrated model output is named `trade_success_probability` in this specification.
 
 It is a distinct value in `[0,1]` and MUST carry model/version/readiness provenance.
 
@@ -236,7 +236,7 @@ The AI Trade Physics intake source requires speed to be:
 
 The active runtime currently uses an undirected average absolute close-to-close movement for `price_speed`. That value may remain as gross movement context but does not fully satisfy directional Trade Physics.
 
-### 7.1 Proposed v1 deterministic algorithm
+### 7.1 Canonical v1 deterministic algorithm
 
 This section is a technical reconciliation in this active specification because the intake source defines the concept but does not provide exact weights.
 
@@ -387,7 +387,7 @@ For valid non-negative movement stress, V is in `(0,1]`.
 
 ## 11. DETERMINISTIC TPS FORMULA
 
-The canonical proposed initial weights are sourced from `TRADE_PHYSICS_SCORE_SPEC.md`:
+The canonical initial weights are sourced from `TRADE_PHYSICS_SCORE_SPEC.md`:
 
 - `wS = 0.35`
 - `wT = 0.25`
@@ -432,7 +432,7 @@ Any lifecycle threshold derived from TPS requires explicit ALGO/parameter govern
 
 ## 13. CURRENT DECISION ROLE
 
-Trade Physics is current-scope and mandatory in the strategic contract once this canon is promoted and implemented.
+Trade Physics is current-scope and mandatory in the active strategic contract; implementation remains governed by active change, test, and deployment controls.
 
 The initial current role is:
 
@@ -451,7 +451,7 @@ The distinction is that current integration does not invent unsupported lifecycl
 
 ## 14. TRADE PHYSICS READINESS
 
-A Trade Physics evaluation must expose one of the following proposed states:
+A Trade Physics evaluation must expose one of the following canonical readiness states:
 
 - `READY`
 - `UNAVAILABLE_MISSING_STRUCTURE`
@@ -463,13 +463,13 @@ A Trade Physics evaluation must expose one of the following proposed states:
 
 A normal numeric TPS MUST only be authoritative when the deterministic components are valid and synchronized.
 
-The exact state enum may be adjusted during canonical review, but missing evidence MUST be explicit.
+Any adjustment to the exact state enum requires versioned canonical review/change control, and missing evidence MUST remain explicit.
 
 ---
 
 ## 15. DECISIONOBJECT CONTRACT
 
-The proposed strategic contract must expose a recognizable Trade Physics domain or score subdomain containing at minimum:
+The canonical strategic contract must expose a recognizable Trade Physics domain or score subdomain containing at minimum:
 
 - readiness state;
 - `available_space`;
@@ -561,7 +561,7 @@ The learned model may use four conceptual dimensions:
 - Time / available-to-needed relation;
 - Flow / directional alignment.
 
-Canonical feature mappings proposed for v1:
+Canonical feature mappings for v1:
 
 - `energy_stress_ratio = movement_stress`;
 - `reachability_ratio = space_to_buffer_ratio`;
@@ -582,7 +582,7 @@ It is not TPS.
 
 The intake source recommends Gradient Boosted Trees such as LightGBM or XGBoost for tabular data.
 
-This proposal treats those as approved research candidates, not as a locked library dependency.
+This specification treats those as approved research candidates, not as a locked library dependency.
 
 The trained model identity must include at minimum:
 
@@ -604,7 +604,7 @@ The learned subsystem is part of the current architecture even when no valid tra
 
 It must expose explicit readiness rather than pretending success probability exists.
 
-Proposed states:
+Canonical readiness states:
 
 - `UNTRAINED`
 - `INSUFFICIENT_DATA`
@@ -662,7 +662,7 @@ If this functional form is used, weights must be learned or otherwise governed t
 
 ## 22. PARAMETER GOVERNANCE
 
-The following deterministic defaults are structural model constants in this proposed v1 contract:
+The following deterministic defaults are structural model constants in this active v1 contract:
 
 - `S_cap = 3.0`
 - `T_cap = 2.0`
@@ -701,11 +701,11 @@ The following are non-canonical:
 
 ---
 
-## 24. REQUIRED CODE REALIGNMENT AFTER PROMOTION
+## 24. REQUIRED CODE REALIGNMENT UNDER ACTIVE CANON
 
 Code changes remain subject to canonical Governance, Test Plan, and Deployment Protocol controls.
 
-After promotion, the implementation audit must at minimum inspect and reconcile:
+The governed implementation audit must at minimum inspect and reconcile:
 
 - `send/core/market_model.py` for directional/gross speed evidence;
 - `send/core/sr_corridor_engine.py` for exact available-space contract;
@@ -743,11 +743,11 @@ Required deterministic tests include:
 
 ---
 
-## 26. CURRENT STATUS AND PROMOTION GATE
+## 26. CURRENT STATUS AND POST-ACTIVATION GOVERNANCE
 
 Status now: ACTIVE CANONICAL under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
-Before this document can become active:
+The executed 2026-09-01 activation record confirms this document is active; the promoted graph resolved the following activation prerequisites:
 
 - ALGO successor must define TPS current decision role;
 - SR/Corridor successor must expose required structural inputs unambiguously;
@@ -758,7 +758,7 @@ Before this document can become active:
 - Root Stack and Master Index must be updated consistently;
 - complete canonical audit must pass.
 
-No runtime code modification is authorized until that promotion gate is satisfied.
+Canonical activation alone does not authorize runtime modification; code changes remain subject to Governance, Test Plan, Deployment Protocol, and canon-to-code audit controls.
 
 ---
 

@@ -426,7 +426,7 @@ Forbidden:
 
 ## 25. Implementation alignment checklist
 
-After promotion, implementation must demonstrate:
+Implementation under this active canon must demonstrate:
 - `decision_evaluated` includes Trade Physics evidence/version;
 - FSM handoff is explicit;
 - `signal_execution_result` is persisted;
