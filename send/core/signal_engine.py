@@ -22,6 +22,7 @@ from core import candle_adapter
 from core import distribution_router_v3 as distribution_router
 from core import fsm_runtime
 from core import observability_logger
+from core import runtime_param_gate
 from core.decision_object import ACTIONABLE_DECISION_KINDS
 from core.signal_execution_gate import prepare_signal_execution
 from core.strategy_v2 import decide
@@ -36,6 +37,7 @@ ALGO_PARAMS_PATH = config_path("algo_params.json")
 EVENT_SCHEMA_VERSION = "3.0.0"
 WIDE_SCAN_SLOT_SECONDS = 2
 WIDE_SCAN_CYCLE_SECONDS = 60
+_LAST_PARAM_ERROR_SIGNATURE: Optional[str] = None
 
 
 def _select_scan_symbols(symbols: List[str], watchlist: List[str], now_ts: int) -> tuple[List[str], set[str]]:
@@ -85,7 +87,60 @@ def _load_settings() -> Dict[str, Any]:
 
 
 def _load_algo_params() -> Dict[str, Any]:
-    return storage.load_json(ALGO_PARAMS_PATH, default={})
+    """Load the live strategy bundle through the canonical fail-closed gate."""
+    return runtime_param_gate.load_runtime_algo_params(ALGO_PARAMS_PATH)
+
+
+def _load_validated_params_or_block(now_ts: int) -> Optional[Dict[str, Any]]:
+    """Return validated live params, or expose one blocked operational state.
+
+    Repeated engine ticks do not duplicate the same canonical error event; the
+    operational incident layer still maintains bounded reminders. Recovery is
+    explicitly cleared when a valid bundle becomes available again.
+    """
+    global _LAST_PARAM_ERROR_SIGNATURE
+
+    try:
+        params = _load_algo_params()
+    except runtime_param_gate.RuntimeParameterError as exc:
+        signature = f"{type(exc).__name__}:{exc}"
+        if signature != _LAST_PARAM_ERROR_SIGNATURE:
+            observability_logger.log_error(
+                {
+                    "event_type": "error",
+                    "severity": "CRITICAL",
+                    "error_type": "ALGO_PARAMS_VALIDATION_FAILED",
+                    "message": "Canonical algo parameter validation failed; strategy evaluation blocked",
+                    "context": {
+                        "params_path": ALGO_PARAMS_PATH,
+                        "reason": str(exc),
+                        "exception_type": type(exc).__name__,
+                    },
+                    "source": {"module": "signal_engine", "function": "run_once"},
+                }
+            )
+        observability_logger.record_operational_incident(
+            incident_type="ALGO_PARAMS_VALIDATION_FAILED",
+            component="signal_engine",
+            runtime_state="BLOCKED",
+            operator_action="Restore a canonically valid algo_params.json before strategy evaluation.",
+            severity="CRITICAL",
+            now_ts=now_ts,
+        )
+        _LAST_PARAM_ERROR_SIGNATURE = signature
+        return None
+
+    if _LAST_PARAM_ERROR_SIGNATURE is not None:
+        observability_logger.clear_operational_incident(
+            incident_type="ALGO_PARAMS_VALIDATION_FAILED",
+            component="signal_engine",
+            runtime_state="HEALTHY",
+            operator_action="Canonical algo parameter validation recovered.",
+            now_ts=now_ts,
+        )
+        _LAST_PARAM_ERROR_SIGNATURE = None
+
+    return params
 
 
 def _load_trade_temporal_telemetry():
@@ -338,7 +393,9 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
     now_ts = int(now_ts or time.time())
 
     settings = _load_settings()
-    params = _load_algo_params()
+    params = _load_validated_params_or_block(now_ts)
+    if params is None:
+        return
     buffer_mode = settings.get("buffer_mode", "MEDIUM")
 
     symbols = _load_active_symbols()
