@@ -79,9 +79,10 @@ def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _candidate(stage: str = "PRE", signal_id: str = "sig-v3-live") -> dict[str, Any]:
+    execution_available = stage in {"CONFIRM", "OPEN_NOW"}
     return {
         "event_type": "SIGNAL_CANDIDATE",
-        "schema_version": "3.0.0",
+        "schema_version": "3.1.0",
         "stage": stage,
         "signal_id": signal_id,
         "symbol": "EUR/USD",
@@ -92,7 +93,12 @@ def _candidate(stage: str = "PRE", signal_id: str = "sig-v3-live") -> dict[str, 
         "buffer_distance": 0.0008,
         "buffer_price": 0.0008,
         "model_expiry": 5.0,
-        "expiry_minutes": 5,
+        "expiry_minutes": 5.0 if stage == "OPEN_NOW" else None,
+        "execution_time_available": execution_available,
+        "confirm_expiry_min_minutes": 4.0 if execution_available else None,
+        "confirm_expiry_max_minutes": 6.0 if execution_available else None,
+        "open_now_expiry_minutes": 5.0 if stage == "OPEN_NOW" else None,
+        "execution_calibration_source": "test-governed-calibration" if execution_available else None,
         "candle_ts": 1_720_000_000,
         "created_ts": 1_720_000_005,
         "entry_price": 1.11234,
@@ -249,11 +255,7 @@ def test_post_distribution_emitted_requires_publication_evidence(
     decision = SimpleNamespace(
         signal_id="sig-post-v3",
         kind="PRE",
-        setup=SimpleNamespace(
-            symbol="EUR/USD",
-            timeframe="M1",
-            cycle_id="cycle-post-v3",
-        ),
+        setup=SimpleNamespace(symbol="EUR/USD", timeframe="M1", cycle_id="cycle-post-v3"),
         to_dict=lambda: {"score": {"trade_physics": {"TPS": 80.0}}},
     )
     persistent = SimpleNamespace(
