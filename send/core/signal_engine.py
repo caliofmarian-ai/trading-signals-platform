@@ -34,6 +34,27 @@ ACTIVE_SYMBOLS_PATH = config_path("active_symbols.json")
 SETTINGS_PATH = config_path("admin_settings.json")
 ALGO_PARAMS_PATH = config_path("algo_params.json")
 EVENT_SCHEMA_VERSION = "3.0.0"
+WIDE_SCAN_SLOT_SECONDS = 2
+WIDE_SCAN_CYCLE_SECONDS = 60
+
+
+def _select_scan_symbols(symbols: List[str], watchlist: List[str], now_ts: int) -> tuple[List[str], set[str]]:
+    """Prioritize focus every tick while preserving bounded wide-scan coverage.
+
+    Wide symbols are deterministically spread across the M1 decision cycle so
+    the same opportunity is not fully re-evaluated every 2-second engine tick.
+    """
+
+    active_set = set(symbols)
+    focus = [symbol for symbol in watchlist if symbol in active_set]
+    focus_set = set(focus)
+    wide = [symbol for symbol in symbols if symbol not in focus_set]
+    slots = max(1, WIDE_SCAN_CYCLE_SECONDS // WIDE_SCAN_SLOT_SECONDS)
+    current_slot = (int(now_ts) % WIDE_SCAN_CYCLE_SECONDS) // WIDE_SCAN_SLOT_SECONDS
+    selected_wide = [
+        symbol for index, symbol in enumerate(wide) if index % slots == current_slot
+    ]
+    return focus + selected_wide, focus_set
 
 
 def _load_active_symbols() -> List[str]:
@@ -301,14 +322,14 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
             )
 
     watchlist = state.get("watchlist", []) if isinstance(state, dict) else []
-    natural_in_focus = isinstance(watchlist, list) and len(watchlist) > 0
+    if not isinstance(watchlist, list):
+        watchlist = []
 
     if forced_symbols is not None:
         scan_symbols = [str(x).strip() for x in forced_symbols if str(x).strip()]
-        effective_in_focus = bool(forced_focus_context)
+        focus_symbols = set(scan_symbols) if bool(forced_focus_context) else set()
     else:
-        scan_symbols = watchlist if natural_in_focus else symbols
-        effective_in_focus = bool(natural_in_focus)
+        scan_symbols, focus_symbols = _select_scan_symbols(symbols, watchlist, now_ts)
 
     from runtime import market_client
 
@@ -329,8 +350,9 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                 get_candles,
             )
 
-            raw_m1 = get_candles(symbol, "1min")
-            raw_m5 = get_candles(symbol, "5min")
+            symbol_in_focus = symbol in focus_symbols
+            raw_m1 = get_candles(symbol, "1min", prefer_live=symbol_in_focus)
+            raw_m5 = get_candles(symbol, "5min", prefer_live=symbol_in_focus)
 
             candles_m1 = candle_adapter.normalize(raw_m1, symbol=symbol, timeframe="M1")
             candles_m5 = candle_adapter.normalize(raw_m5, symbol=symbol, timeframe="M5")
@@ -342,7 +364,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                 candles_m5=candles_m5,
                 params=params,
                 buffer_mode=buffer_mode,
-                want_open_now=bool(effective_in_focus),
+                want_open_now=bool(symbol_in_focus),
                 context={
                     "decision_timeframe": "M1",
                     "opportunity_signal_id": current_opportunity_signal_id(state, symbol),

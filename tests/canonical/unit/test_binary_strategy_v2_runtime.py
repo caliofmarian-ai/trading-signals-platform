@@ -70,7 +70,7 @@ def test_runtime_fails_closed_before_execution_for_malformed_v2_evaluation(monke
     monkeypatch.setattr(signal_engine.fsm_runtime, "load_state", lambda: {})
     monkeypatch.setattr(signal_engine.fsm_runtime, "reconcile_state", lambda state, now_ts, active_symbols: (state, []))
     monkeypatch.setattr(market_client, "configured_symbols", lambda: None)
-    monkeypatch.setattr(market_client, "get_candles", lambda symbol, interval: list(reversed(m1 if interval == "1min" else m5)))
+    monkeypatch.setattr(market_client, "get_candles", lambda symbol, interval, **kwargs: list(reversed(m1 if interval == "1min" else m5)))
     monkeypatch.setattr(signal_engine, "decide", lambda **kwargs: evaluation)
     monkeypatch.setattr(
         signal_engine,
