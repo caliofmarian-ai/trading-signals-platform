@@ -4,7 +4,9 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-ACTIVE = ROOT / "send" / "docs" / "canonical" / "active"
+CANON = ROOT / "send" / "docs" / "canonical"
+ACTIVE = CANON / "active"
+SUPERSEDED = CANON / "superseded"
 MASTER = ACTIVE / "CANONICAL_MASTER_INDEX_v2.0.0.md"
 REPORT_DIR = ROOT / "audit" / "active-canon-metadata-cleanup-20260901"
 REPORT = REPORT_DIR / "REPORT.md"
@@ -28,48 +30,80 @@ def inventory() -> list[str]:
     return names
 
 
-def cleanup_file(path: Path) -> list[str]:
+def _field_index(lines: list[str], labels: tuple[str, ...], max_lines: int = 35) -> int | None:
+    for i in range(min(len(lines), max_lines)):
+        stripped = lines[i].strip()
+        if any(stripped.startswith(label) for label in labels):
+            return i
+    return None
+
+
+def _replace_known_paths(text: str, active_names: set[str], superseded_names: set[str]) -> tuple[str, int, int]:
+    proposed_to_active = 0
+    active_to_superseded = 0
+
+    for name in sorted(active_names, key=len, reverse=True):
+        candidates = (
+            (f"send/docs/canonical/proposed/{name}", f"send/docs/canonical/active/{name}"),
+            (f"/opt/binarybot/docs/canonical/proposed/{name}", f"/opt/binarybot/docs/canonical/active/{name}"),
+        )
+        for old, new in candidates:
+            count = text.count(old)
+            if count:
+                text = text.replace(old, new)
+                proposed_to_active += count
+
+    # A reference to a predecessor that no longer exists under active is a path defect.
+    for name in sorted(superseded_names - active_names, key=len, reverse=True):
+        candidates = (
+            (f"send/docs/canonical/active/{name}", f"send/docs/canonical/superseded/{name}"),
+            (f"/opt/binarybot/docs/canonical/active/{name}", f"/opt/binarybot/docs/canonical/superseded/{name}"),
+        )
+        for old, new in candidates:
+            count = text.count(old)
+            if count:
+                text = text.replace(old, new)
+                active_to_superseded += count
+
+    return text, proposed_to_active, active_to_superseded
+
+
+def cleanup_file(path: Path, active_names: set[str], superseded_names: set[str]) -> list[str]:
     original = path.read_text(encoding="utf-8")
     lines = original.splitlines(keepends=True)
     changes: list[str] = []
-
-    # Promotion metadata is constrained to the document preamble / authority block.
     limit = min(len(lines), 90)
 
-    status_seen = False
-    for i in range(min(limit, 35)):
-        stripped = lines[i].strip()
-        if stripped.startswith("Status:") or stripped.startswith("**Status:**"):
-            status_seen = True
-            if "ACTIVE CANONICAL" not in stripped.upper() or "PROPOSED" in stripped.upper() or "NOT ACTIVE" in stripped.upper():
-                newline = "\n" if lines[i].endswith("\n") else ""
-                if stripped.startswith("**Status:**"):
-                    lines[i] = "**Status:** ACTIVE CANONICAL" + newline
-                else:
-                    lines[i] = "Status: ACTIVE CANONICAL  " + newline
-                changes.append("status -> ACTIVE CANONICAL")
-            break
-
-    if not status_seen:
+    status_i = _field_index(lines, ("Status:", "**Status:**"))
+    if status_i is None:
         raise SystemExit(f"{path.name}: no Status field in first 35 lines")
+    status = lines[status_i].strip()
+    if "ACTIVE CANONICAL" not in status.upper() or "PROPOSED" in status.upper() or "NOT ACTIVE" in status.upper():
+        newline = "\n" if lines[status_i].endswith("\n") else ""
+        if status.startswith("**Status:**"):
+            lines[status_i] = "**Status:** ACTIVE CANONICAL" + newline
+        else:
+            lines[status_i] = "Status: ACTIVE CANONICAL  " + newline
+        changes.append("status -> ACTIVE CANONICAL")
 
-    for i in range(min(limit, 35)):
-        stripped = lines[i].strip()
-        if stripped.startswith("Path:") or stripped.startswith("**Canonical Path:**"):
-            if "/canonical/proposed/" in lines[i] or "canonical/proposed/" in lines[i]:
-                lines[i] = lines[i].replace("/canonical/proposed/", "/canonical/active/").replace("canonical/proposed/", "canonical/active/")
-                changes.append("path proposed -> active")
-            break
+    path_i = _field_index(lines, ("Path:", "Canonical Path:", "**Canonical Path:**"))
+    if path_i is not None and "canonical/proposed/" in lines[path_i]:
+        lines[path_i] = lines[path_i].replace("canonical/proposed/", "canonical/active/")
+        changes.append("canonical path proposed -> active")
 
-    for i in range(min(limit, 40)):
-        stripped = lines[i].strip()
-        if stripped.startswith("Supersession Intent:"):
-            newline = "\n" if lines[i].endswith("\n") else ""
+    supersession_i = _field_index(lines, ("Supersession Intent:", "**Supersession Intent:**"), max_lines=40)
+    if supersession_i is not None:
+        stripped = lines[supersession_i].strip()
+        newline = "\n" if lines[supersession_i].endswith("\n") else ""
+        if stripped.startswith("**Supersession Intent:**"):
+            value = stripped[len("**Supersession Intent:**"):].strip()
+            lines[supersession_i] = f"**Supersedes:** {value}" + newline
+        else:
             value = stripped.split(":", 1)[1].strip()
-            lines[i] = f"Supersedes: {value}  {newline}"
-            changes.append("supersession intent -> supersedes")
-            break
+            lines[supersession_i] = f"Supersedes: {value}  " + newline
+        changes.append("supersession intent -> supersedes")
 
+    # Repair only authority-phase wording in the opening metadata/authority block.
     stale_markers = (
         "until explicit promotion",
         "until explicit active promotion",
@@ -77,38 +111,72 @@ def cleanup_file(path: Path) -> list[str]:
         "until explicit canonical promotion",
         "until explicit atomic canonical promotion",
     )
-    authority_repaired = False
+    authority_repair_count = 0
+    predecessor_repair_count = 0
     for i in range(limit):
         low = lines[i].strip().lower()
+        if "active predecessor until explicit promotion" in low:
+            lines[i] = lines[i].replace(
+                "active predecessor until explicit promotion",
+                "superseded predecessor after the executed 2026-09-01 promotion",
+            )
+            predecessor_repair_count += 1
+            continue
         if any(marker in low for marker in stale_markers) and (
-            "remain" in low or "authoritative" in low or "active" in low
+            low.startswith("until ")
+            or low.startswith("promotion remains")
+            or " remains authoritative" in low
+            or " remains active" in low
         ):
             newline = "\n" if lines[i].endswith("\n") else ""
             lines[i] = (
                 f"Promotion status: ACTIVE CANONICAL under `{ACTIVATION}` and `{MASTER_NAME}`."
                 + newline
             )
-            changes.append("pre-promotion authority sentence -> active authority")
-            authority_repaired = True
-            break
+            authority_repair_count += 1
+
+    if authority_repair_count:
+        changes.append(f"pre-promotion authority statements -> active ({authority_repair_count})")
+    if predecessor_repair_count:
+        changes.append(f"predecessor status wording -> superseded ({predecessor_repair_count})")
 
     updated = "".join(lines)
 
-    # Hard safety: only the first 90 physical lines may change.
+    # Reference cleanup is exact and filename-bound: only known active/superseded files move paths.
+    updated, proposed_refs, superseded_refs = _replace_known_paths(updated, active_names, superseded_names)
+    if proposed_refs:
+        changes.append(f"known active references proposed -> active ({proposed_refs})")
+    if superseded_refs:
+        changes.append(f"known predecessor references active -> superseded ({superseded_refs})")
+
     old_lines = original.splitlines()
     new_lines = updated.splitlines()
     if len(old_lines) != len(new_lines):
         raise SystemExit(f"{path.name}: cleanup changed line count")
-    changed_indices = [i + 1 for i, (a, b) in enumerate(zip(old_lines, new_lines)) if a != b]
-    if any(i > 90 for i in changed_indices):
-        raise SystemExit(f"{path.name}: semantic-body line changed outside metadata window: {changed_indices}")
 
-    # Post-cleanup authority checks for the preamble.
-    head35 = "\n".join(new_lines[:35])
-    if "Status: PROPOSED" in head35 or "NOT ACTIVE" in head35.upper():
-        raise SystemExit(f"{path.name}: stale status remains in preamble")
-    if "canonical/proposed/" in head35:
-        raise SystemExit(f"{path.name}: stale proposed path remains in preamble")
+    # Preamble status/path must now be unambiguous.
+    status_i_after = _field_index(new_lines, ("Status:", "**Status:**"))
+    if status_i_after is None or "ACTIVE CANONICAL" not in new_lines[status_i_after].upper():
+        raise SystemExit(f"{path.name}: active status not established")
+    if "PROPOSED" in new_lines[status_i_after].upper() or "NOT ACTIVE" in new_lines[status_i_after].upper():
+        raise SystemExit(f"{path.name}: stale proposed/not-active status remains")
+
+    path_i_after = _field_index(new_lines, ("Path:", "Canonical Path:", "**Canonical Path:**"))
+    if path_i_after is not None and "canonical/proposed/" in new_lines[path_i_after]:
+        raise SystemExit(f"{path.name}: canonical Path field still points to proposed")
+
+    # No promoted active filename may still be referenced through proposed paths anywhere.
+    for name in active_names:
+        if f"canonical/proposed/{name}" in updated:
+            raise SystemExit(f"{path.name}: active authority still referenced as proposed: {name}")
+
+    # Opening authority block must no longer claim predecessor authority pending promotion.
+    for line in new_lines[:90]:
+        low = line.strip().lower()
+        if any(marker in low for marker in stale_markers) and (
+            " remains authoritative" in low or " remains active" in low or low.startswith("until ")
+        ):
+            raise SystemExit(f"{path.name}: stale pre-promotion authority wording remains in opening block")
 
     if changes:
         path.write_text(updated, encoding="utf-8")
@@ -117,10 +185,13 @@ def cleanup_file(path: Path) -> list[str]:
 
 def main() -> None:
     names = inventory()
+    active_names = set(names)
+    superseded_names = {p.name for p in SUPERSEDED.glob("*.md") if p.is_file()}
+
     rows: list[tuple[str, list[str]]] = []
     unchanged: list[str] = []
     for name in names:
-        changes = cleanup_file(ACTIVE / name)
+        changes = cleanup_file(ACTIVE / name, active_names, superseded_names)
         if changes:
             rows.append((name, changes))
         else:
@@ -140,19 +211,19 @@ def main() -> None:
         "",
         "## Scope guard",
         "",
-        "Only preamble/authority metadata within the first 90 physical lines was eligible for modification. No formulas, thresholds, lifecycle rules, routing policy, permissions, Trade Physics mathematics, signal logic, runtime code, or broker behavior were changed.",
+        "Eligible changes are limited to promotion/status/path metadata, opening authority wording, and exact path repairs for filenames whose active/superseded classification is proven by the Master Index plus repository placement. No formulas, thresholds, lifecycle rules, routing policy, permissions, Trade Physics mathematics, signal logic, runtime code, or broker behavior are changed.",
         "",
         f"Active functional inventory checked: **{len(names)}**",
-        f"Files with stale promotion metadata repaired: **{len(rows)}**",
+        f"Files with stale promotion metadata/references repaired: **{len(rows)}**",
         f"Files already clean: **{len(unchanged)}**",
         "",
         "## Repaired files",
         "",
     ]
     if rows:
-        report_lines.extend(["| File | Metadata repairs |", "|---|---|"])
-        for name, changes in rows:
-            report_lines.append(f"| `{name}` | {'; '.join(changes)} |")
+        report_lines.extend(["| File | Non-semantic repairs |", "|---|---|"])
+        for name, file_changes in rows:
+            report_lines.append(f"| `{name}` | {'; '.join(file_changes)} |")
     else:
         report_lines.append("None.")
 
@@ -166,7 +237,7 @@ def main() -> None:
         "",
         "## Result",
         "",
-        "PASS if repository diff contains only the listed active-document metadata fields plus this audit report and temporary automation files used solely to execute/validate the cleanup. Temporary automation must be removed before PR review.",
+        "PASS requires: exactly 43 Master-Index-listed active files checked; no active file declaring PROPOSED/NOT ACTIVE in its status field; no canonical Path field pointing to proposed; no reference to an active filename through a proposed path; no opening authority statement claiming a predecessor remains active pending promotion; and no runtime-code change.",
         "",
     ]
     REPORT.write_text("\n".join(report_lines), encoding="utf-8")
