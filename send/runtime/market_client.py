@@ -51,11 +51,8 @@ def _twelve_data_stream_symbol() -> str:
 
 
 def configured_symbols():
-    provider = configured_provider()
-    if provider == "FINNHUB":
+    if configured_provider() == "FINNHUB":
         return ["EUR/USD"]
-    if provider == "TWELVE_DATA" and _twelve_data_streaming_enabled():
-        return [_twelve_data_stream_symbol()]
     return None
 
 
@@ -212,7 +209,7 @@ def _normalize_twelve_data_rows(symbol: str, timeframe: str, raw):
 
 def _cached_rest_candles(symbol: str, timeframe: str):
     ttl = max(1, int(os.getenv("TWELVE_DATA_REST_CACHE_SECONDS", "55")))
-    key = (str(symbol).strip().upper(), str(timeframe).strip().lower())
+    key = (str(symbol).strip().upper().replace("_", "/"), str(timeframe).strip().lower())
     now_ts = int(time.time())
     cached = _TWELVE_DATA_REST_CACHE.get(key)
     if cached and now_ts - int(cached["fetched_ts"]) < ttl:
@@ -309,68 +306,73 @@ def get_candles(symbol: str, timeframe: str):
         )
         return candles
 
-    if _twelve_data_streaming_enabled():
-        from runtime.twelvedata_market_data import (
-            TwelveDataInsufficientHistory,
-            TwelveDataMarketDataUnavailable,
-            TwelveDataRateLimitError,
-            TwelveDataStreamingUnavailable,
+    requested_symbol = str(symbol).strip().upper().replace("_", "/")
+    use_live_stream = (
+        _twelve_data_streaming_enabled()
+        and requested_symbol == _twelve_data_stream_symbol()
+    )
+    if not use_live_stream:
+        return _cached_rest_candles(symbol, timeframe)
+
+    from runtime.twelvedata_market_data import (
+        TwelveDataInsufficientHistory,
+        TwelveDataMarketDataUnavailable,
+        TwelveDataRateLimitError,
+        TwelveDataStreamingUnavailable,
+    )
+
+    feed = _twelve_data_feed()
+    try:
+        candles = feed.get_candles(timeframe)
+    except TwelveDataRateLimitError as exc:
+        now_ts = int(time.time())
+        runtime_status.update_status(
+            market_data_state="MARKET_DATA_LIMITED",
+            market_data_note=str(exc),
+            market_data_provider="TWELVE_DATA",
         )
-
-        feed = _twelve_data_feed()
-        try:
-            candles = feed.get_candles(timeframe)
-        except TwelveDataRateLimitError as exc:
-            now_ts = int(time.time())
-            runtime_status.update_status(
-                market_data_state="MARKET_DATA_LIMITED",
-                market_data_note=str(exc),
-                market_data_provider="TWELVE_DATA",
-            )
-            observability_logger.record_operational_incident(
-                incident_type="TWELVE_DATA_HTTP_429",
-                component="market_data",
-                runtime_state="MARKET_DATA_LIMITED",
-                operator_action="Wait for provider recovery; the runtime will resume automatically.",
-                severity="WARNING",
-                now_ts=now_ts,
-            )
-            raise MarketDataRateLimitError(str(exc)) from exc
-        except TwelveDataStreamingUnavailable as exc:
-            candles = _cached_rest_candles(symbol, timeframe)
-            runtime_status.update_status(
-                market_data_state="READY",
-                market_data_note=(
-                    "Twelve Data WebSocket unavailable; bounded REST cache fallback active: "
-                    f"{exc}"
-                ),
-                market_data_provider="TWELVE_DATA",
-                market_data_symbol=str(symbol).strip().upper(),
-                market_data_history_ready=True,
-                market_data_stream_state="REST_FALLBACK",
-            )
-            return candles
-        except TwelveDataInsufficientHistory as exc:
-            _update_twelve_data_stream_status(
-                feed, state="MARKET_DATA_COLLECTING", note=str(exc)
-            )
-            raise MarketDataUnavailableError(str(exc)) from exc
-        except TwelveDataMarketDataUnavailable as exc:
-            _update_twelve_data_stream_status(
-                feed, state="MARKET_DATA_UNAVAILABLE", note=str(exc)
-            )
-            raise MarketDataUnavailableError(str(exc)) from exc
-
-        health = feed.health()
-        counts = health["candle_counts"]
-        _update_twelve_data_stream_status(
-            feed,
-            state="READY",
-            note=(
-                f"Twelve Data live {health['symbol']} ready; "
-                f"real candles M1={counts['M1']}, M5={counts['M5']}"
+        observability_logger.record_operational_incident(
+            incident_type="TWELVE_DATA_HTTP_429",
+            component="market_data",
+            runtime_state="MARKET_DATA_LIMITED",
+            operator_action="Wait for provider recovery; the runtime will resume automatically.",
+            severity="WARNING",
+            now_ts=now_ts,
+        )
+        raise MarketDataRateLimitError(str(exc)) from exc
+    except TwelveDataStreamingUnavailable as exc:
+        candles = _cached_rest_candles(symbol, timeframe)
+        runtime_status.update_status(
+            market_data_state="READY",
+            market_data_note=(
+                "Twelve Data WebSocket unavailable; bounded REST cache fallback active: "
+                f"{exc}"
             ),
+            market_data_provider="TWELVE_DATA",
+            market_data_symbol=requested_symbol,
+            market_data_history_ready=True,
+            market_data_stream_state="REST_FALLBACK",
         )
         return candles
+    except TwelveDataInsufficientHistory as exc:
+        _update_twelve_data_stream_status(
+            feed, state="MARKET_DATA_COLLECTING", note=str(exc)
+        )
+        raise MarketDataUnavailableError(str(exc)) from exc
+    except TwelveDataMarketDataUnavailable as exc:
+        _update_twelve_data_stream_status(
+            feed, state="MARKET_DATA_UNAVAILABLE", note=str(exc)
+        )
+        raise MarketDataUnavailableError(str(exc)) from exc
 
-    return _cached_rest_candles(symbol, timeframe)
+    health = feed.health()
+    counts = health["candle_counts"]
+    _update_twelve_data_stream_status(
+        feed,
+        state="READY",
+        note=(
+            f"Twelve Data live {health['symbol']} ready; "
+            f"real candles M1={counts['M1']}, M5={counts['M5']}"
+        ),
+    )
+    return candles
