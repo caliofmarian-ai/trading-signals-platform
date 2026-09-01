@@ -9,11 +9,8 @@ from typing import Any, Dict
 
 from scripts.railway_common import (
     apply_path_contract,
-    broker_execution_enabled,
     resolve_base_dir,
     runtime_paths,
-    shadow_mode_enabled,
-    telegram_enabled,
 )
 from scripts.railway_init import RailwayInitError, _validate_config_tree
 
@@ -27,6 +24,7 @@ def _import_runtime_modules() -> None:
     __import__("core.signal_engine")
     __import__("core.distribution_router")
     __import__("monitoring.restart_guard")
+    __import__("runtime.startup_preflight")
     __import__("runtime.system_boot")
     __import__("runtime.runtime_status")
 
@@ -41,6 +39,7 @@ def _check_writable(base_dir: Path) -> None:
 
 
 def _check_state_files(base_dir: Path) -> None:
+    """Compatibility helper retained for callers; startup_preflight is authoritative."""
     from state_store import state_store as runtime_state_store
 
     state_dir = runtime_paths(base_dir)["state"]
@@ -59,19 +58,16 @@ def readiness_report(*, base_dir: Path | None = None) -> Dict[str, Any]:
     base_dir = base_dir or resolve_base_dir(require_explicit=True)
     apply_path_contract(base_dir)
 
-    if not shadow_mode_enabled():
-        raise RailwayHealthError("SHADOW_MODE must be true for the Railway shadow deployment")
-    if broker_execution_enabled():
-        raise RailwayHealthError("ENABLE_BROKER_EXECUTION must remain false in shadow mode")
-    if not os.getenv("TWELVE_DATA_API_KEY", "").strip():
-        raise RailwayHealthError("TWELVE_DATA_API_KEY is required for shadow-mode readiness")
-    if telegram_enabled() and not os.getenv("TELEGRAM_BOT_TOKEN", "").strip():
-        raise RailwayHealthError("TELEGRAM_BOT_TOKEN is required when ENABLE_TELEGRAM=true")
-
     _import_runtime_modules()
     _check_writable(base_dir)
     _validate_config_tree(base_dir)
-    _check_state_files(base_dir)
+
+    from runtime import startup_preflight
+
+    try:
+        preflight = startup_preflight.run_startup_preflight(require_shadow_mode=True)
+    except startup_preflight.StartupPreflightError as exc:
+        raise RailwayHealthError(str(exc)) from exc
 
     from monitoring import restart_guard
 
@@ -81,8 +77,13 @@ def readiness_report(*, base_dir: Path | None = None) -> Dict[str, Any]:
     return {
         "status": "ready",
         "base_dir": str(base_dir),
-        "telegram_enabled": telegram_enabled(),
+        "telegram_enabled": os.getenv("ENABLE_TELEGRAM", "").strip().lower()
+        in {"1", "true", "yes", "on"},
         "shadow_mode": True,
+        "active_provider": preflight["active_provider"],
+        "provider_mode": preflight["provider_mode"],
+        "effective_symbols": list(preflight["effective_symbols"]),
+        "startup_preflight": "ready",
     }
 
 
