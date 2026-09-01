@@ -58,6 +58,8 @@ def canonical_runtime_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
     monkeypatch.setenv("ERROR_EVENTS_LOG", str(root / "observability" / "error_events.jsonl"))
     monkeypatch.setenv("OUTCOMES_LOG", str(root / "outcomes" / "outcomes.jsonl"))
     monkeypatch.setenv("ANALYTICS_DIR", str(root / "analytics"))
+    monkeypatch.setenv("MARKET_DATA_PROVIDER", "TWELVE_DATA")
+    monkeypatch.setenv("TWELVE_DATA_API_KEY", "offline-market-key")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "offline-token")
     monkeypatch.setenv("ELITE_CHANNEL_ID", "1004")
     monkeypatch.setenv("COMMUNITY_FEEDBACK_SALT", "offline-salt")
