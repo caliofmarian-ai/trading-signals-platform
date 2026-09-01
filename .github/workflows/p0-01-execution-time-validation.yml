@@ -6,7 +6,7 @@ on:
       - 'send/core/execution_model.py'
       - 'send/core/signal_event.py'
       - 'send/core/signal_execution_gate.py'
-      - 'send/core/distribution_router.py'
+      - 'send/core/distribution_router_v3.py'
       - 'send/core/outcome_service.py'
       - 'send/core/trade_temporal_telemetry.py'
       - 'tests/**'
@@ -30,7 +30,10 @@ jobs:
           python -m py_compile \
             send/core/execution_model.py \
             send/core/signal_event.py \
-            send/core/signal_execution_gate.py
+            send/core/signal_execution_gate.py \
+            send/core/distribution_router_v3.py \
+            send/core/outcome_service.py \
+            send/core/trade_temporal_telemetry.py
       - name: Focused execution-time tests
         env:
           PYTHONPATH: send
@@ -38,7 +41,8 @@ jobs:
           python -m pytest -q \
             tests/canonical/unit/test_execution_model.py \
             tests/canonical/unit/test_signal_event.py \
-            tests/canonical/unit/test_signal_execution_gate.py
+            tests/canonical/unit/test_signal_execution_gate.py \
+            tests/canonical/unit/test_execution_expiry_downstream.py
       - name: Full repository tests
         env:
           PYTHONPATH: send
