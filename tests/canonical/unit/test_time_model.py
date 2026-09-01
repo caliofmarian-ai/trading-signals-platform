@@ -49,18 +49,40 @@ def test_time_model_calculates_canonical_internal_metrics(canonical_runtime_root
     params, _, _, market, corridor = _inputs(canonical_runtime_root)
     result = evaluate_time(market, corridor, params)
 
-    expected_raw = market.context.buffer_distance / market.context.price_speed
+    assert market.context.directional_effective_speed is not None
+    expected_raw = market.context.buffer_distance / market.context.directional_effective_speed
     expected_adjusted = (
         expected_raw
         * params["trend_time_adjust"][market.context.trend_context]
         * params["structure_factor"]["mult"]
     )
+    assert result.schema_version == "2.0.0"
     assert result.context.t_needed == pytest.approx(expected_raw)
     assert result.context.t_needed_adjusted == pytest.approx(expected_adjusted)
     assert result.context.model_time_reach_ratio == pytest.approx(
         expected_adjusted / result.context.model_expiry
     )
+    assert result.context.time_to_buffer_ratio == pytest.approx(
+        result.context.model_expiry / expected_adjusted
+    )
     assert result.context.time_state in {"READY", "LATE"}
+
+
+def test_gross_price_speed_cannot_replace_directional_speed(canonical_runtime_root: Path) -> None:
+    params, _, _, market, corridor = _inputs(canonical_runtime_root)
+    unavailable = replace(
+        market,
+        context=replace(
+            market.context,
+            price_speed=1.0,
+            directional_effective_speed=0.0,
+        ),
+    )
+    result = evaluate_time(unavailable, corridor, params)
+
+    assert result.context.time_state == "UNAVAILABLE"
+    assert result.context.t_needed is None
+    assert result.context.model_expiry is None
 
 
 def test_corridor_pressure_remains_unavailable_without_calibrated_formula(canonical_runtime_root: Path) -> None:
@@ -75,13 +97,13 @@ def test_corridor_pressure_remains_unavailable_without_calibrated_formula(canoni
 
 def test_expiry_is_clamped_to_existing_versioned_limits(canonical_runtime_root: Path) -> None:
     params, _, _, market, corridor = _inputs(canonical_runtime_root)
-    slow_context = replace(market.context, price_speed=0.000001)
+    slow_context = replace(market.context, directional_effective_speed=0.000001)
     slow = evaluate_time(replace(market, context=slow_context), corridor, params)
     assert slow.context.model_expiry == params["expiry_limits_minutes"]["max"]
     assert slow.context.time_state == "LATE"
     assert slow.temporally_feasible is False
 
-    fast_context = replace(market.context, price_speed=1.0)
+    fast_context = replace(market.context, directional_effective_speed=1.0)
     fast = evaluate_time(replace(market, context=fast_context), corridor, params)
     assert fast.context.model_expiry == params["expiry_limits_minutes"]["min"]
     assert fast.context.time_state == "READY"
@@ -98,14 +120,18 @@ def test_non_valid_corridor_blocks_time_instead_of_being_cosmetized(canonical_ru
     assert "blocked" in result.explanation
 
 
-def test_zero_observed_speed_is_explicitly_unavailable(canonical_runtime_root: Path) -> None:
+def test_zero_directional_speed_is_explicitly_unavailable(canonical_runtime_root: Path) -> None:
     params, _, _, market, corridor = _inputs(canonical_runtime_root)
-    stopped = replace(market, context=replace(market.context, price_speed=0.0))
+    stopped = replace(
+        market,
+        context=replace(market.context, directional_effective_speed=0.0),
+    )
     result = evaluate_time(stopped, corridor, params)
 
     assert result.context.time_state == "UNAVAILABLE"
     assert result.context.model_expiry is None
     assert result.context.model_time_reach_ratio is None
+    assert result.context.time_to_buffer_ratio is None
 
 
 def test_mismatched_upstream_evidence_is_rejected(canonical_runtime_root: Path) -> None:
