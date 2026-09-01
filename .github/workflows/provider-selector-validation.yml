@@ -1,0 +1,43 @@
+name: Provider Selector Validation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provider-selector-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install -r requirements.txt
+
+      - name: Compile changed Python modules
+        run: |
+          python -m py_compile \
+            send/core/market_data_provider_control.py \
+            send/core/admin_commands.py \
+            send/core/telegram_admin_ui.py \
+            send/runtime/market_client.py
+
+      - name: Run provider selector tests
+        run: |
+          python -m pytest -q tests/canonical/unit/test_market_data_provider_control.py
+
+      - name: Run Telegram admin regression tests
+        run: |
+          python -m pytest -q tests/telegram_admin_ui_restoration/test_admin_ui_restoration.py
