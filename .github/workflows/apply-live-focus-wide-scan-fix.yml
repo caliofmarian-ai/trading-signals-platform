@@ -30,15 +30,23 @@ jobs:
               ('''def _twelve_data_stream_symbol() -> str:\n    value = os.getenv("TWELVE_DATA_STREAM_SYMBOL", "EUR/USD").strip().upper().replace("_", "/")\n    if not value or "/" not in value:\n        raise RuntimeError(f"Invalid TWELVE_DATA_STREAM_SYMBOL: {value!r}")\n    return value\n\n\n''', ''),
               ('''def _twelve_data_feed():\n    global _TWELVE_DATA_FEED\n    if _TWELVE_DATA_FEED is None:\n        from runtime.twelvedata_market_data import TwelveDataRealtimeFeed\n\n        _TWELVE_DATA_FEED = TwelveDataRealtimeFeed(\n            symbol=_twelve_data_stream_symbol(),\n            token=_api_key(),\n        )\n    return _TWELVE_DATA_FEED\n''', '''def _twelve_data_feed(symbol: str):\n    normalized = str(symbol).strip().upper().replace("_", "/")\n    feed = _TWELVE_DATA_FEEDS.get(normalized)\n    if feed is None:\n        from runtime.twelvedata_market_data import TwelveDataRealtimeFeed\n\n        feed = TwelveDataRealtimeFeed(symbol=normalized, token=_api_key())\n        _TWELVE_DATA_FEEDS[normalized] = feed\n    return feed\n'''),
               ('def get_candles(symbol: str, timeframe: str):\n', 'def get_candles(symbol: str, timeframe: str, *, prefer_live: bool = False):\n'),
-              ('    if _twelve_data_streaming_enabled():\n', '    if _twelve_data_streaming_enabled() and prefer_live:\n'),
-              ('        feed = _twelve_data_feed()\n', '        feed = _twelve_data_feed(symbol)\n'),
           ]
           for old, new in replacements:
               if text.count(old) != 1:
                   raise SystemExit(f'market_client expected exactly one occurrence: {old[:80]!r}; found {text.count(old)}')
               text = text.replace(old, new)
-          old = '''        except TwelveDataStreamingUnavailable as exc:\n            candles = _cached_rest_candles(symbol, timeframe)\n            runtime_status.update_status(\n                market_data_state="READY",\n                market_data_note=(\n                    "Twelve Data WebSocket unavailable; bounded REST cache fallback active: "\n                    f"{exc}"\n                ),\n                market_data_provider="TWELVE_DATA",\n                market_data_symbol=str(symbol).strip().upper(),\n                market_data_history_ready=True,\n                market_data_stream_state="REST_FALLBACK",\n            )\n            return candles\n'''
-          new = '''        except TwelveDataStreamingUnavailable as exc:\n            runtime_status.update_status(\n                market_data_state="MARKET_DATA_UNAVAILABLE",\n                market_data_note=(\n                    "Twelve Data live stream unavailable for focus symbol; "\n                    "actionable evaluation is fail-closed: " + str(exc)\n                ),\n                market_data_provider="TWELVE_DATA",\n                market_data_symbol=str(symbol).strip().upper(),\n                market_data_history_ready=False,\n                market_data_stream_state="UNAVAILABLE",\n            )\n            raise MarketDataUnavailableError(str(exc)) from exc\n'''
+
+          old = '''    requested_symbol = str(symbol).strip().upper().replace("_", "/")\n    use_live_stream = (\n        _twelve_data_streaming_enabled()\n        and requested_symbol == _twelve_data_stream_symbol()\n    )\n    if not use_live_stream:\n        return _cached_rest_candles(symbol, timeframe)\n'''
+          new = '''    requested_symbol = str(symbol).strip().upper().replace("_", "/")\n    if not (_twelve_data_streaming_enabled() and prefer_live):\n        return _cached_rest_candles(symbol, timeframe)\n'''
+          if text.count(old) != 1:
+              raise SystemExit(f'live selection block count={text.count(old)}')
+          text = text.replace(old, new)
+          if text.count('    feed = _twelve_data_feed()\n') != 1:
+              raise SystemExit('feed call mismatch')
+          text = text.replace('    feed = _twelve_data_feed()\n', '    feed = _twelve_data_feed(symbol)\n')
+
+          old = '''    except TwelveDataStreamingUnavailable as exc:\n        candles = _cached_rest_candles(symbol, timeframe)\n        runtime_status.update_status(\n            market_data_state="READY",\n            market_data_note=(\n                "Twelve Data WebSocket unavailable; bounded REST cache fallback active: "\n                f"{exc}"\n            ),\n            market_data_provider="TWELVE_DATA",\n            market_data_symbol=requested_symbol,\n            market_data_history_ready=True,\n            market_data_stream_state="REST_FALLBACK",\n        )\n        return candles\n'''
+          new = '''    except TwelveDataStreamingUnavailable as exc:\n        runtime_status.update_status(\n            market_data_state="MARKET_DATA_UNAVAILABLE",\n            market_data_note=(\n                "Twelve Data live stream unavailable for focus symbol; "\n                "actionable evaluation is fail-closed: " + str(exc)\n            ),\n            market_data_provider="TWELVE_DATA",\n            market_data_symbol=requested_symbol,\n            market_data_history_ready=False,\n            market_data_stream_state="UNAVAILABLE",\n        )\n        raise MarketDataUnavailableError(str(exc)) from exc\n'''
           if text.count(old) != 1:
               raise SystemExit(f'stream fallback block count={text.count(old)}')
           market.write_text(text.replace(old, new), encoding='utf-8')
@@ -65,7 +73,6 @@ jobs:
           text = text.replace('want_open_now=bool(effective_in_focus),', 'want_open_now=bool(symbol_in_focus),')
           engine.write_text(text, encoding='utf-8')
 
-          # Keep existing monkeypatched market-client fixtures compatible with the expanded provider contract.
           for path in [
               Path('tests/batch_06/test_fsm_restart_recovery.py'),
               Path('tests/canonical/unit/test_binary_strategy_v2_runtime.py'),
@@ -107,7 +114,7 @@ jobs:
               assert len(seen) == len(symbols)
 
 
-          def test_for_focus_live_preference_is_owned_by_per_symbol_membership():
+          def test_focus_membership_is_per_symbol_not_global():
               selected, focus = _select_scan_symbols(["EUR/USD", "GBP/USD", "USD/JPY"], ["GBP/USD"], 0)
               assert "GBP/USD" in selected
               assert "GBP/USD" in focus
