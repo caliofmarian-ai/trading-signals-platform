@@ -1,0 +1,22 @@
+name: Active Canon Final Validation
+
+on:
+  push:
+    branches:
+      - governance/active-canon-metadata-cleanup-20260901
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: governance/active-canon-metadata-cleanup-20260901
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Strict final active canon validation
+        run: python scripts/_tmp_active_canon_final_validation.py
