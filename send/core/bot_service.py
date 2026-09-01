@@ -1244,7 +1244,9 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
     if action == "RESEARCH":
         # Research & Analytics panel: performance summaries, analytics reports.
         # Source: ADMIN_TREE_MAP_v2.0.0.md §6.6; ADMIN_CONTROL_SPEC_v2.0.0.md §10
-        text, _ = _render_panel_for_command("/report", user_id, owner_private=owner_private)
+        from core.admin_views import render_research_analytics_panel
+        recent_events = _iter_recent_engine_events(limit=500)
+        content = render_research_analytics_panel(recent_events)
         try:
             import os as _os
             report_path = _find_latest_report_json()
@@ -1259,7 +1261,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             "text": _format_surface(
                 "research_analytics",
                 "📊 Research & Analytics",
-                _surface_current_state(text),
+                content,
             ),
             "reply_markup": markup,
         }
@@ -1268,7 +1270,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         # Intelligence panel: decision intelligence, drift signals, anomaly summaries.
         # Source: ADMIN_TREE_MAP_v2.0.0.md §6.7; ADMIN_CONTROL_SPEC_v2.0.0.md §11
         from core.admin_views import render_intelligence_panel
-        recent_events = _iter_recent_engine_events(limit=50)
+        recent_events = _iter_recent_engine_events(limit=500)
         content = render_intelligence_panel(recent_events)
         return {
             "text": _format_surface("intelligence", "🧠 Intelligence", content),
