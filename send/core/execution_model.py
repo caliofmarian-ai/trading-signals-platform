@@ -141,7 +141,9 @@ def derive_execution_time_for_stage(
     ):
         raise TypeError("decision must be a DecisionObject")
     normalized_stage = str(stage or "").strip().upper()
-    if normalized_stage not in {"PRE", "CONFIRM", "OPEN_NOW", "NO_SIGNAL", "REJECT", "WAIT"}:
+    if normalized_stage not in {
+        "PRE", "CONFIRM", "OPEN_NOW", "NO_SIGNAL", "REJECT", "WAIT", "BLOCKED"
+    }:
         raise ExecutionModelError(f"unsupported execution stage: {stage!r}")
 
     if normalized_stage not in {"CONFIRM", "OPEN_NOW"}:
