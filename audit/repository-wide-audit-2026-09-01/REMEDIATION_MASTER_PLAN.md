@@ -316,10 +316,12 @@ Required outcome:
 
 ### R-016 — Role/permission fail-closed reconciliation
 Severity: MEDIUM-HIGH
-Status: IN PROGRESS
-Issue: #128
-Branch: `remediation/audit-2026-09-01-r016-role-permission-fail-closed`
+Status: CLOSED
+Issue: #128 — CLOSED
+PR: #129
+Merged main commit: `84363099cf5faa21118346c89aeea065849bc66c`
 Depends on: R-015 — SATISFIED
+Validation: provider selector 5 passed; Telegram admin regression 72 passed; full repository suite 1072 passed.
 
 Required outcome:
 - malformed critical permission configuration does not broaden authority through permissive fallback;
@@ -455,3 +457,4 @@ The repository-wide remediation program is complete only when:
 - 2026-09-02: R-015 started on branch `remediation/audit-2026-09-01-r015-env-example-reconciliation`; Issue #126 and Draft PR #127 created.
 - 2026-09-02: R-015 merged through PR #127; main advanced to `401ff45399cddeb45b613b0a6bbb23d1e740a356`; Issue #126 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1065 passed.
 - 2026-09-02: R-016 started on branch `remediation/audit-2026-09-01-r016-role-permission-fail-closed`; Issue #128 created.
+- 2026-09-02: R-016 merged through PR #129; main advanced to `84363099cf5faa21118346c89aeea065849bc66c`; Issue #128 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1072 passed.
