@@ -367,11 +367,11 @@ def test_system_boot_emits_recovery_events(tmp_path: Path, monkeypatch: pytest.M
     assert "recovery_completed" in event_types
 
 
-def test_permissions_fallback_remains_permitted_and_safe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_permissions_fail_closed_for_non_owner_but_preserve_owner_recovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     modules = _import_batch06_modules(tmp_path, monkeypatch)
     admin_permissions = modules["admin_permissions"]
 
-    admin_permissions.reload_permissions_config()
-    assert admin_permissions.load_permissions_config() == {}
+    with pytest.raises(admin_permissions.PermissionConfigurationError, match="Permission config is missing"):
+        admin_permissions.reload_permissions_config()
     assert admin_permissions.has_permission(1001, "roles.write")
-    assert not admin_permissions.has_permission(9999, "roles.write")
+    assert not admin_permissions.has_permission(9999, "admin.view")

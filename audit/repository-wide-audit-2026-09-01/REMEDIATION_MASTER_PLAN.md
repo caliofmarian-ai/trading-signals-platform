@@ -303,10 +303,12 @@ Required outcome:
 
 ### R-015 — Environment/config example reconciliation
 Severity: MEDIUM-HIGH
-Status: IN PROGRESS
-Issue: #126
-Branch: `remediation/audit-2026-09-01-r015-env-example-reconciliation`
+Status: CLOSED
+Issue: #126 — CLOSED
+PR: #127
+Merged main commit: `401ff45399cddeb45b613b0a6bbb23d1e740a356`
 Depends on: R-014 — SATISFIED
+Validation: provider selector 5 passed; Telegram admin regression 72 passed; full repository suite 1065 passed.
 
 Required outcome:
 - `.env.example` reflects current provider bootstrap policy, event schema v3, FREE limit 6, runtime paths, and current safety defaults;
@@ -314,7 +316,10 @@ Required outcome:
 
 ### R-016 — Role/permission fail-closed reconciliation
 Severity: MEDIUM-HIGH
-Status: PENDING
+Status: IN PROGRESS
+Issue: #128
+Branch: `remediation/audit-2026-09-01-r016-role-permission-fail-closed`
+Depends on: R-015 — SATISFIED
 
 Required outcome:
 - malformed critical permission configuration does not broaden authority through permissive fallback;
@@ -448,3 +453,5 @@ The repository-wide remediation program is complete only when:
 - 2026-09-02: R-010 started on branch `remediation/audit-2026-09-01-r010-model-time-boundaries`; Issue #116 and Draft PR #117 created. Initial boundary characterization exposed an exact-fit floating-point defect; after the bounded numerical fix, validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1041 passed, GitHub Actions run 33605761955 SUCCESS.
 - 2026-09-02: R-014 merged through PR #125; main advanced to `a50842c22fb4f534da980cbb017172f6f6493427`; Issue #124 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1061 passed.
 - 2026-09-02: R-015 started on branch `remediation/audit-2026-09-01-r015-env-example-reconciliation`; Issue #126 and Draft PR #127 created.
+- 2026-09-02: R-015 merged through PR #127; main advanced to `401ff45399cddeb45b613b0a6bbb23d1e740a356`; Issue #126 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1065 passed.
+- 2026-09-02: R-016 started on branch `remediation/audit-2026-09-01-r016-role-permission-fail-closed`; Issue #128 created.
