@@ -866,17 +866,6 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
     owner_private = _is_owner_private_for_message(message, user_id)
     role = get_primary_role(user_id)
 
-    # Admin-topic membership is context, not authorization. Every live
-    # non-Owner ADMIN_NAV action requires the governed admin.view grant.
-    if not owner_private:
-        from core.admin_permissions import has_permission
-        if not has_permission(user_id, "admin.view"):
-            return {
-                "text": "Access denied (missing admin permission).",
-                "reply_markup": None,
-                _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
-            }
-
     # Button visibility is not authorization. A forged callback targeting a
     # canonical top-level panel must pass the same role visibility boundary.
     if (
@@ -916,6 +905,17 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             "text": render_contextual_knowledge(entry.key),
             "reply_markup": telegram_admin_ui.knowledge_detail_markup(return_action),
         }
+
+    # Contextual knowledge is governed by knowledge_visible_for_role above.
+    # Every remaining live non-Owner ADMIN_NAV action requires admin.view.
+    if not owner_private:
+        from core.admin_permissions import has_permission
+        if not has_permission(user_id, "admin.view"):
+            return {
+                "text": "Access denied (missing admin permission).",
+                "reply_markup": None,
+                _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
+            }
 
     # ---- RELOAD_ROLES flow (admin-topic only) ----
     if action == "RELOAD_ROLES_CONFIRM":
