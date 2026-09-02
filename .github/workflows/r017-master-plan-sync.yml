@@ -1,0 +1,56 @@
+name: R017 Master Plan Sync
+
+on:
+  push:
+    branches:
+      - remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance
+          fetch-depth: 0
+      - name: Synchronize R-017 master-plan state
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('audit/repository-wide-audit-2026-09-01/REMEDIATION_MASTER_PLAN.md')
+          text = path.read_text(encoding='utf-8')
+          old = '''### R-017 — Telegram multi-role final acceptance
+          Severity: HIGH
+          Status: PENDING
+          Tracks: Issue #23
+          '''
+          new = '''### R-017 — Telegram multi-role final acceptance
+          Severity: HIGH
+          Status: IN PROGRESS
+          Issue: #131
+          Tracks: Issue #23
+          Branch: `remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance`
+          Depends on: R-016 — SATISFIED
+          '''
+          if old not in text:
+              raise SystemExit('R-017 master-plan block not found exactly')
+          text = text.replace(old, new, 1)
+          log_line = '- 2026-09-02: R-017 started on branch `remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance`; Issue #131 created under Telegram parent Issue #23; automated multi-role acceptance matrix materialized.\n'
+          if log_line not in text:
+              text = text.rstrip() + '\n' + log_line
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Remove one-shot workflow and commit
+        shell: bash
+        run: |
+          rm -f .github/workflows/r017-master-plan-sync.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add audit/repository-wide-audit-2026-09-01/REMEDIATION_MASTER_PLAN.md .github/workflows/r017-master-plan-sync.yml
+          git commit -m "R-017: mark remediation in progress"
+          git push origin HEAD:remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance
