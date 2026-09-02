@@ -330,8 +330,11 @@ Required outcome:
 
 ### R-017 — Telegram multi-role final acceptance
 Severity: HIGH
-Status: PENDING
+Status: IN PROGRESS
+Issue: #131
 Tracks: Issue #23
+Branch: `remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance`
+Depends on: R-016 — SATISFIED
 
 Required outcome:
 - canonical non-Owner journeys;
@@ -458,3 +461,4 @@ The repository-wide remediation program is complete only when:
 - 2026-09-02: R-015 merged through PR #127; main advanced to `401ff45399cddeb45b613b0a6bbb23d1e740a356`; Issue #126 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1065 passed.
 - 2026-09-02: R-016 started on branch `remediation/audit-2026-09-01-r016-role-permission-fail-closed`; Issue #128 created.
 - 2026-09-02: R-016 merged through PR #129; main advanced to `84363099cf5faa21118346c89aeea065849bc66c`; Issue #128 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1072 passed.
+- 2026-09-02: R-017 started on branch `remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance`; Issue #131 created under Telegram parent Issue #23; automated multi-role acceptance matrix materialized.
