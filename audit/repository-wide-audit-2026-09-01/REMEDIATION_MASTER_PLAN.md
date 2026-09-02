@@ -222,11 +222,12 @@ Acceptance:
 
 ### R-010 — Model Time boundary/sawtooth review
 Severity: HIGH
-Status: IN PROGRESS
-Issue: #116
-PR: #117 (Draft until final audit completion)
+Status: CLOSED
+Issue: #116 — CLOSED
+PR: #117
+Merged main commit: `e42abad1ebec47f075eee8f7de78f8085bdc4732`
 Depends on: R-001 — SATISFIED; execution sequence through R-009 — SATISFIED
-Current validation: 1041 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; GitHub Actions run 33605761955 SUCCESS.
+Validation: 1041 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; PR final GitHub Actions validation SUCCESS.
 
 Required outcome:
 - determine canonically whether integer rounding belongs anywhere in Model Time;
@@ -251,7 +252,10 @@ Acceptance:
 
 ### R-011 — FREE entitlement limit reconciliation
 Severity: HIGH
-Status: PENDING
+Status: IN PROGRESS
+Issue: #118
+Branch: `remediation/audit-2026-09-01-r011-free-entitlement`
+Depends on: R-010 — SATISFIED
 
 Required outcome:
 - active canon, runtime defaults, channel config, `.env.example`, tests, and admin display agree on FREE limit = 6 unless a governed override is explicitly intended and auditable.
