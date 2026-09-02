@@ -181,14 +181,12 @@ def _can_run_admin_command(message: Dict[str, Any], user_id: int, cmd: str) -> b
 
 
 def _can_use_admin_callback(message: Dict[str, Any], user_id: int) -> bool:
+    # This gate validates Telegram context only. Retired/unknown callback
+    # recovery must remain reachable without exposing a live Admin surface.
+    # Live ADMIN_NAV authorization is enforced in the navigation dispatcher.
     if _is_owner_private_context(message, user_id):
         return True
-    if not _is_admin_topic_context(message):
-        return False
-    # Admin-topic location is only a context gate. Non-Owner actors must
-    # also hold the governed admin.view permission (R-016/R-017).
-    from core.admin_permissions import has_permission
-    return has_permission(user_id, "admin.view")
+    return _is_admin_topic_context(message)
 
 
 def _is_owner_private_for_message(message: Dict[str, Any], user_id: int) -> bool:
@@ -867,6 +865,17 @@ def _send_document_reply(message: Dict[str, Any], file_path: str, caption: Optio
 def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str, Any]) -> Dict[str, Any]:
     owner_private = _is_owner_private_for_message(message, user_id)
     role = get_primary_role(user_id)
+
+    # Admin-topic membership is context, not authorization. Every live
+    # non-Owner ADMIN_NAV action requires the governed admin.view grant.
+    if not owner_private:
+        from core.admin_permissions import has_permission
+        if not has_permission(user_id, "admin.view"):
+            return {
+                "text": "Access denied (missing admin permission).",
+                "reply_markup": None,
+                _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
+            }
 
     # Button visibility is not authorization. A forged callback targeting a
     # canonical top-level panel must pass the same role visibility boundary.
