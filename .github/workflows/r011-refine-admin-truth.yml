@@ -1,0 +1,31 @@
+name: R-011 Refine Admin Truth
+
+on:
+  push:
+    branches:
+      - remediation/audit-2026-09-01-r011-free-entitlement
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    if: contains(github.event.head_commit.message, 'R-011 apply effective source refinement')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply strict refinement
+        run: |
+          python scripts/r011_refine_admin_truth.py
+          git diff --check
+
+      - name: Commit focused refinement
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add send/core/admin_views.py
+          git commit -m "R-011 refine effective entitlement source truth"
+          git push origin HEAD:remediation/audit-2026-09-01-r011-free-entitlement
