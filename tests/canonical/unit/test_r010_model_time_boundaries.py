@@ -69,7 +69,7 @@ def _evaluate_at_adjusted_minutes(runtime_root: Path, adjusted_minutes: float):
 def test_current_model_window_minute_boundary_is_explicitly_characterized(
     canonical_runtime_root: Path,
 ) -> None:
-    """R-010 characterizes the existing v2 compatibility behavior without redefining canon."""
+    """R-010 characterizes existing bounded compatibility behavior without redefining canon."""
 
     below = _evaluate_at_adjusted_minutes(canonical_runtime_root, 4.999)
     exact = _evaluate_at_adjusted_minutes(canonical_runtime_root, 5.000)
