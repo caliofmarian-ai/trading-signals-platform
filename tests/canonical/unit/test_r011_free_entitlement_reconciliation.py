@@ -88,6 +88,7 @@ def test_distribution_admin_view_shows_persisted_effective_free_limit(
         "FREE: ACTIVE | 2/6 | mapping READY | limit source PERSISTED_CONFIG"
         in rendered
     )
+    assert "ELITE: ACTIVE | 0/UNLIMITED | mapping READY" in rendered
     assert "Reset reference: 08:10 Europe/London" in rendered
 
 
@@ -108,6 +109,28 @@ def test_distribution_admin_view_exposes_governed_env_override_source(
 
     assert "FREE: ACTIVE | 2/9 | mapping READY | limit source ENV" in rendered
     assert "2/6" not in rendered
+
+
+def test_distribution_admin_view_does_not_claim_invalid_env_as_effective_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin_views, distribution_router, distribution_router_v3 = _live_modules()
+    monkeypatch.setenv("FREE_LIMIT", "not-a-limit")
+    monkeypatch.setattr(
+        distribution_router_v3, "_load_effective_config", lambda: _effective_cfg(6)
+    )
+    monkeypatch.setattr(distribution_router, "load_state", _state)
+    monkeypatch.setattr(
+        distribution_router, "_load_channel_config_file", lambda: {"FREE_LIMIT": 6}
+    )
+
+    rendered = admin_views.render_distribution_panel(123, 0)
+
+    assert (
+        "FREE: ACTIVE | 2/6 | mapping READY | limit source PERSISTED_CONFIG"
+        in rendered
+    )
+    assert "FREE: ACTIVE | 2/6 | mapping READY | limit source ENV" not in rendered
 
 
 def test_distribution_admin_view_fails_visibly_when_truth_is_unavailable(
