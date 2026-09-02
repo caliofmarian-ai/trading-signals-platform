@@ -132,27 +132,49 @@ def test_recent_m1_gap_blocks_directional_speed_instead_of_compressing_time(cano
         evaluate_market(m1, m5, params)
 
 
-def test_recent_m5_gap_blocks_atr_and_time_evidence_instead_of_compressing_time(canonical_runtime_root: Path) -> None:
+def test_recent_m5_gap_blocks_atr_speed_reference_instead_of_compressing_time(canonical_runtime_root: Path) -> None:
     params = _params(canonical_runtime_root)
     m1 = _candles(220, timeframe="M1", step=60)
     m5 = _candles(220, timeframe="M5", step=300)
-    del m5[100]
+    del m5[10]
 
-    with pytest.raises(MarketModelUnavailable, match=r"contiguous real candles at 300s cadence"):
+    with pytest.raises(MarketModelUnavailable, match=r"15 contiguous real candles at 300s cadence"):
         evaluate_market(m1, m5, params)
 
 
-def test_older_gap_is_excluded_when_newest_segment_alone_satisfies_required_history(canonical_runtime_root: Path) -> None:
+def test_older_m1_gap_does_not_block_when_directional_window_is_contiguous(canonical_runtime_root: Path) -> None:
     params = _params(canonical_runtime_root)
-    m1 = _candles(230, timeframe="M1", step=60)
-    m5 = _candles(230, timeframe="M5", step=300)
-    expected = evaluate_market(m1, m5[:210], params)
+    m1 = _candles(220, timeframe="M1", step=60)
+    m5 = _candles(220, timeframe="M5", step=300)
+    baseline = evaluate_market(m1, m5, params)
+
+    gapped_m1 = copy.deepcopy(m1)
+    del gapped_m1[30]
+    actual = evaluate_market(gapped_m1, m5, params)
+
+    assert actual.context.price_speed == pytest.approx(baseline.context.price_speed)
+    assert actual.context.directional_effective_speed == pytest.approx(
+        baseline.context.directional_effective_speed
+    )
+    assert actual.context.weighted_gross_speed == pytest.approx(
+        baseline.context.weighted_gross_speed
+    )
+
+
+def test_older_m5_gap_is_excluded_from_atr_temporal_reference(canonical_runtime_root: Path) -> None:
+    params = _params(canonical_runtime_root)
+    m1 = _candles(220, timeframe="M1", step=60)
+    m5 = _candles(220, timeframe="M5", step=300)
+    baseline = evaluate_market(m1, m5, params)
 
     gapped_m5 = copy.deepcopy(m5)
-    del gapped_m5[210]
+    del gapped_m5[100]
     actual = evaluate_market(m1, gapped_m5, params)
 
-    assert actual == expected
+    assert actual.evidence.atr_m5 == pytest.approx(baseline.evidence.atr_m5)
+    assert actual.context.directional_effective_speed == pytest.approx(
+        baseline.context.directional_effective_speed
+    )
 
 
 def test_missing_operational_parameter_is_rejected_not_defaulted(canonical_runtime_root: Path) -> None:
