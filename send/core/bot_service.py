@@ -974,42 +974,31 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             markup = telegram_admin_ui.symbols_markup()
         return {"text": _format_surface("symbols_coverage", "💱 Symbols Panel", result), "reply_markup": markup}
 
-    # ---- Strategy profile callbacks ----
+    # ---- Strategy profile callbacks (R-012: read-only / fail closed) ----
     if action == "PROFILE_HOME":
-        current = get_current_strategy_profile()
         current_observation = get_current_strategy_profile_observation()
         return {
             "text": _format_surface(
                 "strategy",
                 "⚙️ Strategy Profile",
-                f"Current profile: {current_observation}",
+                "Profiles: NOT AVAILABLE\n"
+                f"Current profile state: {current_observation}\n\n"
+                "Named production presets are not defined by the active canonical "
+                "parameter-control authority. Current strategy parameters remain unchanged.",
             ),
-            "reply_markup": telegram_admin_ui.strategy_quick_markup(current),
+            "reply_markup": telegram_admin_ui.strategy_quick_markup(None),
         }
 
     if action.startswith("PROFILE_CONFIRM:"):
-        profile = action[len("PROFILE_CONFIRM:"):]
-        profile_upper = profile.upper()
-        from core.admin_commands import STRATEGY_PROFILES
-        defn = STRATEGY_PROFILES.get(profile_upper)
-        if defn is None:
-            return {"text": "Unknown profile.", "reply_markup": None}
-        desc = (
-            f"PRE={defn['score_thresholds']['PRE']} "
-            f"CONFIRM={defn['score_thresholds']['CONFIRM']} "
-            f"OPEN={defn['score_thresholds']['OPEN']} "
-            f"SR={defn['sr_required_multiplier']}"
-        )
+        profile = action[len("PROFILE_CONFIRM:"):].upper().strip() or "UNSPECIFIED"
         return {
             "text": _format_card(
-                f"⚙️ Apply {profile_upper}?",
-                "This will update future-facing strategy parameters to:\n"
-                f"{desc}\n\n"
-                "The change can alter which future candidates pass a gate. "
-                "It does not guarantee more signals, a higher win rate, or profit.\n\n"
-                "Confirm?"
+                f"⚙️ {profile}: NOT AVAILABLE",
+                "This is a stale legacy profile-selection callback. Named production "
+                "profiles are not defined by the active canonical parameter-control "
+                "authority. No strategy parameter was changed.",
             ),
-            "reply_markup": telegram_admin_ui.strategy_profile_confirm_markup(profile_upper),
+            "reply_markup": telegram_admin_ui.strategy_profile_confirm_markup(profile),
         }
 
     if action.startswith("PROFILE_EXEC:"):
@@ -1017,10 +1006,9 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             return {"text": "Rate limit exceeded.", "reply_markup": None}
         profile = action[len("PROFILE_EXEC:"):]
         result = handle_strategy_profile(profile, user_id)
-        current = get_current_strategy_profile()
         return {
             "text": _format_surface("strategy", "⚙️ Strategy Profile", result),
-            "reply_markup": telegram_admin_ui.strategy_quick_markup(current),
+            "reply_markup": telegram_admin_ui.strategy_quick_markup(None),
         }
 
     # ---- Files/Docs callbacks ----

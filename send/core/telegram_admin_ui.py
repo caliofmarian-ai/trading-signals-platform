@@ -398,35 +398,19 @@ def _is_forex(sym: str) -> bool:
 
 
 def strategy_quick_markup(current_profile: Optional[str]) -> dict[str, list[list[dict[str, str]]]]:
-    """
-    Three-button strategy-profile selector.
-
-    Profiles: CONSERVATIVE (MIC/SMALL), BALANCED (MEDIU/MEDIUM), AGGRESSIVE (MARE/LARGE).
-    Current profile receives a ✅ indicator.
-    """
-    cp = (current_profile or "").upper()
-
-    def _mark(p: str) -> str:
-        return "✅ " if cp == p else ""
-
+    """Read-only strategy-profile surface while named presets are undefined."""
     return _kb([
-        [
-            _btn(f"{_mark('CONSERVATIVE')}MIC / SMALL", "PROFILE_CONFIRM:CONSERVATIVE"),
-            _btn(f"{_mark('BALANCED')}MEDIU / MEDIUM", "PROFILE_CONFIRM:BALANCED"),
-            _btn(f"{_mark('AGGRESSIVE')}MARE / LARGE", "PROFILE_CONFIRM:AGGRESSIVE"),
-        ],
+        [_btn("🔄 Refresh", "PROFILE_HOME")],
         [_knowledge_btn("strategy", "PROFILE_HOME")],
         [_btn("⬅️ Strategy", "STRATEGY")],
     ])
 
 
 def strategy_profile_confirm_markup(profile: str) -> dict[str, list[list[dict[str, str]]]]:
-    """Confirmation screen before applying a strategy profile mutation."""
+    """Safe recovery markup for stale legacy profile callbacks; never executes."""
     return _kb([
-        [
-            _btn(f"✅ Apply {profile.capitalize()}", f"PROFILE_EXEC:{profile}"),
-            _btn("❌ Cancel", "PROFILE_HOME"),
-        ],
+        [_btn("⬅️ Profiles", "PROFILE_HOME")],
+        [_btn("⬅️ Strategy", "STRATEGY")],
     ])
 
 
