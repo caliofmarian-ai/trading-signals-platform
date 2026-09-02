@@ -154,11 +154,12 @@ Acceptance:
 
 ### R-007 — Fail-closed production startup validation
 Severity: HIGH
-Status: IN PROGRESS
-Issue: #110
-PR: #111 (Draft until final audit completion)
+Status: CLOSED
+Issue: #110 — CLOSED
+PR: #111
+Merged main commit: `5ba1e7773db439df488108f875b59cae58d70524`
 Depends on: R-006 — SATISFIED
-Current validation: 1025 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; GitHub Actions run 33567579775 SUCCESS.
+Validation: 1025 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; final GitHub Actions run 33567808537 SUCCESS.
 
 Required outcome:
 - production boot validates required params, symbols, provider selection/readiness, permissions/config, and persistent state before starting decision/distribution threads;
@@ -170,12 +171,23 @@ Acceptance:
 
 ### R-008 — Candle cadence/gap integrity
 Severity: HIGH
-Status: PENDING
+Status: IN PROGRESS
+Issue: #112
+PR: #113 (Draft until final audit completion)
+Depends on: R-007 — SATISFIED
+Current validation: 1033 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; GitHub Actions run 33596838289 SUCCESS.
 
 Required outcome:
 - M1/M5 candle history validates expected cadence or explicitly models gaps;
 - directional speed/time calculations cannot treat multi-minute gaps as one-minute motion;
 - provider-specific legitimate gaps are handled by governed rules rather than silent arithmetic.
+
+Implementation boundary:
+- the existing 21-M1 directional-speed window must be exact 60-second cadence;
+- the existing 14-period M5 ATR requires 15 exact-cadence M5 candles before ATR-derived Trade Physics speed reference is usable;
+- older discontinuities remain explicit evidence and may still support non-time-normalized EMA/structural analysis;
+- no missing candle is interpolated or fabricated;
+- weekend classification records only the objective UTC-calendar discontinuity and does not invent provider/session trading hours.
 
 Acceptance:
 - tests for missing bars, duplicates, out-of-order bars, weekend/session gaps, and exact cadence.
@@ -378,3 +390,5 @@ The repository-wide remediation program is complete only when:
 - 2026-09-01: R-006 started on branch `remediation/audit-2026-09-01-r006-canonical-param-validation`; Issue #108 and Draft PR #109 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1010 passed, GitHub Actions run 33565250011 SUCCESS.
 - 2026-09-01: R-006 merged through PR #109; main advanced to `8911e790ef6d466c39a45a325ae6aeaa864af95a`; Issue #108 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1010 passed, GitHub Actions run 33565403255 SUCCESS.
 - 2026-09-01: R-007 started on branch `remediation/audit-2026-09-01-r007-fail-closed-startup`; Issue #110 and Draft PR #111 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1025 passed, GitHub Actions run 33567579775 SUCCESS.
+- 2026-09-02: R-007 merged through PR #111; main advanced to `5ba1e7773db439df488108f875b59cae58d70524`; Issue #110 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1025 passed, GitHub Actions run 33567808537 SUCCESS.
+- 2026-09-02: R-008 started on branch `remediation/audit-2026-09-01-r008-candle-cadence-gap-integrity`; Issue #112 and Draft PR #113 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1033 passed, GitHub Actions run 33596838289 SUCCESS.
