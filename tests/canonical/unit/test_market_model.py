@@ -104,17 +104,55 @@ def test_partial_real_history_is_rejected_instead_of_fabricated(canonical_runtim
         )
 
 
-def test_wrong_order_and_invalid_ohlc_are_rejected(canonical_runtime_root: Path) -> None:
+def test_wrong_order_duplicate_and_invalid_ohlc_are_rejected(canonical_runtime_root: Path) -> None:
     params = _params(canonical_runtime_root)
     m1 = _candles(220, timeframe="M1", step=60)
     m5 = _candles(220, timeframe="M5", step=300)
     with pytest.raises(MarketModelUnavailable, match="newest-first"):
         evaluate_market(list(reversed(m1)), m5, params)
 
+    duplicate = copy.deepcopy(m1)
+    duplicate[5]["ts"] = duplicate[4]["ts"]
+    with pytest.raises(MarketModelUnavailable, match="newest-first"):
+        evaluate_market(duplicate, m5, params)
+
     invalid = copy.deepcopy(m1)
     invalid[0]["high"] = invalid[0]["low"] - 1
     with pytest.raises(MarketModelUnavailable, match="OHLC"):
         evaluate_market(invalid, m5, params)
+
+
+def test_recent_m1_gap_blocks_directional_speed_instead_of_compressing_time(canonical_runtime_root: Path) -> None:
+    params = _params(canonical_runtime_root)
+    m1 = _candles(220, timeframe="M1", step=60)
+    m5 = _candles(220, timeframe="M5", step=300)
+    del m1[10]
+
+    with pytest.raises(MarketModelUnavailable, match=r"contiguous real candles at 60s cadence"):
+        evaluate_market(m1, m5, params)
+
+
+def test_recent_m5_gap_blocks_atr_and_time_evidence_instead_of_compressing_time(canonical_runtime_root: Path) -> None:
+    params = _params(canonical_runtime_root)
+    m1 = _candles(220, timeframe="M1", step=60)
+    m5 = _candles(220, timeframe="M5", step=300)
+    del m5[100]
+
+    with pytest.raises(MarketModelUnavailable, match=r"contiguous real candles at 300s cadence"):
+        evaluate_market(m1, m5, params)
+
+
+def test_older_gap_is_excluded_when_newest_segment_alone_satisfies_required_history(canonical_runtime_root: Path) -> None:
+    params = _params(canonical_runtime_root)
+    m1 = _candles(230, timeframe="M1", step=60)
+    m5 = _candles(230, timeframe="M5", step=300)
+    expected = evaluate_market(m1, m5[:210], params)
+
+    gapped_m5 = copy.deepcopy(m5)
+    del gapped_m5[210]
+    actual = evaluate_market(m1, gapped_m5, params)
+
+    assert actual == expected
 
 
 def test_missing_operational_parameter_is_rejected_not_defaulted(canonical_runtime_root: Path) -> None:
