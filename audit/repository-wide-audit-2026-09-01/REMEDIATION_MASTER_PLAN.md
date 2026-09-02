@@ -195,11 +195,12 @@ Acceptance:
 
 ### R-009 — Two-second Finnhub EUR/USD evaluation semantics
 Severity: HIGH
-Status: IN PROGRESS
-Issue: #114
-PR: #115 (Draft until final audit completion)
+Status: CLOSED
+Issue: #114 — CLOSED
+PR: #115
+Merged main commit: `bc761fdbf30f80fcc1abb2ad8c0e054e20ac34ae`
 Depends on: R-008 — SATISFIED
-Current validation: 1038 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; GitHub Actions run 33603960610 SUCCESS.
+Validation: 1038 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; final GitHub Actions run 33604168049 SUCCESS.
 
 Problem:
 - engine ticks every 2 seconds, but generic wide selection spreads symbols across a 60-second cycle;
@@ -221,17 +222,30 @@ Acceptance:
 
 ### R-010 — Model Time boundary/sawtooth review
 Severity: HIGH
-Status: PENDING
-Depends on: R-001
+Status: IN PROGRESS
+Issue: #116
+PR: #117 (Draft until final audit completion)
+Depends on: R-001 — SATISFIED; execution sequence through R-009 — SATISFIED
+Current validation: 1041 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; GitHub Actions run 33605761955 SUCCESS.
 
 Required outcome:
 - determine canonically whether integer rounding belongs anywhere in Model Time;
 - test boundary behavior around minute transitions;
 - do not change formula merely for smoothness without canonical justification.
 
+Implementation boundary:
+- `CANONICAL_MASTER_INDEX_v2.0.0` is authoritative and confirms `TIME_MODEL_UNIFIED_CANON_v3.0.0.md` is Active Canonical despite stale lower-level header wording;
+- active v3 does not define a fractional replacement derivation for `model_expiry`, so the existing bounded `ceil(clamp(...))` window is characterized rather than replaced;
+- 4.999 / 5.000 / 5.001 minute boundary behavior is explicit and regression-tested;
+- an R-010 regression exposed machine floating-point drift at an exact-fit maximum boundary; only conceptual equality is normalized with `isclose` at 1e-12 relative/absolute tolerance;
+- exact fit yields reciprocal ratios of 1 and `READY`; any real overrun remains `LATE` and cannot extend the configured maximum;
+- internal Model Time remains separate from calibrated trader-facing Execution Time.
+
 Acceptance:
 - explicit canonical decision documented;
-- continuity/boundary tests added.
+- continuity/boundary tests added;
+- exact-fit numerical representation cannot falsely degrade a setup;
+- no trader-facing expiry derives from Model Time rounding.
 
 ## Priority 2 — Distribution, admin, provider, and control-plane reconciliation
 
@@ -406,3 +420,5 @@ The repository-wide remediation program is complete only when:
 - 2026-09-02: R-008 started on branch `remediation/audit-2026-09-01-r008-candle-cadence-gap-integrity`; Issue #112 and Draft PR #113 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1033 passed, GitHub Actions run 33596838289 SUCCESS.
 - 2026-09-02: R-008 merged through PR #113; main advanced to `92e4faa332f088a7b9af08dfc3b63ac1badcb4b5`; Issue #112 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1033 passed, GitHub Actions run 33597024074 SUCCESS.
 - 2026-09-02: R-009 started on branch `remediation/audit-2026-09-01-r009-finnhub-two-second-evaluation`; Issue #114 and Draft PR #115 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1038 passed, GitHub Actions run 33603960610 SUCCESS.
+- 2026-09-02: R-009 merged through PR #115; main advanced to `bc761fdbf30f80fcc1abb2ad8c0e054e20ac34ae`; Issue #114 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1038 passed, GitHub Actions run 33604168049 SUCCESS.
+- 2026-09-02: R-010 started on branch `remediation/audit-2026-09-01-r010-model-time-boundaries`; Issue #116 and Draft PR #117 created. Initial boundary characterization exposed an exact-fit floating-point defect; after the bounded numerical fix, validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1041 passed, GitHub Actions run 33605761955 SUCCESS.
