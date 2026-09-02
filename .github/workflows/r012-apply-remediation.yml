@@ -30,6 +30,8 @@ jobs:
       - name: Apply fail-closed profile reconciliation
         run: |
           python scripts/r012_apply_patch.py
+          python scripts/r012_fix_generated_bot.py
+          python -m py_compile send/core/admin_commands.py send/core/telegram_admin_ui.py send/core/bot_service.py
           git diff --check
 
       - name: Focused R-012 validation
