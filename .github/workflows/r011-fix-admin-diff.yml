@@ -1,0 +1,32 @@
+name: R-011 Fix Admin Diff Formatting
+
+on:
+  push:
+    branches:
+      - remediation/audit-2026-09-01-r011-free-entitlement
+
+permissions:
+  contents: write
+
+jobs:
+  fix-diff:
+    if: contains(github.event.head_commit.message, 'R-011 fix admin diff formatting')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore base file and apply newline-safe patch
+        run: |
+          git checkout e42abad1ebec47f075eee8f7de78f8085bdc4732 -- send/core/admin_views.py
+          python scripts/r011_fix_admin_diff.py
+          git diff --check
+
+      - name: Commit focused diff
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add send/core/admin_views.py
+          git commit -m "R-011 minimize admin entitlement diff"
+          git push origin HEAD:remediation/audit-2026-09-01-r011-free-entitlement
