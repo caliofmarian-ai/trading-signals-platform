@@ -1,3 +1,4 @@
+# Retry after canonical identifier validator correction.
 name: R-014 Apply Master Plan and Validate
 
 on:
