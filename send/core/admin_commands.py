@@ -78,22 +78,18 @@ LOG_EXPORT_MAX_LINES = 200
 AUDIT_MAX_LINES_PER_FILE = 50
 
 # ---------------------------------------------------------------------------
-# Canonical strategy-profile definitions (MIC/SMALL, MEDIU/MEDIUM, MARE/LARGE)
+# Strategy-profile authority (R-012)
 # ---------------------------------------------------------------------------
-STRATEGY_PROFILES: Dict[str, Dict[str, Any]] = {
-    "CONSERVATIVE": {
-        "score_thresholds": {"PRE": 60, "CONFIRM": 70, "OPEN": 75},
-        "sr_required_multiplier": 1.8,
-    },
-    "BALANCED": {
-        "score_thresholds": {"PRE": 55, "CONFIRM": 65, "OPEN": 70},
-        "sr_required_multiplier": 1.5,
-    },
-    "AGGRESSIVE": {
-        "score_thresholds": {"PRE": 50, "CONFIRM": 60, "OPEN": 65},
-        "sr_required_multiplier": 1.2,
-    },
-}
+# Active v3 parameter-control canon does not define named production presets or
+# production-safe preset ranges.  The former CONSERVATIVE/BALANCED/AGGRESSIVE
+# bundles are therefore intentionally absent from live mutation authority.
+STRATEGY_PROFILES: Dict[str, Dict[str, Any]] = {}
+STRATEGY_PROFILES_STATUS = "NOT_AVAILABLE"
+STRATEGY_PROFILES_REASON = (
+    "Named production strategy profiles are not defined by the active canonical "
+    "parameter-control authority. Legacy CONSERVATIVE/BALANCED/AGGRESSIVE bundles "
+    "are disabled until a versioned canonical preset contract is approved."
+)
 
 # Legacy fallback only. The governed symbol universe is loaded from
 # config/symbol_universe.json when available.
@@ -683,20 +679,7 @@ def handle_symbols_none(user_id: int) -> str:
 # ---------------------------------------------------------------------------
 
 def get_current_strategy_profile() -> Optional[str]:
-    params = _load_algo_params()
-    return _detect_strategy_profile(params)
-
-
-def _detect_strategy_profile(params: Dict[str, Any]) -> Optional[str]:
-    thresholds = params.get("score_thresholds", {})
-    sr = params.get("sr_required_multiplier")
-    for name, profile in STRATEGY_PROFILES.items():
-        pt = profile["score_thresholds"]
-        if (thresholds.get("PRE") == pt["PRE"]
-                and thresholds.get("CONFIRM") == pt["CONFIRM"]
-                and thresholds.get("OPEN") == pt["OPEN"]
-                and sr == profile["sr_required_multiplier"]):
-            return name
+    """No named production profile is active under the current v3 authority."""
     return None
 
 
@@ -704,36 +687,32 @@ def get_current_strategy_profile_observation() -> str:
     params = _load_algo_params_observation()
     if params is None:
         return "UNAVAILABLE (strategy configuration absent or invalid)"
-    profile = _detect_strategy_profile(params)
-    if profile is not None:
-        return f"{profile} (matched valid effective configuration)"
-    return "CUSTOM (valid effective configuration does not match a named profile)"
+    return (
+        "NOT AVAILABLE (named production strategy profiles are not defined by "
+        "the active canonical parameter-control authority)"
+    )
 
 
 def handle_strategy_profile(profile: str, user_id: int) -> str:
+    """Fail closed for legacy named-profile mutations while preserving audit proof."""
     ok, reason = require_permission(user_id, "strategy.thresholds.write")
     if not ok:
         return render_error(reason)
-    profile_key = profile.upper().strip()
-    if profile_key not in STRATEGY_PROFILES:
-        return render_error(f"Unknown profile: {profile!r}. Valid: {', '.join(STRATEGY_PROFILES)}")
-    defn = STRATEGY_PROFILES[profile_key]
-    with _storage.with_lock("algo_params"):
-        params = _load_raw_algo_params()
-        params.setdefault("score_thresholds", {})
-        params["score_thresholds"].update(defn["score_thresholds"])
-        params["sr_required_multiplier"] = defn["sr_required_multiplier"]
-        try:
-            _save_algo_params_validated(params)
-        except _params_loader.ParamsValidationError as exc:
-            return render_error(f"Profile update rejected: {exc}")
-    _audit(user_id, "/strategy profile", "OK", {"profile": profile_key, "params": defn})
-    return render_ok(
-        f"Strategy profile {profile_key} applied.\n"
-        f"PRE={defn['score_thresholds']['PRE']} "
-        f"CONFIRM={defn['score_thresholds']['CONFIRM']} "
-        f"OPEN={defn['score_thresholds']['OPEN']} "
-        f"SR={defn['sr_required_multiplier']}"
+
+    requested = str(profile or "").upper().strip() or "UNSPECIFIED"
+    _audit(
+        user_id,
+        "/strategy profile",
+        "REJECTED",
+        {
+            "profile": requested,
+            "reason": "NON_CANONICAL_PROFILE_DISABLED",
+            "parameter_mutation": False,
+        },
+    )
+    return render_error(
+        "Strategy profiles are NOT AVAILABLE under the active canonical "
+        "parameter-control authority. No strategy parameter was changed."
     )
 
 

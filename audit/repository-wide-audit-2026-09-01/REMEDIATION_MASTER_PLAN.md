@@ -252,17 +252,22 @@ Acceptance:
 
 ### R-011 — FREE entitlement limit reconciliation
 Severity: HIGH
-Status: IN PROGRESS
-Issue: #118
-Branch: `remediation/audit-2026-09-01-r011-free-entitlement`
+Status: CLOSED
+Issue: #118 — CLOSED
+PR: #119
+Merged main commit: `dd04a64506e5b62b98f9b885a01414b1e2b0ac8d`
 Depends on: R-010 — SATISFIED
+Validation: provider selector 5 passed; Telegram admin regression 72 passed; full repository suite 1046 passed.
 
 Required outcome:
 - active canon, runtime defaults, channel config, `.env.example`, tests, and admin display agree on FREE limit = 6 unless a governed override is explicitly intended and auditable.
 
 ### R-012 — Strategy profile reconciliation
 Severity: HIGH
-Status: PENDING
+Status: IN PROGRESS
+Issue: #120
+Branch: `remediation/audit-2026-09-01-r012-strategy-profiles`
+Depends on: R-011 — SATISFIED
 
 Required outcome:
 - Admin profiles cannot silently lower active canonical thresholds or mutate obsolete SR semantics;

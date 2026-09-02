@@ -409,31 +409,32 @@ class TestSymbolToggleMarkup:
 # ---------------------------------------------------------------------------
 
 class TestStrategyQuickMarkup:
-    def test_three_buttons_present(self):
+    def test_profile_surface_has_no_legacy_mutation_buttons(self):
         _purge()
-        from core.telegram_admin_ui import strategy_quick_markup, CALLBACK_PREFIX
+        from core.telegram_admin_ui import strategy_quick_markup
         markup = strategy_quick_markup(None)
         flat_data = [btn["callback_data"] for row in markup["inline_keyboard"] for btn in row]
-        assert f"{CALLBACK_PREFIX}PROFILE_CONFIRM:CONSERVATIVE" in flat_data
-        assert f"{CALLBACK_PREFIX}PROFILE_CONFIRM:BALANCED" in flat_data
-        assert f"{CALLBACK_PREFIX}PROFILE_CONFIRM:AGGRESSIVE" in flat_data
+        assert not any("PROFILE_CONFIRM:" in data for data in flat_data)
+        assert not any("PROFILE_EXEC:" in data for data in flat_data)
+        assert any("PROFILE_HOME" in data for data in flat_data)
 
-    def test_current_profile_marked(self):
+    def test_profile_surface_is_read_only_navigation(self):
         _purge()
         from core.telegram_admin_ui import strategy_quick_markup
         markup = strategy_quick_markup("BALANCED")
         flat = [btn["text"] for row in markup["inline_keyboard"] for btn in row]
-        balanced_btn = next((t for t in flat if "BALANCED" in t.upper() or "MEDIU" in t.upper()), None)
-        assert balanced_btn is not None
-        assert "✅" in balanced_btn
+        assert any("Refresh" in text for text in flat)
+        assert not any("MIC / SMALL" in text for text in flat)
+        assert not any("MEDIU / MEDIUM" in text for text in flat)
+        assert not any("MARE / LARGE" in text for text in flat)
 
-    def test_confirmation_markup(self):
+    def test_stale_confirmation_markup_has_no_execute_action(self):
         _purge()
-        from core.telegram_admin_ui import strategy_profile_confirm_markup, CALLBACK_PREFIX
+        from core.telegram_admin_ui import strategy_profile_confirm_markup
         markup = strategy_profile_confirm_markup("CONSERVATIVE")
         flat_data = [btn["callback_data"] for row in markup["inline_keyboard"] for btn in row]
-        assert f"{CALLBACK_PREFIX}PROFILE_EXEC:CONSERVATIVE" in flat_data
-        assert f"{CALLBACK_PREFIX}PROFILE_HOME" in flat_data
+        assert not any("PROFILE_EXEC:" in data for data in flat_data)
+        assert any("PROFILE_HOME" in data for data in flat_data)
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +540,7 @@ class TestSymbolMutationHandlers:
 
 
 # ---------------------------------------------------------------------------
-# PROF-001: Strategy profile mapping and confirmation
+# PROF-001: Strategy profile fail-closed reconciliation
 # ---------------------------------------------------------------------------
 
 class TestStrategyProfileHandlers:
@@ -559,54 +560,55 @@ class TestStrategyProfileHandlers:
             "BINARYBOT_BASE_DIR": str(tmp_path),
         }
 
-    def test_conservative_profile_applies_correct_params(self, tmp_path):
+    def test_legacy_named_profiles_are_not_live_bundles(self):
+        _purge()
+        from core.admin_commands import STRATEGY_PROFILES
+        assert STRATEGY_PROFILES == {}
+
+    def test_authorized_legacy_profile_request_does_not_mutate_params(self, tmp_path):
         env = self._setup(tmp_path)
+        params_path = tmp_path / "config" / "algo_params.json"
+        before = json.loads(params_path.read_text(encoding="utf-8"))
         _purge()
         with patch.dict(os.environ, env, clear=False):
             import core.admin_permissions as ap
             ap.load_roles_config.cache_clear()
             with patch("core.admin_commands.observability_logger"):
-                from core.admin_commands import handle_strategy_profile, _load_algo_params, STRATEGY_PROFILES
-                result = handle_strategy_profile("CONSERVATIVE", self.OWNER_ID)
-                assert "OK" in result
-                params = _load_algo_params()
-                expected = STRATEGY_PROFILES["CONSERVATIVE"]
-                assert params["score_thresholds"]["PRE"] == expected["score_thresholds"]["PRE"]
-                assert params["sr_required_multiplier"] == expected["sr_required_multiplier"]
+                from core.admin_commands import handle_strategy_profile
+                for profile in ("CONSERVATIVE", "BALANCED", "AGGRESSIVE"):
+                    result = handle_strategy_profile(profile, self.OWNER_ID)
+                    assert "NOT AVAILABLE" in result
+                    after = json.loads(params_path.read_text(encoding="utf-8"))
+                    assert after == before
 
-    def test_balanced_profile(self, tmp_path):
+    def test_profile_request_preserves_thresholds_and_legacy_sr_value(self, tmp_path):
         env = self._setup(tmp_path)
+        params_path = tmp_path / "config" / "algo_params.json"
+        before = json.loads(params_path.read_text(encoding="utf-8"))
         _purge()
         with patch.dict(os.environ, env, clear=False):
             import core.admin_permissions as ap
             ap.load_roles_config.cache_clear()
             with patch("core.admin_commands.observability_logger"):
-                from core.admin_commands import handle_strategy_profile, _load_algo_params, STRATEGY_PROFILES
-                handle_strategy_profile("BALANCED", self.OWNER_ID)
-                params = _load_algo_params()
-                expected = STRATEGY_PROFILES["BALANCED"]
-                assert params["score_thresholds"]["CONFIRM"] == expected["score_thresholds"]["CONFIRM"]
+                from core.admin_commands import handle_strategy_profile
+                handle_strategy_profile("AGGRESSIVE", self.OWNER_ID)
+        after = json.loads(params_path.read_text(encoding="utf-8"))
+        assert after["score_thresholds"] == before["score_thresholds"]
+        assert after.get("sr_required_multiplier") == before.get("sr_required_multiplier")
 
-    def test_aggressive_profile(self, tmp_path):
+    def test_unknown_profile_is_also_non_mutating(self, tmp_path):
         env = self._setup(tmp_path)
+        params_path = tmp_path / "config" / "algo_params.json"
+        before = params_path.read_text(encoding="utf-8")
         _purge()
         with patch.dict(os.environ, env, clear=False):
             import core.admin_permissions as ap
             ap.load_roles_config.cache_clear()
             with patch("core.admin_commands.observability_logger"):
-                from core.admin_commands import handle_strategy_profile, STRATEGY_PROFILES
-                result = handle_strategy_profile("AGGRESSIVE", self.OWNER_ID)
-                assert "OK" in result
-
-    def test_invalid_profile_rejected(self, tmp_path):
-        env = self._setup(tmp_path)
-        _purge()
-        with patch.dict(os.environ, env, clear=False):
-            import core.admin_permissions as ap
-            ap.load_roles_config.cache_clear()
-            from core.admin_commands import handle_strategy_profile
-            result = handle_strategy_profile("UNKNOWN_PROFILE", self.OWNER_ID)
-            assert "Error" in result or "Unknown" in result
+                from core.admin_commands import handle_strategy_profile
+                result = handle_strategy_profile("UNKNOWN_PROFILE", self.OWNER_ID)
+                assert "NOT AVAILABLE" in result
+        assert params_path.read_text(encoding="utf-8") == before
 
     def test_profile_unauthorized(self, tmp_path):
         env = self._setup(tmp_path)
@@ -619,7 +621,7 @@ class TestStrategyProfileHandlers:
             result = handle_strategy_profile("BALANCED", NON_OWNER)
             assert "unauthorized" in result.lower() or "Error" in result
 
-    def test_admin_proof_emitted_for_profile(self, tmp_path):
+    def test_authorized_rejected_profile_emits_admin_proof(self, tmp_path):
         env = self._setup(tmp_path)
         _purge()
         with patch.dict(os.environ, env, clear=False):
@@ -630,16 +632,18 @@ class TestStrategyProfileHandlers:
                 handle_strategy_profile("BALANCED", self.OWNER_ID)
                 mock_obs.send_admin_proof_telegram.assert_called()
 
-    def test_current_profile_detection(self, tmp_path):
+    def test_current_profile_is_explicitly_not_available(self, tmp_path):
         env = self._setup(tmp_path)
         _purge()
         with patch.dict(os.environ, env, clear=False):
             import core.admin_permissions as ap
             ap.load_roles_config.cache_clear()
-            with patch("core.admin_commands.observability_logger"):
-                from core.admin_commands import handle_strategy_profile, get_current_strategy_profile
-                handle_strategy_profile("CONSERVATIVE", self.OWNER_ID)
-                assert get_current_strategy_profile() == "CONSERVATIVE"
+            from core.admin_commands import (
+                get_current_strategy_profile,
+                get_current_strategy_profile_observation,
+            )
+            assert get_current_strategy_profile() is None
+            assert "NOT AVAILABLE" in get_current_strategy_profile_observation()
 
 
 # ---------------------------------------------------------------------------
