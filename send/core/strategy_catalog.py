@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 
@@ -12,6 +13,9 @@ SCHEMA_VERSION = "1.0.0"
 CATALOG_PATH = Path(__file__).resolve().parents[1] / "config" / "strategy_catalog.json"
 _ROOT_FIELDS = frozenset({"schema_version", "catalog_id", "selected_strategy_id", "strategies"})
 _ENTRY_FIELDS = frozenset({"id", "name", "trade_type", "implementation", "availability", "description"})
+_VERSIONED_CANONICAL_SPEC_RE = re.compile(
+    r"^[A-Z0-9_]+_v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)\.md$"
+)
 
 
 class StrategyCatalogError(ValueError):
@@ -26,6 +30,13 @@ class StrategyDefinition:
     implementation: str
     availability: str
     description: str
+
+    @property
+    def canonical_spec_version(self) -> str | None:
+        match = _VERSIONED_CANONICAL_SPEC_RE.fullmatch(self.implementation)
+        if match is None:
+            return None
+        return match.group("version")
 
 
 @dataclass(frozen=True)
@@ -77,6 +88,18 @@ def load_strategy_catalog(path: Path = CATALOG_PATH) -> StrategyCatalog:
             raise StrategyCatalogError("strategy ids must be unique")
         if entry.availability not in {"AVAILABLE", "UNAVAILABLE"}:
             raise StrategyCatalogError("strategy availability is invalid")
+        if entry.availability == "AVAILABLE" and entry.canonical_spec_version is None:
+            raise StrategyCatalogError(
+                f"available strategy {entry.id} must reference a versioned canonical specification"
+            )
+        if (
+            entry.availability == "UNAVAILABLE"
+            and entry.implementation != "NOT_IMPLEMENTED"
+            and entry.canonical_spec_version is None
+        ):
+            raise StrategyCatalogError(
+                f"unavailable strategy {entry.id} implementation metadata is invalid"
+            )
         ids.add(entry.id)
         entries.append(entry)
 
@@ -91,6 +114,9 @@ def load_strategy_catalog(path: Path = CATALOG_PATH) -> StrategyCatalog:
 
 def render_strategy_choice(catalog: StrategyCatalog) -> str:
     selected = catalog.selected
+    spec_version = selected.canonical_spec_version
+    if spec_version is None:
+        raise StrategyCatalogError("selected strategy canonical specification is not versioned")
     planned = [strategy for strategy in catalog.strategies if strategy.availability != "AVAILABLE"]
     lines = [
         "Choose Strategy",
@@ -99,7 +125,7 @@ def render_strategy_choice(catalog: StrategyCatalog) -> str:
         f"Selected: {selected.name}",
         f"Trading type: {selected.trade_type}",
         f"Canonical specification: {selected.implementation}",
-        "Strategy version: 2.0.0",
+        f"Canonical specification version: {spec_version}",
         "Status: AVAILABLE",
         "",
         "Plain-language meaning",
