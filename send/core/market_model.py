@@ -1,6 +1,6 @@
 """Canonical, deterministic description of the observed market.
 
-This layer calculates market facts only.  It does not score a setup, choose an
+This layer calculates market facts only. It does not score a setup, choose an
 expiry, emit a signal, or execute a trade. Inputs follow the repository-wide
 newest-first candle contract. Direction-aware movement evidence is derived here
 for the active Time Model and Trade Physics contracts.
@@ -16,6 +16,9 @@ from .decision_object import MarketContext
 
 
 SCHEMA_VERSION = "2.0.0"
+ATR_PERIOD = 14
+ATR_REQUIRED_CANDLES = ATR_PERIOD + 1
+DIRECTIONAL_SPEED_REQUIRED_M1 = 21
 
 
 class MarketModelUnavailable(ValueError):
@@ -90,7 +93,12 @@ def _rsi(values: Sequence[float], period: int) -> float:
     return 100.0 - (100.0 / (1.0 + relative_strength))
 
 
-def _atr(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float], period: int = 14) -> float:
+def _atr(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    period: int = ATR_PERIOD,
+) -> float:
     true_ranges = []
     for index in range(1, period + 1):
         high = highs[-index]
@@ -105,10 +113,16 @@ def _validate_candle_structure(candles: Sequence[Mapping[str, Any]], label: str)
     for index, candle in enumerate(candles):
         try:
             timestamp = int(candle["ts"])
-            open_price, high, low, close = (float(candle[key]) for key in ("open", "high", "low", "close"))
+            open_price, high, low, close = (
+                float(candle[key]) for key in ("open", "high", "low", "close")
+            )
         except (KeyError, TypeError, ValueError) as exc:
-            raise MarketModelUnavailable(f"{label}[{index}] is not a complete real candle") from exc
-        if timestamp <= 0 or not all(isfinite(value) for value in (open_price, high, low, close)):
+            raise MarketModelUnavailable(
+                f"{label}[{index}] is not a complete real candle"
+            ) from exc
+        if timestamp <= 0 or not all(
+            isfinite(value) for value in (open_price, high, low, close)
+        ):
             raise MarketModelUnavailable(f"{label}[{index}] contains invalid evidence")
         if low > min(open_price, close) or high < max(open_price, close) or high < low:
             raise MarketModelUnavailable(f"{label}[{index}] has invalid OHLC geometry")
@@ -117,25 +131,34 @@ def _validate_candle_structure(candles: Sequence[Mapping[str, Any]], label: str)
         previous_ts = timestamp
 
 
+def _validate_real_history(
+    candles: Sequence[Mapping[str, Any]], label: str, minimum: int
+) -> None:
+    if len(candles) < minimum:
+        raise MarketModelUnavailable(
+            f"{label} requires {minimum} real candles; received {len(candles)}"
+        )
+    _validate_candle_structure(candles, label)
+
+
 def _recent_contiguous_candles(
     candles: Sequence[Mapping[str, Any]],
     label: str,
     minimum: int,
     timeframe_seconds: int,
 ) -> list[Mapping[str, Any]]:
-    """Return only the newest exact-cadence segment without inventing missing bars.
+    """Return the newest exact-cadence segment needed by temporal arithmetic.
 
-    Older provider/session/weekend discontinuities are preserved in the source
-    evidence but cannot be compressed into a normal M1/M5 interval for temporal
-    physics. If the current contiguous segment is too short, evaluation fails
-    closed and waits for real candles rather than interpolating.
+    Older market/session/weekend discontinuities remain in the original evidence
+    for non-time-normalized structural/indicator use. They are never interpolated
+    and can never be compressed into a normal M1/M5 interval for speed or ATR.
     """
 
     if len(candles) < minimum:
         raise MarketModelUnavailable(
-            f"{label} requires {minimum} real candles; received {len(candles)}"
+            f"{label} requires {minimum} real candles for temporal evidence; "
+            f"received {len(candles)}"
         )
-    _validate_candle_structure(candles, label)
 
     contiguous_count = 1
     first_delta: int | None = None
@@ -152,15 +175,27 @@ def _recent_contiguous_candles(
     if len(usable) < minimum:
         raise MarketModelUnavailable(
             f"{label} requires {minimum} contiguous real candles at "
-            f"{timeframe_seconds}s cadence; received {len(usable)} before first "
-            f"discontinuity (observed_delta={first_delta}s)"
+            f"{timeframe_seconds}s cadence for temporal evidence; received "
+            f"{len(usable)} before first discontinuity "
+            f"(observed_delta={first_delta}s)"
         )
     return usable
 
 
 def _is_crypto(symbol: str) -> bool:
     normalized = symbol.upper().strip()
-    crypto_bases = {"BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "LTC", "DOT", "AVAX"}
+    crypto_bases = {
+        "BTC",
+        "ETH",
+        "SOL",
+        "BNB",
+        "XRP",
+        "ADA",
+        "DOGE",
+        "LTC",
+        "DOT",
+        "AVAX",
+    }
     return "/" in normalized and normalized.split("/", 1)[0] in crypto_bases
 
 
@@ -169,19 +204,26 @@ def _directional_movement(
 ) -> tuple[float, float, float | None]:
     """Return canonical recency-weighted directional speed, gross speed and flow efficiency."""
 
-    if len(recent_closes_chronological) != 21:
-        raise MarketModelUnavailable("directional movement requires exactly 21 M1 closes")
+    if len(recent_closes_chronological) != DIRECTIONAL_SPEED_REQUIRED_M1:
+        raise MarketModelUnavailable(
+            f"directional movement requires exactly {DIRECTIONAL_SPEED_REQUIRED_M1} M1 closes"
+        )
     if direction not in {"BUY", "SELL"}:
         raise MarketModelUnavailable("directional movement requires BUY or SELL")
 
     directional_total = 0.0
     gross_total = 0.0
     weighted_time = 0.0
-    for index in range(1, 21):
+    for index in range(1, DIRECTIONAL_SPEED_REQUIRED_M1):
         weight = float(index)
-        delta = recent_closes_chronological[index] - recent_closes_chronological[index - 1]
+        delta = (
+            recent_closes_chronological[index]
+            - recent_closes_chronological[index - 1]
+        )
         gross_delta = abs(delta)
-        directional_delta = max(delta, 0.0) if direction == "BUY" else max(-delta, 0.0)
+        directional_delta = (
+            max(delta, 0.0) if direction == "BUY" else max(-delta, 0.0)
+        )
         directional_total += weight * directional_delta
         gross_total += weight * gross_delta
         weighted_time += weight
@@ -212,13 +254,17 @@ def evaluate_market(
     if min(ema_fast_period, ema_slow_period, rsi_period) <= 1:
         raise MarketModelUnavailable("indicator periods must be greater than one")
 
-    minimum_m1 = max(21, rsi_period + 1)
-    minimum_m5 = max(15, ema_slow_period + 1)
-    candles_m1 = _recent_contiguous_candles(
-        candles_m1, "candles_m1", minimum_m1, 60
-    )
-    candles_m5 = _recent_contiguous_candles(
-        candles_m5, "candles_m5", minimum_m5, 300
+    minimum_m1 = max(DIRECTIONAL_SPEED_REQUIRED_M1, rsi_period + 1)
+    minimum_m5 = max(ATR_REQUIRED_CANDLES, ema_slow_period + 1)
+    _validate_real_history(candles_m1, "candles_m1", minimum_m1)
+    _validate_real_history(candles_m5, "candles_m5", minimum_m5)
+
+    _recent_contiguous_candles(candles_m1, "candles_m1", minimum_m1, 60)
+    temporal_m5 = _recent_contiguous_candles(
+        candles_m5,
+        "candles_m5",
+        ATR_REQUIRED_CANDLES,
+        300,
     )
 
     latest = candles_m1[0]
@@ -228,16 +274,18 @@ def evaluate_market(
 
     m1_chronological = list(reversed(candles_m1))
     m5_chronological = list(reversed(candles_m5))
+    temporal_m5_chronological = list(reversed(temporal_m5))
     closes_m1 = [float(candle["close"]) for candle in m1_chronological]
     closes_m5 = [float(candle["close"]) for candle in m5_chronological]
-    highs_m5 = [float(candle["high"]) for candle in m5_chronological]
-    lows_m5 = [float(candle["low"]) for candle in m5_chronological]
+    atr_closes_m5 = [float(candle["close"]) for candle in temporal_m5_chronological]
+    atr_highs_m5 = [float(candle["high"]) for candle in temporal_m5_chronological]
+    atr_lows_m5 = [float(candle["low"]) for candle in temporal_m5_chronological]
 
     latest_price = float(latest["close"])
     ema_fast_value = _ema(closes_m5, ema_fast_period)
     ema_slow_value = _ema(closes_m5, ema_slow_period)
     rsi_value = _rsi(closes_m1, rsi_period)
-    atr_value = _atr(highs_m5, lows_m5, closes_m5)
+    atr_value = _atr(atr_highs_m5, atr_lows_m5, atr_closes_m5)
     if atr_value <= 0:
         raise MarketModelUnavailable("M5 ATR cannot be established from real movement")
 
@@ -257,51 +305,93 @@ def evaluate_market(
         trend_context = "COUNTER_TREND"
         direction = "BUY" if rsi_value > 50 else "SELL"
 
-    buffer_multipliers = _required_mapping(params.get("buffer_multipliers"), "buffer_multipliers")
+    buffer_multipliers = _required_mapping(
+        params.get("buffer_multipliers"), "buffer_multipliers"
+    )
     normalized_mode = buffer_mode.upper().strip()
-    buffer_multiplier = _required_number(buffer_multipliers, normalized_mode, "buffer_multipliers")
+    buffer_multiplier = _required_number(
+        buffer_multipliers, normalized_mode, "buffer_multipliers"
+    )
     buffer_distance = atr_value * buffer_multiplier
 
-    recent_ranges = [float(candle["high"]) - float(candle["low"]) for candle in candles_m1[:10]]
+    recent_ranges = [
+        float(candle["high"]) - float(candle["low"]) for candle in candles_m1[:10]
+    ]
     average_range = sum(recent_ranges) / len(recent_ranges)
-    minimum_ranges = _required_mapping(strategy.get("min_avg_range"), "strategy_v2.min_avg_range")
+    minimum_ranges = _required_mapping(
+        strategy.get("min_avg_range"), "strategy_v2.min_avg_range"
+    )
     if _is_crypto(symbol):
-        minimum_range = _required_number(minimum_ranges, "CRYPTO_USD", "strategy_v2.min_avg_range")
+        minimum_range = _required_number(
+            minimum_ranges, "CRYPTO_USD", "strategy_v2.min_avg_range"
+        )
     elif "JPY" in symbol:
-        minimum_range = _required_number(minimum_ranges, "FOREX_JPY", "strategy_v2.min_avg_range")
+        minimum_range = _required_number(
+            minimum_ranges, "FOREX_JPY", "strategy_v2.min_avg_range"
+        )
     else:
-        minimum_range = _required_number(minimum_ranges, "FOREX_DEFAULT", "strategy_v2.min_avg_range")
-    volatility_state = "ACTIVE" if average_range >= minimum_range else "BELOW_MINIMUM_ACTIVITY"
+        minimum_range = _required_number(
+            minimum_ranges, "FOREX_DEFAULT", "strategy_v2.min_avg_range"
+        )
+    volatility_state = (
+        "ACTIVE" if average_range >= minimum_range else "BELOW_MINIMUM_ACTIVITY"
+    )
 
-    open_price, high, low = (float(latest[key]) for key in ("open", "high", "low"))
+    open_price, high, low = (
+        float(latest[key]) for key in ("open", "high", "low")
+    )
     body = abs(latest_price - open_price)
     previous_bodies = [
-        abs(float(candle["close"]) - float(candle["open"])) for candle in candles_m1[1:11]
+        abs(float(candle["close"]) - float(candle["open"]))
+        for candle in candles_m1[1:11]
     ]
     average_body_last_10 = sum(previous_bodies) / len(previous_bodies)
-    wick = max(0.0, high - max(open_price, latest_price)) + max(0.0, min(open_price, latest_price) - low)
+    wick = max(0.0, high - max(open_price, latest_price)) + max(
+        0.0, min(open_price, latest_price) - low
+    )
     wick_body_ratio = wick / max(body, 1e-9)
-    ranges_chronological = list(reversed([
-        float(candle["high"]) - float(candle["low"]) for candle in candles_m1[:50]
-    ]))
+    ranges_chronological = list(
+        reversed(
+            [
+                float(candle["high"]) - float(candle["low"])
+                for candle in candles_m1[:50]
+            ]
+        )
+    )
     mean_range = sum(ranges_chronological) / len(ranges_chronological)
-    variance = sum((value - mean_range) ** 2 for value in ranges_chronological) / len(ranges_chronological)
-    range_z_score = (ranges_chronological[-1] - mean_range) / sqrt(max(variance, 1e-12))
+    variance = sum(
+        (value - mean_range) ** 2 for value in ranges_chronological
+    ) / len(ranges_chronological)
+    range_z_score = (ranges_chronological[-1] - mean_range) / sqrt(
+        max(variance, 1e-12)
+    )
     jump_vs_atr = abs(latest_price - float(candles_m1[1]["close"])) / atr_value
 
     spike_filters = _required_mapping(params.get("spike_filters"), "spike_filters")
     noise_reasons = []
-    if wick_body_ratio > _required_number(spike_filters, "wick_body_ratio_max", "spike_filters"):
+    if wick_body_ratio > _required_number(
+        spike_filters, "wick_body_ratio_max", "spike_filters"
+    ):
         noise_reasons.append("WICK_BODY_RATIO")
-    if range_z_score > _required_number(spike_filters, "range_z_max", "spike_filters"):
+    if range_z_score > _required_number(
+        spike_filters, "range_z_max", "spike_filters"
+    ):
         noise_reasons.append("RANGE_Z")
-    if jump_vs_atr > _required_number(spike_filters, "jump_vs_atr_max", "spike_filters"):
+    if jump_vs_atr > _required_number(
+        spike_filters, "jump_vs_atr_max", "spike_filters"
+    ):
         noise_reasons.append("JUMP_VS_ATR")
 
-    recent_closes = [float(candle["close"]) for candle in reversed(candles_m1[:21])]
-    price_speed = sum(abs(recent_closes[index] - recent_closes[index - 1]) for index in range(1, 21)) / 20
-    directional_effective_speed, weighted_gross_speed, flow_efficiency = _directional_movement(
-        recent_closes, direction
+    recent_closes = [
+        float(candle["close"])
+        for candle in reversed(candles_m1[:DIRECTIONAL_SPEED_REQUIRED_M1])
+    ]
+    price_speed = sum(
+        abs(recent_closes[index] - recent_closes[index - 1])
+        for index in range(1, DIRECTIONAL_SPEED_REQUIRED_M1)
+    ) / (DIRECTIONAL_SPEED_REQUIRED_M1 - 1)
+    directional_effective_speed, weighted_gross_speed, flow_efficiency = (
+        _directional_movement(recent_closes, direction)
     )
 
     context = MarketContext(
