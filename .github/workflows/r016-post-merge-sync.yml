@@ -1,0 +1,84 @@
+name: R016 Post Merge Evidence Sync
+
+on:
+  push:
+    branches:
+      - remediation/audit-2026-09-01-r016-post-merge-evidence-sync
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: remediation/audit-2026-09-01-r016-post-merge-evidence-sync
+          fetch-depth: 0
+      - name: Synchronize R-016 closure evidence
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          master = Path('audit/repository-wide-audit-2026-09-01/REMEDIATION_MASTER_PLAN.md')
+          text = master.read_text(encoding='utf-8')
+          old = '''### R-016 — Role/permission fail-closed reconciliation
+          Severity: MEDIUM-HIGH
+          Status: IN PROGRESS
+          Issue: #128
+          Branch: `remediation/audit-2026-09-01-r016-role-permission-fail-closed`
+          Depends on: R-015 — SATISFIED
+          '''
+          new = '''### R-016 — Role/permission fail-closed reconciliation
+          Severity: MEDIUM-HIGH
+          Status: CLOSED
+          Issue: #128 — CLOSED
+          PR: #129
+          Merged main commit: `84363099cf5faa21118346c89aeea065849bc66c`
+          Depends on: R-015 — SATISFIED
+          Validation: provider selector 5 passed; Telegram admin regression 72 passed; full repository suite 1072 passed.
+          '''
+          if old not in text:
+              raise SystemExit('R-016 master-plan status block not found exactly')
+          text = text.replace(old, new, 1)
+          log_line = '- 2026-09-02: R-016 merged through PR #129; main advanced to `84363099cf5faa21118346c89aeea065849bc66c`; Issue #128 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1072 passed.\n'
+          if log_line not in text:
+              text = text.rstrip() + '\n' + log_line
+          master.write_text(text, encoding='utf-8')
+
+          evidence = Path('audit/repository-wide-audit-2026-09-01/R016_ROLE_PERMISSION_FAIL_CLOSED_RECONCILIATION.md')
+          body = evidence.read_text(encoding='utf-8')
+          old_status = 'Status: IMPLEMENTED — FINAL VALIDATION PENDING'
+          if old_status not in body:
+              raise SystemExit('R-016 evidence status marker not found')
+          body = body.replace(old_status, 'Status: CLOSED — MERGED AND VALIDATED', 1)
+          closure = '''
+
+          ## Merge closure evidence
+
+          - Final PR head: `ad12a226f0a51caa738da2fe225a5c1146ab86c1`
+          - Tested merge candidate: `e4d55685a8ae2e00a5de301b6c4b41d3f4ddcfe9`
+          - GitHub Actions run: `33670410669` — SUCCESS
+          - Provider selector regression: **5 passed**
+          - Telegram admin regression: **72 passed**
+          - Full repository suite: **1072 passed**
+          - PR #129 merged to `main` as `84363099cf5faa21118346c89aeea065849bc66c`
+          - Issue #128 closed automatically by the merged PR.
+          '''
+          if '## Merge closure evidence' not in body:
+              body = body.rstrip() + closure + '\n'
+          evidence.write_text(body, encoding='utf-8')
+          PY
+      - name: Remove one-shot workflow and commit
+        shell: bash
+        run: |
+          rm -f .github/workflows/r016-post-merge-sync.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add audit/repository-wide-audit-2026-09-01/REMEDIATION_MASTER_PLAN.md \
+                  audit/repository-wide-audit-2026-09-01/R016_ROLE_PERMISSION_FAIL_CLOSED_RECONCILIATION.md \
+                  .github/workflows/r016-post-merge-sync.yml
+          git commit -m "R-016: record post-merge closure evidence"
+          git push origin HEAD:remediation/audit-2026-09-01-r016-post-merge-evidence-sync
