@@ -183,7 +183,12 @@ def _can_run_admin_command(message: Dict[str, Any], user_id: int, cmd: str) -> b
 def _can_use_admin_callback(message: Dict[str, Any], user_id: int) -> bool:
     if _is_owner_private_context(message, user_id):
         return True
-    return _is_admin_topic_context(message)
+    if not _is_admin_topic_context(message):
+        return False
+    # Admin-topic location is only a context gate. Non-Owner actors must
+    # also hold the governed admin.view permission (R-016/R-017).
+    from core.admin_permissions import has_permission
+    return has_permission(user_id, "admin.view")
 
 
 def _is_owner_private_for_message(message: Dict[str, Any], user_id: int) -> bool:
@@ -861,6 +866,19 @@ def _send_document_reply(message: Dict[str, Any], file_path: str, caption: Optio
 
 def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str, Any]) -> Dict[str, Any]:
     owner_private = _is_owner_private_for_message(message, user_id)
+    role = get_primary_role(user_id)
+
+    # Button visibility is not authorization. A forged callback targeting a
+    # canonical top-level panel must pass the same role visibility boundary.
+    if (
+        telegram_admin_ui.is_canonical_panel_action(action)
+        and not telegram_admin_ui.panel_visible_for_role(role, action)
+    ):
+        return {
+            "text": "Access denied (missing panel permission).",
+            "reply_markup": None,
+            _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
+        }
 
     # ---- BACK: navigate to canonical immediate parent ----
     # Uses the static CANONICAL_ADMIN_PARENT_MAP for deterministic, loop-free navigation.

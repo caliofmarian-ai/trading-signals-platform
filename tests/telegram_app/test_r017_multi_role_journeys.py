@@ -125,7 +125,9 @@ def _panel_callbacks(markup: dict | None) -> set[str]:
         for button in row:
             value = str(button.get("callback_data") or "")
             if value.startswith("ADMIN_NAV:"):
-                callbacks.add(value.split(":", 1)[1])
+                action = value.split(":", 1)[1]
+                if not action.startswith("INFO:"):
+                    callbacks.add(action)
     return callbacks
 
 
