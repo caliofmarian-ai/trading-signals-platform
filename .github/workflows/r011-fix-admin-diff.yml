@@ -10,14 +10,14 @@ permissions:
 
 jobs:
   fix-diff:
-    if: contains(github.event.head_commit.message, 'R-011 fix admin diff formatting')
+    if: contains(github.event.head_commit.message, 'R-011 fix admin diff formatting v2')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Restore base file and apply newline-safe patch
+      - name: Restore base file and apply focused patch
         run: |
           git checkout e42abad1ebec47f075eee8f7de78f8085bdc4732 -- send/core/admin_views.py
           python scripts/r011_fix_admin_diff.py
