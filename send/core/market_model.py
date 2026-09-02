@@ -16,6 +16,8 @@ from .decision_object import MarketContext
 
 
 SCHEMA_VERSION = "2.0.0"
+ATR_PERIOD = 14
+ATR_REQUIRED_CANDLES = ATR_PERIOD + 1
 
 
 class MarketModelUnavailable(ValueError):
@@ -90,7 +92,7 @@ def _rsi(values: Sequence[float], period: int) -> float:
     return 100.0 - (100.0 / (1.0 + relative_strength))
 
 
-def _atr(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float], period: int = 14) -> float:
+def _atr(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float], period: int = ATR_PERIOD) -> float:
     true_ranges = []
     for index in range(1, period + 1):
         high = highs[-index]
@@ -117,6 +119,34 @@ def _validate_candles(candles: Sequence[Mapping[str, Any]], label: str, minimum:
         if previous_ts is not None and timestamp >= previous_ts:
             raise MarketModelUnavailable(f"{label} must be strictly newest-first")
         previous_ts = timestamp
+
+
+def _recent_contiguous_candles(
+    candles: Sequence[Mapping[str, Any]],
+    label: str,
+    minimum: int,
+    timeframe_seconds: int,
+) -> list[Mapping[str, Any]]:
+    """Return newest exact-cadence evidence required by time-normalized math."""
+    contiguous_count = 1
+    first_delta: int | None = None
+    for index in range(1, len(candles)):
+        newer_ts = int(candles[index - 1]["ts"])
+        older_ts = int(candles[index]["ts"])
+        delta = newer_ts - older_ts
+        if delta != timeframe_seconds:
+            first_delta = delta
+            break
+        contiguous_count += 1
+
+    usable = list(candles[:contiguous_count])
+    if len(usable) < minimum:
+        raise MarketModelUnavailable(
+            f"{label} requires {minimum} contiguous real candles at "
+            f"{timeframe_seconds}s cadence for temporal evidence; received "
+            f"{len(usable)} before first discontinuity (observed_delta={first_delta}s)"
+        )
+    return usable
 
 
 def _is_crypto(symbol: str) -> bool:
@@ -174,9 +204,13 @@ def evaluate_market(
         raise MarketModelUnavailable("indicator periods must be greater than one")
 
     minimum_m1 = max(21, rsi_period + 1)
-    minimum_m5 = max(15, ema_slow_period + 1)
+    minimum_m5 = max(ATR_REQUIRED_CANDLES, ema_slow_period + 1)
     _validate_candles(candles_m1, "candles_m1", minimum_m1)
     _validate_candles(candles_m5, "candles_m5", minimum_m5)
+    _recent_contiguous_candles(candles_m1, "candles_m1", minimum_m1, 60)
+    temporal_m5 = _recent_contiguous_candles(
+        candles_m5, "candles_m5", ATR_REQUIRED_CANDLES, 300
+    )
 
     latest = candles_m1[0]
     symbol = str(latest.get("symbol", "")).upper().strip()
@@ -185,16 +219,18 @@ def evaluate_market(
 
     m1_chronological = list(reversed(candles_m1))
     m5_chronological = list(reversed(candles_m5))
+    atr_m5_chronological = list(reversed(temporal_m5))
     closes_m1 = [float(candle["close"]) for candle in m1_chronological]
     closes_m5 = [float(candle["close"]) for candle in m5_chronological]
-    highs_m5 = [float(candle["high"]) for candle in m5_chronological]
-    lows_m5 = [float(candle["low"]) for candle in m5_chronological]
+    atr_closes_m5 = [float(candle["close"]) for candle in atr_m5_chronological]
+    atr_highs_m5 = [float(candle["high"]) for candle in atr_m5_chronological]
+    atr_lows_m5 = [float(candle["low"]) for candle in atr_m5_chronological]
 
     latest_price = float(latest["close"])
     ema_fast_value = _ema(closes_m5, ema_fast_period)
     ema_slow_value = _ema(closes_m5, ema_slow_period)
     rsi_value = _rsi(closes_m1, rsi_period)
-    atr_value = _atr(highs_m5, lows_m5, closes_m5)
+    atr_value = _atr(atr_highs_m5, atr_lows_m5, atr_closes_m5)
     if atr_value <= 0:
         raise MarketModelUnavailable("M5 ATR cannot be established from real movement")
 

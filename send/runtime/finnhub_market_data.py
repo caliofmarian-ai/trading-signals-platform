@@ -352,8 +352,13 @@ class FinnhubForexFeed:
             "freshness_limit_seconds": self.freshness_seconds,
             "fresh": age is not None and 0 <= age <= self.freshness_seconds,
             "candle_counts": counts,
+            "contiguous_candle_counts": dict(
+                integrity.get("contiguous_candle_counts", {})
+            ),
             "minimum_candles": self.minimum_candles,
-            "history_ready": all(value >= self.minimum_candles for value in counts.values()),
+            "history_ready": all(
+                value >= self.minimum_candles for value in counts.values()
+            ),
             "persistence_state": persistence_state,
             "store_load_state": load_state,
             "store_write_state": write_state,
