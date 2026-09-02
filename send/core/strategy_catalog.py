@@ -14,7 +14,7 @@ CATALOG_PATH = Path(__file__).resolve().parents[1] / "config" / "strategy_catalo
 _ROOT_FIELDS = frozenset({"schema_version", "catalog_id", "selected_strategy_id", "strategies"})
 _ENTRY_FIELDS = frozenset({"id", "name", "trade_type", "implementation", "availability", "description"})
 _VERSIONED_CANONICAL_SPEC_RE = re.compile(
-    r"^[A-Z0-9_]+_v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)\.md$"
+    r"^[A-Z0-9_]+_v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)(?:\.md)?$"
 )
 
 
