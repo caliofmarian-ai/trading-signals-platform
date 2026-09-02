@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -12,12 +13,22 @@ SEND_ROOT = REPO_ROOT / "send"
 if str(SEND_ROOT) not in sys.path:
     sys.path.insert(0, str(SEND_ROOT))
 
-from core import admin_views
-from core import distribution_router
-from core import distribution_router_v3
+
+def _live_modules():
+    """Resolve current core modules at test execution time.
+
+    Some legacy batch tests deliberately purge and re-import the core package to
+    prove restart recovery. Resolving here prevents stale module references from
+    making R-011 fixtures patch an object that the admin view no longer uses.
+    """
+    admin_views = importlib.import_module("core.admin_views")
+    distribution_router = importlib.import_module("core.distribution_router")
+    distribution_router_v3 = importlib.import_module("core.distribution_router_v3")
+    return admin_views, distribution_router, distribution_router_v3
 
 
 def test_repository_free_baseline_is_canonical_six() -> None:
+    _, distribution_router, distribution_router_v3 = _live_modules()
     env_lines = (REPO_ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
     free_env = [line for line in env_lines if line.startswith("FREE_LIMIT=")]
     assert free_env == ["FREE_LIMIT=6"]
@@ -61,6 +72,7 @@ def _state() -> dict:
 def test_distribution_admin_view_shows_persisted_effective_free_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    admin_views, distribution_router, distribution_router_v3 = _live_modules()
     monkeypatch.delenv("FREE_LIMIT", raising=False)
     monkeypatch.setattr(
         distribution_router_v3, "_load_effective_config", lambda: _effective_cfg(6)
@@ -82,6 +94,7 @@ def test_distribution_admin_view_shows_persisted_effective_free_limit(
 def test_distribution_admin_view_exposes_governed_env_override_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    admin_views, distribution_router, distribution_router_v3 = _live_modules()
     monkeypatch.setenv("FREE_LIMIT", "9")
     monkeypatch.setattr(
         distribution_router_v3, "_load_effective_config", lambda: _effective_cfg(9)
@@ -100,6 +113,8 @@ def test_distribution_admin_view_exposes_governed_env_override_source(
 def test_distribution_admin_view_fails_visibly_when_truth_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    admin_views, _, distribution_router_v3 = _live_modules()
+
     def _boom() -> dict:
         raise RuntimeError("unavailable")
 
