@@ -66,9 +66,15 @@ GitHub Actions run `33672322631` showed that applying `admin.view` inside the ge
 - retired legacy callbacks must still return the safe retirement/recovery message rather than being converted into a chat-access denial;
 - the existing Admin-topic role-reload confirmation test must represent an explicitly configured admin actor under the post-R-016 permission model.
 
-R-017 therefore keeps `_can_use_admin_callback` as a Telegram-context gate only and moves live authorization into `_handle_admin_navigation_action`, where every non-Owner `ADMIN_NAV` action requires governed `admin.view`. The canonical reload-confirmation regression now configures its test actor explicitly as Primary Admin with the real R-016 permission file. The actual `RELOAD_ROLES_EXEC` mutation remains separately protected by `roles.write`.
+R-017 therefore keeps `_can_use_admin_callback` as a Telegram-context gate only and moves live authorization into `_handle_admin_navigation_action`. Contextual `INFO:*` knowledge callbacks first pass their own role-visibility gate; every remaining live non-Owner `ADMIN_NAV` action then requires governed `admin.view`. Canonical top-level panel actions also independently require the role-to-panel visibility grant. The canonical reload-confirmation regression now configures its test actor explicitly as Primary Admin with the real R-016 permission file. The actual `RELOAD_ROLES_EXEC` mutation remains separately protected by `roles.write`.
 
-This preserves callback recovery semantics without reopening any live Admin surface.
+This preserves callback recovery and contextual knowledge semantics without reopening any live Admin surface.
+
+## Final diff cleanup before validation
+
+The temporary remediation workflows and helper scripts removed themselves from the branch. A diff audit also detected that an earlier compatibility patch had accidentally inserted the Primary Admin fixture setup into an unrelated Owner-private regression test. That accidental change was removed. The only remaining change in `test_telegram_runtime_remediation.py` is the explicit Primary Admin fixture setup for the reload-confirmation test that requires a real non-Owner admin actor under R-016.
+
+The permanent R-017 diff is limited to the R-017 evidence/master-plan documents, Telegram authorization/UI code, the corrected canonical reload-confirmation regression, and the new multi-role journey suite.
 
 ## Live acceptance gate
 
