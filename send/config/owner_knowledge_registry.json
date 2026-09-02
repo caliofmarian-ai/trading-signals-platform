@@ -217,15 +217,15 @@
       "key": "strategy",
       "title": "Strategy Parameters",
       "identity": "The governed configuration surface for adjustable decision parameters.",
-      "purpose": "It makes current thresholds, structural-space requirements, instability gates, coverage, and profiles visible and controllable within permission boundaries.",
+      "purpose": "It makes current thresholds, structural-space requirements, instability gates, coverage, and profile availability visible within permission boundaries.",
       "pipeline_position": "Parameters influence future decision evaluation; the canonical strategy and validation layers remain their semantic owners.",
       "controls": [
-        "Inspect thresholds, S/R requirements, spike filters, active symbols, and the current profile.",
-        "Authorized mutation controls may update validated future-facing configuration."
+        "Inspect thresholds, S/R requirements, spike filters, active symbols, and current profile availability.",
+        "Authorized mutation controls may update validated future-facing configuration only where active canon defines a safe control."
       ],
       "consequences": [
         "Increasing or decreasing a parameter may change which future opportunities pass a gate.",
-        "A profile applies a governed bundle of parameter values; it does not replace the strategy."
+        "Named production profiles are currently unavailable because active canon does not define governed preset bundles; opening the profile surface does not mutate strategy parameters."
       ],
       "limitations": [
         "No parameter setting guarantees signal frequency, win rate, or profit.",

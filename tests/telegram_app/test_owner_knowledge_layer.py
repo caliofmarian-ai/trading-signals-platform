@@ -440,7 +440,7 @@ def test_decision_and_intelligence_views_distinguish_missing_from_empty_logs(
     assert "available event log" in admin_views.render_intelligence_panel([])
 
 
-def test_strategy_profile_does_not_call_missing_configuration_custom(
+def test_strategy_profile_observation_distinguishes_missing_config_from_unavailable_profiles(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ):
@@ -461,7 +461,7 @@ def test_strategy_profile_does_not_call_missing_configuration_custom(
         lambda: str(SEND_DIR / "config" / "algo_params.json"),
     )
     assert admin_commands.get_current_strategy_profile_observation().startswith(
-        "CUSTOM"
+        "NOT AVAILABLE"
     )
 
 
