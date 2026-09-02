@@ -1,0 +1,29 @@
+name: R017 Apply Final Patch
+
+on:
+  push:
+    branches:
+      - remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance
+          fetch-depth: 0
+      - run: python .github/r017_apply_final_patch.py
+      - run: |
+          rm -f .github/r017_apply_final_patch.py
+          rm -f .github/workflows/r017-final-order-fix.yml
+          rm -f .github/workflows/r017-apply-final-patch.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add send/core/bot_service.py tests/canonical/unit/test_telegram_runtime_remediation.py .github/r017_apply_final_patch.py .github/workflows/r017-final-order-fix.yml .github/workflows/r017-apply-final-patch.yml
+          git commit -m "R-017: finalize callback authorization ordering"
+          git push origin HEAD:remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance
