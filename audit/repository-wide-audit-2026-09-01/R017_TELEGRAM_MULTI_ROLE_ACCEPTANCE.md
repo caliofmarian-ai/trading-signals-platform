@@ -1,9 +1,10 @@
 # R-017 — Telegram Multi-Role Final Acceptance
 
-Status: IN PROGRESS — AUTOMATED ACCEPTANCE PENDING
+Status: IN PROGRESS — AUTHORIZATION FIX IMPLEMENTED; FINAL AUTOMATED VALIDATION PENDING
 Issue: #131
 Parent Telegram remediation: #23
 Parent repository-wide remediation: #97
+PR: #132
 Base main commit: `92f272cb3ce2450c2e0e93abc92d0e26c4e348f9`
 
 ## Audit result
@@ -17,7 +18,7 @@ The existing Telegram application already has substantial automated and live evi
 - callback recovery for stale, unknown, retired, and unauthorized actions is already delivered by Issue #42 / PR #43;
 - R-016 now provides strict, fail-closed role/permission authority.
 
-The remaining repository gap is a complete non-Owner journey matrix through the real Telegram authorization path. Existing tests cover individual pieces, but do not prove the full interaction of Admin-topic context, strict permissions, panel visibility, forged callback rejection, and affiliate scope for every non-Owner role.
+The remaining repository gap is a complete non-Owner journey matrix through the real Telegram authorization path. Existing tests cover individual pieces, but did not prove the full interaction of Admin-topic context, strict permissions, panel visibility, forged callback rejection, and affiliate scope for every non-Owner role.
 
 ## R-017 automated acceptance matrix
 
@@ -47,7 +48,18 @@ It proves:
 - authorized Admin-topic callbacks work only for role-allowed panels;
 - forged callbacks to unauthorized panels must fail closed.
 
-If the focused suite exposes a direct-callback authorization bypass, R-017 will repair that runtime defect rather than weakening the acceptance test.
+## First validation finding
+
+GitHub Actions run `33671924695` intentionally exercised the new matrix. Provider selector (**5 passed**) and Telegram admin regression (**72 passed**) remained green, while the full suite reported **13 failures / 1102 passes** in the new R-017 tests.
+
+Six failures were test-parser noise: the role panel collector counted the governed `ℹ️ What is this?` knowledge callback as a top-level panel. The test parser was corrected to exclude `INFO:` callbacks.
+
+The run also exposed two real fail-open authorization defects:
+
+1. `admin_home_markup(role="USER")` treated an explicit unrecognized/USER role like a legacy omitted role and rendered all canonical Admin panels. R-017 preserves the legacy empty-role fallback only for callers that omit the role; an explicit USER/unknown role now receives no Admin panels.
+2. Admin-topic callback context was treated as sufficient to enter `ADMIN_NAV:*`, and a forged top-level callback such as `ADMIN_NAV:ROLES` could render the Roles surface frame for roles without Roles visibility. The inner command returned `Unauthorized command`, but the forbidden surface and its controls were still exposed. R-017 now requires `admin.view` for non-Owner Admin callbacks and independently enforces the canonical role-to-panel visibility boundary before any top-level Admin panel callback is rendered.
+
+These fixes do not broaden any role. They make button visibility and callback authorization enforce the same fail-closed role boundary.
 
 ## Live acceptance gate
 
@@ -67,4 +79,4 @@ The live checklist will verify, for each actually configured test role:
 
 ## Safety boundary
 
-R-017 does not change trading mathematics, score thresholds, SR/Corridor, Trade Physics, Time Model, market-data provider selection, event truth, signal distribution semantics, subscription entitlements, or broker execution. Any runtime change is limited to Telegram authorization if the acceptance suite proves a real fail-open path.
+R-017 does not change trading mathematics, score thresholds, SR/Corridor, Trade Physics, Time Model, market-data provider selection, event truth, signal distribution semantics, subscription entitlements, or broker execution. Runtime changes are limited to Telegram authorization and fail-closed Admin surface visibility proven necessary by the acceptance suite.
