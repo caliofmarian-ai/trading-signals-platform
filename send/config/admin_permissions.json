@@ -1,6 +1,5 @@
 {
   "permissions": {
-
     "admin.view": [
       "owner",
       "primary_admin",
@@ -10,7 +9,18 @@
       "moderator",
       "affiliate_admin"
     ],
-
+    "engine.view": [
+      "owner",
+      "primary_admin",
+      "strategy_admin",
+      "research_admin",
+      "analyst",
+      "moderator"
+    ],
+    "engine.restart": [
+      "owner",
+      "primary_admin"
+    ],
     "strategy.view": [
       "owner",
       "primary_admin",
@@ -18,47 +28,26 @@
       "research_admin",
       "analyst"
     ],
-
     "strategy.thresholds.write": [
       "owner",
       "primary_admin",
       "strategy_admin"
     ],
-
     "strategy.sr.write": [
       "owner",
       "primary_admin",
       "strategy_admin"
     ],
-
     "strategy.spike.write": [
       "owner",
       "primary_admin",
       "strategy_admin"
     ],
-
     "strategy.symbols.write": [
       "owner",
       "primary_admin",
       "strategy_admin"
     ],
-
-    "engine.view": [
-      "owner",
-      "primary_admin",
-      "strategy_admin",
-      "research_admin",
-      "analyst"
-    ],
-
-    "debug.view": [
-      "owner",
-      "primary_admin",
-      "strategy_admin",
-      "research_admin",
-      "analyst"
-    ],
-
     "reports.view": [
       "owner",
       "primary_admin",
@@ -66,23 +55,44 @@
       "research_admin",
       "analyst"
     ],
-
+    "debug.view": [
+      "owner",
+      "primary_admin",
+      "strategy_admin",
+      "research_admin",
+      "analyst"
+    ],
+    "channels.view": [
+      "owner",
+      "primary_admin",
+      "moderator"
+    ],
+    "channels.test": [
+      "owner",
+      "primary_admin"
+    ],
     "roles.view": [
       "owner",
       "primary_admin"
     ],
-
     "roles.write": [
       "owner"
     ],
-
-    "affiliate.view": [
+    "affiliate.view.any": [
       "owner",
-      "primary_admin",
+      "primary_admin"
+    ],
+    "affiliate.view.own": [
+      "owner",
       "affiliate_admin"
     ],
-
-    "affiliate.view.any": [
+    "files.view": [
+      "owner",
+      "primary_admin",
+      "strategy_admin",
+      "research_admin"
+    ],
+    "diagnostics.view": [
       "owner",
       "primary_admin"
     ]
