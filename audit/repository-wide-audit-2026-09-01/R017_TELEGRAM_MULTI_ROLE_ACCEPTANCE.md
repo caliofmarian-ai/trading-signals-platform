@@ -1,6 +1,6 @@
 # R-017 — Telegram Multi-Role Final Acceptance
 
-Status: IN PROGRESS — AUTHORIZATION FIX IMPLEMENTED; FINAL AUTOMATED VALIDATION PENDING
+Status: AUTOMATED VALIDATED — AWAITING MERGE AND LIVE MULTI-ROLE ACCEPTANCE
 Issue: #131
 Parent Telegram remediation: #23
 Parent repository-wide remediation: #97
@@ -18,7 +18,7 @@ The existing Telegram application already has substantial automated and live evi
 - callback recovery for stale, unknown, retired, and unauthorized actions is already delivered by Issue #42 / PR #43;
 - R-016 now provides strict, fail-closed role/permission authority.
 
-The remaining repository gap is a complete non-Owner journey matrix through the real Telegram authorization path. Existing tests cover individual pieces, but did not prove the full interaction of Admin-topic context, strict permissions, panel visibility, forged callback rejection, and affiliate scope for every non-Owner role.
+The remaining repository gap was a complete non-Owner journey matrix through the real Telegram authorization path. Existing tests covered individual pieces, but did not prove the full interaction of Admin-topic context, strict permissions, panel visibility, forged callback rejection, and affiliate scope for every non-Owner role.
 
 ## R-017 automated acceptance matrix
 
@@ -46,7 +46,7 @@ It proves:
 - USER remains public-only even if a message originates inside the Admin topic;
 - private forged Admin callbacks are denied;
 - authorized Admin-topic callbacks work only for role-allowed panels;
-- forged callbacks to unauthorized panels must fail closed.
+- forged callbacks to unauthorized panels fail closed.
 
 ## First validation finding
 
@@ -70,11 +70,22 @@ R-017 therefore keeps `_can_use_admin_callback` as a Telegram-context gate only 
 
 This preserves callback recovery and contextual knowledge semantics without reopening any live Admin surface.
 
-## Final diff cleanup before validation
+## Final diff cleanup
 
 The temporary remediation workflows and helper scripts removed themselves from the branch. A diff audit also detected that an earlier compatibility patch had accidentally inserted the Primary Admin fixture setup into an unrelated Owner-private regression test. That accidental change was removed. The only remaining change in `test_telegram_runtime_remediation.py` is the explicit Primary Admin fixture setup for the reload-confirmation test that requires a real non-Owner admin actor under R-016.
 
 The permanent R-017 diff is limited to the R-017 evidence/master-plan documents, Telegram authorization/UI code, the corrected canonical reload-confirmation regression, and the new multi-role journey suite.
+
+## Automated validation evidence
+
+GitHub Actions run `33673307447` validated implementation head `33a8e98eb35510297a5953d619330c235572c118` through merge candidate `c8ead97fb89ecdc2d691fa17572f672644a84297`:
+
+- provider selector regression: **5 passed**;
+- Telegram admin regression: **72 passed**;
+- full repository suite: **1115 passed**;
+- changed-module compilation: PASS.
+
+This establishes automated acceptance for the R-017 implementation. The final PR head still receives the permanent CI gate before Ready for Review.
 
 ## Live acceptance gate
 
