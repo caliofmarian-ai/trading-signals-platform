@@ -171,11 +171,12 @@ Acceptance:
 
 ### R-008 — Candle cadence/gap integrity
 Severity: HIGH
-Status: IN PROGRESS
-Issue: #112
-PR: #113 (Draft until final audit completion)
+Status: CLOSED
+Issue: #112 — CLOSED
+PR: #113
+Merged main commit: `92e4faa332f088a7b9af08dfc3b63ac1badcb4b5`
 Depends on: R-007 — SATISFIED
-Current validation: 1033 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; GitHub Actions run 33596838289 SUCCESS.
+Validation: 1033 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; final GitHub Actions run 33597024074 SUCCESS.
 
 Required outcome:
 - M1/M5 candle history validates expected cadence or explicitly models gaps;
@@ -194,14 +195,25 @@ Acceptance:
 
 ### R-009 — Two-second Finnhub EUR/USD evaluation semantics
 Severity: HIGH
-Status: PENDING
+Status: IN PROGRESS
+Issue: #114
+PR: #115 (Draft until final audit completion)
+Depends on: R-008 — SATISFIED
+Current validation: 1038 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; GitHub Actions run 33603960610 SUCCESS.
 
 Problem:
-- engine ticks every 2 seconds, but wide selection is spread across a 60-second cycle.
+- engine ticks every 2 seconds, but generic wide selection spreads symbols across a 60-second cycle;
+- with FINNHUB's effective EUR/USD-only scope, the sole wide symbol was therefore evaluated only in slot zero instead of every engine tick.
 
 Required outcome:
 - when FINNHUB is exclusively active with EUR/USD-only scope, the current intended symbol is evaluated according to the governed 2-second runtime cadence where market evidence permits;
 - no provider mixing and no fake candles.
+
+Implementation boundary:
+- reuse `runtime.market_client.configured_symbols()` as provider-scope authority;
+- intersect provider scope with Owner-controlled active symbols before scheduling;
+- preserve watchlist membership as the only source of focus semantics;
+- preserve the existing 60-second sharded wide-scan behavior when provider scope is unconstrained.
 
 Acceptance:
 - scheduler tests prove effective Finnhub EUR/USD evaluation cadence;
@@ -392,3 +404,5 @@ The repository-wide remediation program is complete only when:
 - 2026-09-01: R-007 started on branch `remediation/audit-2026-09-01-r007-fail-closed-startup`; Issue #110 and Draft PR #111 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1025 passed, GitHub Actions run 33567579775 SUCCESS.
 - 2026-09-02: R-007 merged through PR #111; main advanced to `5ba1e7773db439df488108f875b59cae58d70524`; Issue #110 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1025 passed, GitHub Actions run 33567808537 SUCCESS.
 - 2026-09-02: R-008 started on branch `remediation/audit-2026-09-01-r008-candle-cadence-gap-integrity`; Issue #112 and Draft PR #113 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1033 passed, GitHub Actions run 33596838289 SUCCESS.
+- 2026-09-02: R-008 merged through PR #113; main advanced to `92e4faa332f088a7b9af08dfc3b63ac1badcb4b5`; Issue #112 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1033 passed, GitHub Actions run 33597024074 SUCCESS.
+- 2026-09-02: R-009 started on branch `remediation/audit-2026-09-01-r009-finnhub-two-second-evaluation`; Issue #114 and Draft PR #115 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1038 passed, GitHub Actions run 33603960610 SUCCESS.

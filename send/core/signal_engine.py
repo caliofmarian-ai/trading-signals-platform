@@ -59,6 +59,38 @@ def _select_scan_symbols(symbols: List[str], watchlist: List[str], now_ts: int) 
     return focus + selected_wide, focus_set
 
 
+def _select_effective_scan_symbols(
+    symbols: List[str],
+    watchlist: List[str],
+    now_ts: int,
+    *,
+    provider_symbols: Optional[List[str]],
+) -> tuple[List[str], set[str]]:
+    """Select this tick's active symbols using provider scope before wide scheduling.
+
+    A constrained provider universe is already the authoritative bounded scan
+    scope. It is therefore evaluated on every engine tick instead of being
+    spread again across the 60-second wide-scan cycle. The scope is still
+    intersected with Owner-controlled active symbols, and watchlist membership
+    remains the only source of focus semantics.
+    """
+
+    if provider_symbols is None:
+        return _select_scan_symbols(symbols, watchlist, now_ts)
+
+    allowed = {str(item).strip().upper() for item in provider_symbols}
+    scoped = [
+        symbol
+        for symbol in symbols
+        if str(symbol).strip().upper().replace("_", "/") in allowed
+    ]
+    scoped_set = set(scoped)
+    focus = [symbol for symbol in watchlist if symbol in scoped_set]
+    focus_set = set(focus)
+    wide = [symbol for symbol in scoped if symbol not in focus_set]
+    return focus + wide, focus_set
+
+
 def _load_active_symbols() -> List[str]:
     """Load the configured active symbols while preserving stable order."""
 
@@ -430,15 +462,20 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
     if not isinstance(watchlist, list):
         watchlist = []
 
+    from runtime import market_client
+
+    provider_symbols = market_client.configured_symbols()
     if forced_symbols is not None:
         scan_symbols = [str(x).strip() for x in forced_symbols if str(x).strip()]
         focus_symbols = set(scan_symbols) if bool(forced_focus_context) else set()
     else:
-        scan_symbols, focus_symbols = _select_scan_symbols(symbols, watchlist, now_ts)
+        scan_symbols, focus_symbols = _select_effective_scan_symbols(
+            symbols,
+            watchlist,
+            now_ts,
+            provider_symbols=provider_symbols,
+        )
 
-    from runtime import market_client
-
-    provider_symbols = market_client.configured_symbols()
     if provider_symbols is not None:
         allowed = {str(item).strip().upper() for item in provider_symbols}
         scan_symbols = [
