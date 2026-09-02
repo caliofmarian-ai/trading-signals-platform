@@ -57,9 +57,18 @@ Six failures were test-parser noise: the role panel collector counted the govern
 The run also exposed two real fail-open authorization defects:
 
 1. `admin_home_markup(role="USER")` treated an explicit unrecognized/USER role like a legacy omitted role and rendered all canonical Admin panels. R-017 preserves the legacy empty-role fallback only for callers that omit the role; an explicit USER/unknown role now receives no Admin panels.
-2. Admin-topic callback context was treated as sufficient to enter `ADMIN_NAV:*`, and a forged top-level callback such as `ADMIN_NAV:ROLES` could render the Roles surface frame for roles without Roles visibility. The inner command returned `Unauthorized command`, but the forbidden surface and its controls were still exposed. R-017 now requires `admin.view` for non-Owner Admin callbacks and independently enforces the canonical role-to-panel visibility boundary before any top-level Admin panel callback is rendered.
+2. Admin-topic callback context was treated as sufficient to enter `ADMIN_NAV:*`, and a forged top-level callback such as `ADMIN_NAV:ROLES` could render the Roles surface frame for roles without Roles visibility. The inner command returned `Unauthorized command`, but the forbidden surface and its controls were still exposed. R-017 independently enforces the canonical role-to-panel visibility boundary before any top-level Admin panel callback is rendered.
 
-These fixes do not broaden any role. They make button visibility and callback authorization enforce the same fail-closed role boundary.
+## Compatibility reconciliation
+
+GitHub Actions run `33672322631` showed that applying `admin.view` inside the generic callback-context gate was too broad: it correctly denied live Admin navigation but also intercepted two non-live compatibility/recovery paths before their established behavior could execute.
+
+- retired legacy callbacks must still return the safe retirement/recovery message rather than being converted into a chat-access denial;
+- the existing Admin-topic role-reload confirmation test must represent an explicitly configured admin actor under the post-R-016 permission model.
+
+R-017 therefore keeps `_can_use_admin_callback` as a Telegram-context gate only and moves live authorization into `_handle_admin_navigation_action`, where every non-Owner `ADMIN_NAV` action requires governed `admin.view`. The canonical reload-confirmation regression now configures its test actor explicitly as Primary Admin with the real R-016 permission file. The actual `RELOAD_ROLES_EXEC` mutation remains separately protected by `roles.write`.
+
+This preserves callback recovery semantics without reopening any live Admin surface.
 
 ## Live acceptance gate
 
