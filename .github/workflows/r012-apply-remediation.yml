@@ -31,6 +31,7 @@ jobs:
         run: |
           python scripts/r012_apply_patch.py
           python scripts/r012_fix_generated_bot.py
+          python scripts/r012_patch_real_nav_tests.py
           python -m py_compile send/core/admin_commands.py send/core/telegram_admin_ui.py send/core/bot_service.py
           git diff --check
 
@@ -44,6 +45,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add send/core/admin_commands.py send/core/telegram_admin_ui.py send/core/bot_service.py tests/telegram_admin_ui_restoration/test_admin_ui_restoration.py tests/canonical/unit/test_r012_strategy_profile_reconciliation.py audit/repository-wide-audit-2026-09-01/R012_STRATEGY_PROFILE_RECONCILIATION.md audit/repository-wide-audit-2026-09-01/REMEDIATION_MASTER_PLAN.md
+          git add send/core/admin_commands.py send/core/telegram_admin_ui.py send/core/bot_service.py tests/telegram_admin_ui_restoration/test_admin_ui_restoration.py tests/telegram_app/test_real_navigation.py tests/canonical/unit/test_r012_strategy_profile_reconciliation.py audit/repository-wide-audit-2026-09-01/R012_STRATEGY_PROFILE_RECONCILIATION.md audit/repository-wide-audit-2026-09-01/REMEDIATION_MASTER_PLAN.md
           git commit -m "R-012 disable non-canonical strategy profiles"
           git push origin HEAD:remediation/audit-2026-09-01-r012-strategy-profiles
