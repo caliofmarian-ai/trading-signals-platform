@@ -17,27 +17,33 @@ This behavior creates a deterministic step at integer-minute boundaries. R-010 m
 
 A future change to the `model_expiry` derivation requires an explicitly versioned canonical formula. It must not be introduced merely to make the curve visually smoother.
 
-## Canonical evidence reviewed
+## Canonical authority reviewed
 
-### TIME_MODEL_UNIFIED_CANON_v2.0.0
+### CANONICAL_MASTER_INDEX_v2.0.0
 
-The document self-identifies as `Canonical Unified` and as the root canonical source for the time domain. It defines:
+The Master Index is the active authoritative canonical inventory after the 2026-09-01 promotion. It explicitly lists `TIME_MODEL_UNIFIED_CANON_v3.0.0.md` as **Active Canonical** and states that, where a lower-level document contains stale pre-promotion wording, the activation record, Master Index and canonical path classification determine current status.
 
-- Model Time as internal strategy truth;
-- `t_needed_adjusted` as the basis from which `model_expiry` is derived;
-- `model_time_reach_ratio = t_needed_adjusted / model_expiry` conceptually;
-- Execution Time as downstream and distinct from Model Time;
-- fractional `open_now_expiry_minutes` as valid and not subject to arbitrary rounding.
-
-It does not prescribe a replacement fractional `model_expiry` formula that can safely replace the current runtime behavior.
+Therefore R-010 treats Time Model v3 as the active time authority. The stale `PROPOSED / NOT ACTIVE` wording still present inside the v3 file is a documentation-governance defect owned by R-024; it does not demote the file after the executed promotion.
 
 ### TIME_MODEL_UNIFIED_CANON_v3.0.0
 
-The repository currently stores this file under an `active` path, but its own header says `PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL` and states that v2 remains the sole active time authority until explicit promotion.
+The active v3 Time Model establishes:
 
-R-010 therefore does not use v3 to authorize a production formula change. The path/header governance contradiction remains owned by R-024.
+- Model Time as internal strategic time feasibility;
+- `t_needed = buffer_distance / directional_effective_speed` for valid positive directional evidence;
+- `t_needed_adjusted` as context-adjusted required time;
+- `model_expiry` as the internal model horizon;
+- `model_time_reach_ratio = t_needed_adjusted / model_expiry`;
+- `time_to_buffer_ratio = model_expiry / t_needed_adjusted`;
+- Execution Time as downstream and distinct from Model Time;
+- fractional trader-facing OPEN_NOW expiry where precision requires it;
+- no arbitrary trader-facing execution rounding.
 
-The proposed v3 text is nevertheless consistent with the cross-layer safety boundary already implemented by R-001: trader-facing execution expiry is downstream, fractional values are allowed, and arbitrary execution-time rounding is not canonical.
+The active v3 document does **not** define a fractional replacement formula for deriving `model_expiry` from `t_needed_adjusted`, and it does not authorize replacing the existing model-window behavior merely for smoothness.
+
+### TIME_MODEL_UNIFIED_CANON_v2.0.0
+
+v2 is superseded historical authority after the 2026-09-01 promotion. It was reviewed only as provenance because the runtime integer-ceiling behavior predates the promotion. It cannot override the active Master Index or v3 Time Model.
 
 ## Runtime evidence reviewed
 
@@ -70,19 +76,22 @@ would make `model_expiry == t_needed_adjusted` throughout almost the entire inte
 
 for most otherwise valid opportunities.
 
-Because Trade Physics consumes `time_to_buffer_ratio`, that would materially change strategic scoring semantics without a canonically defined replacement model-window formula. Such a change is prohibited by the remediation discipline.
+Because Trade Physics consumes `time_to_buffer_ratio`, that would materially change strategic scoring semantics without an active canonical replacement model-window derivation. Such a change is not authorized by the v3 Time Model and is prohibited by the remediation discipline.
+
+The correct R-010 action is therefore to expose and test the current boundary behavior while refusing to invent a replacement mathematical policy.
 
 ## Boundary decision
 
-The integer-ceiling behavior is therefore classified by R-010 as **existing bounded runtime compatibility behavior**, not as newly promoted canonical mathematics.
+The integer-ceiling behavior is classified by R-010 as **existing bounded runtime compatibility behavior**, not as newly promoted canonical mathematics.
 
 R-010 locks these rules:
 
 1. Do not change the Model Time formula merely for smoothness.
-2. Keep the current minute-boundary behavior observable and regression-tested until a versioned canonical replacement exists.
+2. Keep the current minute-boundary behavior observable and regression-tested until a versioned canonical replacement derivation exists.
 3. Keep the configured maximum model window fail-closed: required time above the maximum remains `LATE` and the model window is not extended.
 4. Never convert this internal rounding behavior into trader-facing expiry authority.
 5. Execution Time remains the only authority for external expiry, under its own explicit calibration contract.
+6. Any future Model Time derivation change must review downstream Trade Physics because the T component consumes `time_to_buffer_ratio`.
 
 ## Regression evidence added
 
@@ -109,5 +118,5 @@ R-010 does not change:
 
 ## Follow-up ownership
 
-- R-024 owns the active-path/header canonical-status contradiction.
+- R-024 owns cleanup of stale active-file headers/status wording so lower-level documents visibly agree with the authoritative Master Index.
 - Any future replacement of the current integer Model Time window requires a separately governed canonical derivation and full downstream Trade Physics/scoring impact review.
