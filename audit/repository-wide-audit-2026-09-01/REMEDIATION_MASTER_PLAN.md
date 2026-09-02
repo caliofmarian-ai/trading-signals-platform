@@ -291,17 +291,22 @@ Required outcome:
 
 ### R-014 — Strategy catalog / Owner UI authority reconciliation
 Severity: HIGH
-Status: IN PROGRESS
-Issue: #124
-Branch: `remediation/audit-2026-09-01-r014-strategy-catalog-authority`
+Status: CLOSED
+Issue: #124 — CLOSED
+PR: #125
+Merged main commit: `a50842c22fb4f534da980cbb017172f6f6493427`
 Depends on: R-013 — SATISFIED
+Validation: provider selector 5 passed; Telegram admin regression 72 passed; full repository suite 1061 passed.
 
 Required outcome:
 - strategy catalog and Owner surfaces point to the active canonical strategy authority (`ALGO_SPEC_v3.0.0` where applicable) and accurate implementation/version terminology.
 
 ### R-015 — Environment/config example reconciliation
 Severity: MEDIUM-HIGH
-Status: PENDING
+Status: IN PROGRESS
+Issue: #126
+Branch: `remediation/audit-2026-09-01-r015-env-example-reconciliation`
+Depends on: R-014 — SATISFIED
 
 Required outcome:
 - `.env.example` reflects current provider bootstrap policy, event schema v3, FREE limit 6, runtime paths, and current safety defaults;
@@ -441,3 +446,5 @@ The repository-wide remediation program is complete only when:
 - 2026-09-02: R-009 started on branch `remediation/audit-2026-09-01-r009-finnhub-two-second-evaluation`; Issue #114 and Draft PR #115 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1038 passed, GitHub Actions run 33603960610 SUCCESS.
 - 2026-09-02: R-009 merged through PR #115; main advanced to `bc761fdbf30f80fcc1abb2ad8c0e054e20ac34ae`; Issue #114 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1038 passed, GitHub Actions run 33604168049 SUCCESS.
 - 2026-09-02: R-010 started on branch `remediation/audit-2026-09-01-r010-model-time-boundaries`; Issue #116 and Draft PR #117 created. Initial boundary characterization exposed an exact-fit floating-point defect; after the bounded numerical fix, validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1041 passed, GitHub Actions run 33605761955 SUCCESS.
+- 2026-09-02: R-014 merged through PR #125; main advanced to `a50842c22fb4f534da980cbb017172f6f6493427`; Issue #124 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1061 passed.
+- 2026-09-02: R-015 started on branch `remediation/audit-2026-09-01-r015-env-example-reconciliation`; Issue #126 and Draft PR #127 created.
