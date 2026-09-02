@@ -8,7 +8,6 @@ repo = Path(__file__).resolve().parents[1]
 path = repo / "send/core/admin_views.py"
 with path.open("r", encoding="utf-8", newline="") as handle:
     text = handle.read()
-newline = "\r\n" if "\r\n" in text else "\n"
 
 pattern = re.compile(
     r"def render_distribution_panel\(.*?\r?\n\r?\ndef render_intelligence_panel\(",
@@ -17,7 +16,7 @@ pattern = re.compile(
 if len(list(pattern.finditer(text))) != 1:
     raise SystemExit("expected exactly one distribution panel block")
 
-replacement_lf = '''def render_distribution_panel(
+replacement = '''def render_distribution_panel(
     admin_chat_id: int,
     admin_thread_id: int,
     routes: Optional[List[str]] = None,
@@ -113,7 +112,7 @@ replacement_lf = '''def render_distribution_panel(
 
 
 def render_intelligence_panel('''
-replacement = replacement_lf.replace("\n", newline)
+
 updated = pattern.sub(replacement, text, count=1)
 with path.open("w", encoding="utf-8", newline="") as handle:
     handle.write(updated)
