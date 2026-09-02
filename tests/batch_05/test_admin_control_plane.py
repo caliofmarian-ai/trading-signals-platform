@@ -5,7 +5,7 @@ BATCH-05 Tests — Admin/Control Plane Consolidation
 Validates GAP-011, GAP-012, and GAP-013 remediation:
 
 GAP-011  Admin mutation path now holds canonical lock for full read-modify-write cycle.
-GAP-012  admin_permissions.json is now loaded and merged with hardcoded PERMISSION_MATRIX.
+GAP-012  admin_permissions.json is loaded as explicit grants bounded by hardcoded PERMISSION_MATRIX.
 GAP-013  bot_service legacy Admin panel path is retired; in_admin_context is fail-closed.
 
 All tests are fully offline: no Telegram, no network, no Railway, no broker.
@@ -77,18 +77,23 @@ def _make_permissions_config(extra_perms: Optional[Dict] = None) -> Dict:
     base = {
         "permissions": {
             "admin.view": ["owner", "primary_admin", "strategy_admin", "research_admin", "analyst", "moderator", "affiliate_admin"],
+            "engine.view": ["owner", "primary_admin", "strategy_admin", "research_admin", "analyst", "moderator"],
+            "engine.restart": ["owner", "primary_admin"],
             "strategy.view": ["owner", "primary_admin", "strategy_admin", "research_admin", "analyst"],
             "strategy.thresholds.write": ["owner", "primary_admin", "strategy_admin"],
             "strategy.sr.write": ["owner", "primary_admin", "strategy_admin"],
             "strategy.spike.write": ["owner", "primary_admin", "strategy_admin"],
             "strategy.symbols.write": ["owner", "primary_admin", "strategy_admin"],
-            "engine.view": ["owner", "primary_admin", "strategy_admin", "research_admin", "analyst"],
-            "debug.view": ["owner", "primary_admin", "strategy_admin", "research_admin", "analyst"],
             "reports.view": ["owner", "primary_admin", "strategy_admin", "research_admin", "analyst"],
+            "debug.view": ["owner", "primary_admin", "strategy_admin", "research_admin", "analyst"],
+            "channels.view": ["owner", "primary_admin", "moderator"],
+            "channels.test": ["owner", "primary_admin"],
             "roles.view": ["owner", "primary_admin"],
             "roles.write": ["owner"],
-            "affiliate.view": ["owner", "primary_admin", "affiliate_admin"],
             "affiliate.view.any": ["owner", "primary_admin"],
+            "affiliate.view.own": ["owner", "affiliate_admin"],
+            "files.view": ["owner", "primary_admin", "strategy_admin", "research_admin"],
+            "diagnostics.view": ["owner", "primary_admin"],
         }
     }
     if extra_perms:
@@ -388,6 +393,7 @@ def test_au13_analyst_cannot_mutate(tmp_path, monkeypatch):
             "moderator": [],
             "affiliate_admin": {},
         },
+        permissions_config={"permissions": {"strategy.view": ["analyst"]}},
     )
     assert perm.has_permission(5001, "strategy.view")
     assert not perm.has_permission(5001, "strategy.thresholds.write")
@@ -1035,26 +1041,24 @@ def test_gap012_permissions_file_is_loaded_when_present(tmp_path, monkeypatch):
     assert perm.ROLE_OWNER in file_matrix or perm.ROLE_STRATEGY_ADMIN in file_matrix
 
 
-def test_gap012_permissions_file_absent_falls_back_to_hardcoded(tmp_path, monkeypatch):
-    """When admin_permissions.json is absent, hardcoded PERMISSION_MATRIX is used."""
+def test_gap012_permissions_file_absent_fails_closed_for_non_owner(tmp_path, monkeypatch):
+    """Missing permission authority blocks non-Owner grants; Owner recovery remains explicit."""
     _purge()
     roles_file = tmp_path / "admin_roles.json"
-    _write_json(roles_file, _make_roles_config(owner_ids=[1001]))
+    _write_json(roles_file, _make_roles_config(owner_ids=[1001], primary_admin_ids=[2002]))
+    missing_permissions = tmp_path / "missing_admin_permissions.json"
     monkeypatch.setenv("ADMIN_ROLES_CONFIG", str(roles_file))
-    monkeypatch.delenv("ADMIN_PERMISSIONS_CONFIG", raising=False)
+    monkeypatch.setenv("ADMIN_PERMISSIONS_CONFIG", str(missing_permissions))
 
     perm = importlib.import_module("core.admin_permissions")
-    file_matrix = perm.load_permissions_config()
-    # File absent → empty dict fallback
-    assert file_matrix == {}
-
-    # But user still gets permissions from hardcoded PERMISSION_MATRIX
+    with pytest.raises(perm.PermissionConfigurationError, match="Permission config is missing"):
+        perm.load_permissions_config()
     assert perm.has_permission(1001, "admin.view")
-    assert perm.has_permission(1001, "strategy.thresholds.write")
+    assert not perm.has_permission(2002, "admin.view")
 
 
-def test_gap012_permissions_file_extends_hardcoded_matrix(tmp_path, monkeypatch):
-    """Permissions defined in admin_permissions.json are merged with the hardcoded matrix."""
+def test_gap012_permissions_file_cannot_extend_hardcoded_ceiling(tmp_path, monkeypatch):
+    """File grants cannot invent permissions outside the governed role ceiling."""
     extra = {"custom.permission": ["strategy_admin"]}
     perm = _import_permissions(
         tmp_path, monkeypatch,
@@ -1065,28 +1069,27 @@ def test_gap012_permissions_file_extends_hardcoded_matrix(tmp_path, monkeypatch)
         permissions_config=_make_permissions_config(extra_perms=extra),
     )
 
-    # The custom permission from the file should now be available
-    assert perm.has_permission(8001, "custom.permission")
-    # Standard permissions from PERMISSION_MATRIX still work
-    assert perm.has_permission(8001, "strategy.thresholds.write")
+    with pytest.raises(perm.PermissionConfigurationError, match="outside the governed baseline"):
+        perm.load_permissions_config()
+    assert not perm.has_permission(8001, "custom.permission")
+    assert not perm.has_permission(8001, "strategy.thresholds.write")
 
 
-def test_gap012_malformed_permissions_file_falls_back_gracefully(tmp_path, monkeypatch):
-    """A malformed admin_permissions.json causes fallback to hardcoded matrix without error."""
+def test_gap012_malformed_permissions_file_fails_closed(tmp_path, monkeypatch):
+    """Malformed permission authority is explicit and never broadens non-Owner access."""
     _purge()
     roles_file = tmp_path / "admin_roles.json"
     perms_file = tmp_path / "admin_permissions.json"
-    _write_json(roles_file, _make_roles_config(owner_ids=[1001]))
+    _write_json(roles_file, _make_roles_config(owner_ids=[1001], primary_admin_ids=[2002]))
     perms_file.write_text("NOT_VALID_JSON{{{", encoding="utf-8")
     monkeypatch.setenv("ADMIN_ROLES_CONFIG", str(roles_file))
     monkeypatch.setenv("ADMIN_PERMISSIONS_CONFIG", str(perms_file))
 
     perm = importlib.import_module("core.admin_permissions")
-    # Should not raise; should fall back to empty
-    file_matrix = perm.load_permissions_config()
-    assert file_matrix == {}
-    # Standard hardcoded permissions still work
+    with pytest.raises(perm.PermissionConfigurationError, match="invalid JSON"):
+        perm.load_permissions_config()
     assert perm.has_permission(1001, "admin.view")
+    assert not perm.has_permission(2002, "admin.view")
 
 
 # ---------------------------------------------------------------------------
