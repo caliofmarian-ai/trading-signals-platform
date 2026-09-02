@@ -210,6 +210,10 @@ def panel_visible_for_role(role: str, panel_action: str) -> bool:
     return str(panel_action or "").strip().upper() in allowed
 
 
+def is_canonical_panel_action(panel_action: str) -> bool:
+    return str(panel_action or "").strip().upper() in _ALL_PANEL_KEYS
+
+
 def knowledge_visible_for_role(role: str, knowledge_key: str) -> bool:
     entry = get_knowledge(knowledge_key)
     if entry is None:
@@ -248,7 +252,9 @@ def admin_home_markup(
     last row using that exact callback_data string.  Pass the APP:HOME callback
     so the button navigates back to the role-scoped welcome page.
     """
-    allowed = _PANEL_VISIBILITY.get(role, _ALL_PANEL_KEYS)
+    # Backward compatibility is retained only for legacy callers that omit role.
+    # An explicit unknown/USER role is unauthorized and must not inherit all panels.
+    allowed = _ALL_PANEL_KEYS if not role else _PANEL_VISIBILITY.get(role, frozenset())
     visible = [(key, label) for key, label in _CANONICAL_PANELS if key in allowed]
 
     rows: list[list[dict[str, str]]] = []
