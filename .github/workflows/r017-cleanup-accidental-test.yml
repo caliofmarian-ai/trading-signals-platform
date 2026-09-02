@@ -1,0 +1,28 @@
+name: R017 Cleanup Accidental Test
+
+on:
+  push:
+    branches:
+      - remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance
+          fetch-depth: 0
+      - run: python .github/r017_cleanup_accidental_test.py
+      - run: |
+          rm -f .github/r017_cleanup_accidental_test.py
+          rm -f .github/workflows/r017-cleanup-accidental-test.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/canonical/unit/test_telegram_runtime_remediation.py .github/r017_cleanup_accidental_test.py .github/workflows/r017-cleanup-accidental-test.yml
+          git commit -m "R-017: remove accidental Owner test fixture change"
+          git push origin HEAD:remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance
