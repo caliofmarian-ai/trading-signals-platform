@@ -1,0 +1,50 @@
+name: R016 Compatibility And Master Plan Sync
+
+on:
+  push:
+    paths:
+      - '.github/workflows/r016-sync.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: remediation/audit-2026-09-01-r016-role-permission-fail-closed
+      - name: Patch compatibility test and remediation plan
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          test_path = Path('tests/batch_06/test_fsm_restart_recovery.py')
+          text = test_path.read_text(encoding='utf-8')
+          old = '''def test_permissions_fallback_remains_permitted_and_safe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:\n    modules = _import_batch06_modules(tmp_path, monkeypatch)\n    admin_permissions = modules["admin_permissions"]\n\n    admin_permissions.reload_permissions_config()\n    assert admin_permissions.load_permissions_config() == {}\n    assert admin_permissions.has_permission(1001, "roles.write")\n    assert not admin_permissions.has_permission(9999, "roles.write")\n'''
+          new = '''def test_missing_permissions_fail_closed_for_non_owner_but_preserve_owner_recovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:\n    modules = _import_batch06_modules(tmp_path, monkeypatch)\n    admin_permissions = modules["admin_permissions"]\n\n    with pytest.raises(admin_permissions.PermissionConfigurationError, match="Permission config is missing"):\n        admin_permissions.reload_permissions_config()\n    assert admin_permissions.has_permission(1001, "roles.write")\n    assert not admin_permissions.has_permission(9999, "admin.view")\n'''
+          if old not in text:
+              raise SystemExit('expected batch06 permission fallback test not found')
+          test_path.write_text(text.replace(old, new), encoding='utf-8')
+
+          plan_path = Path('audit/repository-wide-audit-2026-09-01/REMEDIATION_MASTER_PLAN.md')
+          plan = plan_path.read_text(encoding='utf-8')
+          old_block = '''### R-015 — Environment/config example reconciliation\nSeverity: MEDIUM-HIGH\nStatus: IN PROGRESS\nIssue: #126\nBranch: `remediation/audit-2026-09-01-r015-env-example-reconciliation`\nDepends on: R-014 — SATISFIED\n\nRequired outcome:\n- `.env.example` reflects current provider bootstrap policy, event schema v3, FREE limit 6, runtime paths, and current safety defaults;\n- example values cannot silently downgrade live semantics.\n\n### R-016 — Role/permission fail-closed reconciliation\nSeverity: MEDIUM-HIGH\nStatus: PENDING\n'''
+          new_block = '''### R-015 — Environment/config example reconciliation\nSeverity: MEDIUM-HIGH\nStatus: CLOSED\nIssue: #126 — CLOSED\nPR: #127\nMerged main commit: `401ff45399cddeb45b613b0a6bbb23d1e740a356`\nDepends on: R-014 — SATISFIED\nValidation: provider selector 5 passed; Telegram admin regression 72 passed; full repository suite 1065 passed.\n\nRequired outcome:\n- `.env.example` reflects current provider bootstrap policy, event schema v3, FREE limit 6, runtime paths, and current safety defaults;\n- example values cannot silently downgrade live semantics.\n\n### R-016 — Role/permission fail-closed reconciliation\nSeverity: MEDIUM-HIGH\nStatus: IN PROGRESS\nIssue: #128\nBranch: `remediation/audit-2026-09-01-r016-role-permission-fail-closed`\nDepends on: R-015 — SATISFIED\n'''
+          if old_block not in plan:
+              raise SystemExit('expected R015/R016 plan block not found')
+          plan = plan.replace(old_block, new_block)
+          entry = '- 2026-09-02: R-015 merged through PR #127; main advanced to `401ff45399cddeb45b613b0a6bbb23d1e740a356`; Issue #126 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1065 passed.\n- 2026-09-02: R-016 started on branch `remediation/audit-2026-09-01-r016-role-permission-fail-closed`; Issue #128 created.'
+          if entry not in plan:
+              plan = plan.rstrip() + '\n' + entry + '\n'
+          plan_path.write_text(plan, encoding='utf-8')
+          PY
+      - name: Remove one-shot workflow and commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/r016-sync.yml
+          git add tests/batch_06/test_fsm_restart_recovery.py audit/repository-wide-audit-2026-09-01/REMEDIATION_MASTER_PLAN.md
+          git commit -m 'R-016: sync fail-closed compatibility and remediation plan'
+          git push origin HEAD:remediation/audit-2026-09-01-r016-role-permission-fail-closed
