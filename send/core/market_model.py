@@ -100,9 +100,7 @@ def _atr(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
     return sum(true_ranges) / period
 
 
-def _validate_candles(candles: Sequence[Mapping[str, Any]], label: str, minimum: int) -> None:
-    if len(candles) < minimum:
-        raise MarketModelUnavailable(f"{label} requires {minimum} real candles; received {len(candles)}")
+def _validate_candle_structure(candles: Sequence[Mapping[str, Any]], label: str) -> None:
     previous_ts: int | None = None
     for index, candle in enumerate(candles):
         try:
@@ -117,6 +115,47 @@ def _validate_candles(candles: Sequence[Mapping[str, Any]], label: str, minimum:
         if previous_ts is not None and timestamp >= previous_ts:
             raise MarketModelUnavailable(f"{label} must be strictly newest-first")
         previous_ts = timestamp
+
+
+def _recent_contiguous_candles(
+    candles: Sequence[Mapping[str, Any]],
+    label: str,
+    minimum: int,
+    timeframe_seconds: int,
+) -> list[Mapping[str, Any]]:
+    """Return only the newest exact-cadence segment without inventing missing bars.
+
+    Older provider/session/weekend discontinuities are preserved in the source
+    evidence but cannot be compressed into a normal M1/M5 interval for temporal
+    physics. If the current contiguous segment is too short, evaluation fails
+    closed and waits for real candles rather than interpolating.
+    """
+
+    if len(candles) < minimum:
+        raise MarketModelUnavailable(
+            f"{label} requires {minimum} real candles; received {len(candles)}"
+        )
+    _validate_candle_structure(candles, label)
+
+    contiguous_count = 1
+    first_delta: int | None = None
+    for index in range(1, len(candles)):
+        newer_ts = int(candles[index - 1]["ts"])
+        older_ts = int(candles[index]["ts"])
+        delta = newer_ts - older_ts
+        if delta != timeframe_seconds:
+            first_delta = delta
+            break
+        contiguous_count += 1
+
+    usable = list(candles[:contiguous_count])
+    if len(usable) < minimum:
+        raise MarketModelUnavailable(
+            f"{label} requires {minimum} contiguous real candles at "
+            f"{timeframe_seconds}s cadence; received {len(usable)} before first "
+            f"discontinuity (observed_delta={first_delta}s)"
+        )
+    return usable
 
 
 def _is_crypto(symbol: str) -> bool:
@@ -175,8 +214,12 @@ def evaluate_market(
 
     minimum_m1 = max(21, rsi_period + 1)
     minimum_m5 = max(15, ema_slow_period + 1)
-    _validate_candles(candles_m1, "candles_m1", minimum_m1)
-    _validate_candles(candles_m5, "candles_m5", minimum_m5)
+    candles_m1 = _recent_contiguous_candles(
+        candles_m1, "candles_m1", minimum_m1, 60
+    )
+    candles_m5 = _recent_contiguous_candles(
+        candles_m5, "candles_m5", minimum_m5, 300
+    )
 
     latest = candles_m1[0]
     symbol = str(latest.get("symbol", "")).upper().strip()
