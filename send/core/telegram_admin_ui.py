@@ -331,7 +331,8 @@ def symbols_toggle_markup(
     plane is introduced.
     """
     active_set = {s.upper() for s in active_symbols}
-    provider = _provider_control.get_active_provider()
+    provider_summary = _provider_control.provider_summary()
+    provider = provider_summary["active_provider"]
     rows: list[list[dict[str, str]]] = []
 
     def _symbol_action(base: str, value: str = "") -> str:
@@ -349,6 +350,19 @@ def symbols_toggle_markup(
             _symbol_action("SYM_TOGGLE", "PROVIDER_TWELVE_DATA"),
         ),
     ])
+
+    if provider is None:
+        rows.append([
+            _btn("⚠ Provider state BLOCKED", "SYMBOLS_COV" if parent_action == "HOME" else "SYMBOLS"),
+        ])
+        rows.append([
+            _btn("🔄 Refresh", "SYMBOLS_COV" if parent_action == "HOME" else "SYMBOLS"),
+        ])
+        info_return = "SYMBOLS_COV" if parent_action == "HOME" else "SYMBOLS"
+        rows.append([_knowledge_btn("symbols_coverage", info_return)])
+        back_label = "⬅️ Admin" if parent_action == "HOME" else "⬅️ Strategy"
+        rows.append([_btn(back_label, parent_action)])
+        return _kb(rows)
 
     if provider == _provider_control.PROVIDER_FINNHUB:
         rows.append([

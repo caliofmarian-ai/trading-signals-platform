@@ -264,10 +264,12 @@ Required outcome:
 
 ### R-012 — Strategy profile reconciliation
 Severity: HIGH
-Status: IN PROGRESS
-Issue: #120
-Branch: `remediation/audit-2026-09-01-r012-strategy-profiles`
+Status: CLOSED
+Issue: #120 — CLOSED
+PR: #121
+Merged main commit: `0993852e7bf6f65e393c31c39a2dc6a36c29c95c`
 Depends on: R-011 — SATISFIED
+Validation: provider selector 5 passed; Telegram admin regression 72 passed; full repository suite 1050 passed.
 
 Required outcome:
 - Admin profiles cannot silently lower active canonical thresholds or mutate obsolete SR semantics;
@@ -275,7 +277,10 @@ Required outcome:
 
 ### R-013 — Provider-state corruption fail-closed behavior
 Severity: HIGH
-Status: PENDING
+Status: IN PROGRESS
+Issue: #122
+Branch: `remediation/audit-2026-09-01-r013-provider-state-corruption`
+Depends on: R-012 — SATISFIED
 
 Required outcome:
 - corrupt persisted provider state produces an explicit blocked/degraded state instead of silently selecting another provider;
