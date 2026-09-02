@@ -9,7 +9,7 @@ instructions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil, isfinite
+from math import ceil, isclose, isfinite
 from typing import Any, Mapping
 
 from .decision_object import TimeContext
@@ -18,6 +18,8 @@ from .sr_corridor_engine import CorridorResult
 
 
 SCHEMA_VERSION = "2.0.0"
+_NUMERIC_EQUAL_REL_TOL = 1e-12
+_NUMERIC_EQUAL_ABS_TOL = 1e-12
 
 
 class TimeModelUnavailable(ValueError):
@@ -164,9 +166,25 @@ def evaluate_time(
     t_needed = buffer_distance / directional_speed
     t_needed_adjusted = t_needed * trend_adjustment * structure_adjustment
     model_expiry = float(ceil(min(max(t_needed_adjusted, expiry_minimum), expiry_maximum)))
-    model_time_reach_ratio = t_needed_adjusted / model_expiry
-    time_to_buffer_ratio = model_expiry / t_needed_adjusted
-    temporally_feasible = t_needed_adjusted <= model_expiry
+
+    # Exact-fit boundaries are conceptual equalities. Normalize only machine-
+    # precision drift so 15.0 represented as 15.000000000000002 cannot become
+    # a false LATE state or ratio > 1. This does not smooth or replace the
+    # existing bounded integer-ceiling model-window behavior.
+    exact_fit = isclose(
+        t_needed_adjusted,
+        model_expiry,
+        rel_tol=_NUMERIC_EQUAL_REL_TOL,
+        abs_tol=_NUMERIC_EQUAL_ABS_TOL,
+    )
+    if exact_fit:
+        model_time_reach_ratio = 1.0
+        time_to_buffer_ratio = 1.0
+        temporally_feasible = True
+    else:
+        model_time_reach_ratio = t_needed_adjusted / model_expiry
+        time_to_buffer_ratio = model_expiry / t_needed_adjusted
+        temporally_feasible = t_needed_adjusted < model_expiry
     time_state = "READY" if temporally_feasible else "LATE"
 
     context = TimeContext(
