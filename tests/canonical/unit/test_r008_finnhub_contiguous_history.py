@@ -3,8 +3,6 @@ from __future__ import annotations
 import importlib
 import json
 
-import pytest
-
 
 def _row(ts: int, price: float = 1.1) -> dict:
     return {
@@ -30,7 +28,7 @@ def _write_store(path, *, m1: list[dict], m5: list[dict]) -> None:
     )
 
 
-def test_finnhub_total_count_cannot_hide_recent_continuity_gap(tmp_path) -> None:
+def test_finnhub_exposes_recent_continuity_gap_without_fabricating_rows(tmp_path) -> None:
     module = importlib.import_module("runtime.finnhub_market_data")
     store = tmp_path / "candles.json"
     _write_store(
@@ -48,17 +46,18 @@ def test_finnhub_total_count_cannot_hide_recent_continuity_gap(tmp_path) -> None
     feed._last_price_ts = 600
     feed._stream_started = True
 
-    with pytest.raises(module.FinnhubInsufficientHistory, match="contiguous history"):
-        feed.get_candles("EUR/USD", "M1")
-
+    candles = feed.get_candles("EUR/USD", "M1")
     health = feed.health()
+
+    assert [candle["ts"] for candle in candles] == [600, 480, 420]
     assert health["candle_counts"]["M1"] == 3
     assert health["contiguous_candle_counts"] == {"M1": 1, "M5": 2}
-    assert health["history_ready"] is False
+    assert health["history_ready"] is True
     assert health["integrity_report"]["temporal_continuity_state"] == "GAPPED"
+    assert health["integrity_report"]["gap_count"] == 1
 
 
-def test_finnhub_old_gap_is_safe_after_new_contiguous_segment_is_ready(tmp_path) -> None:
+def test_finnhub_reports_new_contiguous_segment_separately_from_older_gap(tmp_path) -> None:
     module = importlib.import_module("runtime.finnhub_market_data")
     store = tmp_path / "candles.json"
     _write_store(
