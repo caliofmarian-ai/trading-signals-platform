@@ -1,0 +1,118 @@
+name: R-012 Reconcile Owner Knowledge Truth
+
+on:
+  push:
+    branches:
+      - remediation/audit-2026-09-01-r012-strategy-profiles
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    if: contains(github.event.head_commit.message, 'R-012 reconcile owner knowledge truth')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Reconcile declarative knowledge and historical expectation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          test_path = Path('tests/telegram_app/test_owner_knowledge_layer.py')
+          text = test_path.read_text(encoding='utf-8')
+          old = '''def test_strategy_profile_does_not_call_missing_configuration_custom(
+              monkeypatch: pytest.MonkeyPatch,
+              tmp_path: Path,
+          ):
+              from core import admin_commands
+
+              monkeypatch.setattr(
+                  admin_commands,
+                  "_algo_params_path",
+                  lambda: str(tmp_path / "missing_algo_params.json"),
+              )
+              assert admin_commands.get_current_strategy_profile_observation().startswith(
+                  "UNAVAILABLE"
+              )
+
+              monkeypatch.setattr(
+                  admin_commands,
+                  "_algo_params_path",
+                  lambda: str(SEND_DIR / "config" / "algo_params.json"),
+              )
+              assert admin_commands.get_current_strategy_profile_observation().startswith(
+                  "CUSTOM"
+              )
+          '''
+          new = '''def test_strategy_profile_observation_distinguishes_missing_config_from_unavailable_profiles(
+              monkeypatch: pytest.MonkeyPatch,
+              tmp_path: Path,
+          ):
+              from core import admin_commands
+
+              monkeypatch.setattr(
+                  admin_commands,
+                  "_algo_params_path",
+                  lambda: str(tmp_path / "missing_algo_params.json"),
+              )
+              assert admin_commands.get_current_strategy_profile_observation().startswith(
+                  "UNAVAILABLE"
+              )
+
+              monkeypatch.setattr(
+                  admin_commands,
+                  "_algo_params_path",
+                  lambda: str(SEND_DIR / "config" / "algo_params.json"),
+              )
+              assert admin_commands.get_current_strategy_profile_observation().startswith(
+                  "NOT AVAILABLE"
+              )
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'owner knowledge test block count={text.count(old)}')
+          test_path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          registry_path = Path('send/config/owner_knowledge_registry.json')
+          registry = registry_path.read_text(encoding='utf-8')
+          replacements = {
+              '"purpose": "It makes current thresholds, structural-space requirements, instability gates, coverage, and profiles visible and controllable within permission boundaries."':
+              '"purpose": "It makes current thresholds, structural-space requirements, instability gates, coverage, and profile availability visible within permission boundaries."',
+              '"Inspect thresholds, S/R requirements, spike filters, active symbols, and the current profile."':
+              '"Inspect thresholds, S/R requirements, spike filters, active symbols, and current profile availability."',
+              '"Authorized mutation controls may update validated future-facing configuration."':
+              '"Authorized mutation controls may update validated future-facing configuration only where active canon defines a safe control."',
+              '"A profile applies a governed bundle of parameter values; it does not replace the strategy."':
+              '"Named production profiles are currently unavailable because active canon does not define governed preset bundles; opening the profile surface does not mutate strategy parameters."',
+          }
+          for old_text, new_text in replacements.items():
+              if registry.count(old_text) != 1:
+                  raise SystemExit(f'registry replacement count={registry.count(old_text)} for {old_text}')
+              registry = registry.replace(old_text, new_text, 1)
+          registry_path.write_text(registry, encoding='utf-8')
+          PY
+          git diff --check
+
+      - name: Validate owner knowledge and R-012
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install -r requirements.txt
+          PYTHONPATH=send python -m pytest -q tests/telegram_app/test_owner_knowledge_layer.py
+          python -m pytest -q tests/canonical/unit/test_r012_strategy_profile_reconciliation.py
+          python -m pytest -q tests/telegram_admin_ui_restoration/test_admin_ui_restoration.py
+
+      - name: Commit reconciliation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add send/config/owner_knowledge_registry.json tests/telegram_app/test_owner_knowledge_layer.py
+          git commit -m "R-012 align owner knowledge with disabled profiles"
+          git push origin HEAD:remediation/audit-2026-09-01-r012-strategy-profiles
