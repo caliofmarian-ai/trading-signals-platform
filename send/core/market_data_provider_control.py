@@ -23,6 +23,10 @@ class MarketDataProviderUnavailable(MarketDataProviderControlError):
     pass
 
 
+class MarketDataProviderStateError(MarketDataProviderControlError):
+    """Persisted provider selection exists but is unsafe or unreadable."""
+
+
 def _state_path() -> str:
     return storage.root_path("config", STATE_FILENAME)
 
@@ -41,20 +45,58 @@ def _normalize_provider(provider: str) -> str:
 
 
 def _load_persisted_state() -> Optional[Dict[str, Any]]:
+    """Load Owner provider selection, distinguishing ABSENT from INVALID state.
+
+    Only a genuinely absent state file may fall through to deployment bootstrap.
+    Once a persisted Owner selection exists, unreadable or malformed state is a
+    blocking control-plane error rather than permission to choose another source.
+    """
     path = _state_path()
-    if not os.path.isfile(path):
+    if not os.path.exists(path):
         return None
+    if not os.path.isfile(path):
+        raise MarketDataProviderStateError(
+            f"Persisted market provider state path is not a file: {path}"
+        )
     try:
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return None
+    except json.JSONDecodeError as exc:
+        raise MarketDataProviderStateError(
+            f"Persisted market provider state is invalid JSON: {path}: {exc.msg}"
+        ) from exc
+    except UnicodeError as exc:
+        raise MarketDataProviderStateError(
+            f"Persisted market provider state is not valid UTF-8: {path}"
+        ) from exc
+    except OSError as exc:
+        raise MarketDataProviderStateError(
+            f"Persisted market provider state cannot be read: {path}: {exc}"
+        ) from exc
+
     if not isinstance(payload, dict):
-        return None
+        raise MarketDataProviderStateError(
+            f"Persisted market provider state must be a JSON object: {path}"
+        )
+
     provider = str(payload.get("active_provider") or "").strip().upper()
     if provider not in SUPPORTED_PROVIDERS:
-        return None
-    return payload
+        raise MarketDataProviderStateError(
+            "Persisted market provider is unsupported or missing: "
+            f"{provider or '<empty>'}"
+        )
+
+    mode = str(payload.get("mode") or "").strip().upper()
+    if mode != "EXCLUSIVE":
+        raise MarketDataProviderStateError(
+            "Persisted market provider mode must be EXCLUSIVE, got "
+            f"{mode or '<empty>'}"
+        )
+
+    normalized = dict(payload)
+    normalized["active_provider"] = provider
+    normalized["mode"] = "EXCLUSIVE"
+    return normalized
 
 
 def provider_ready(provider: str) -> tuple[bool, str]:
@@ -125,11 +167,10 @@ def _apply_provider(provider: str) -> str:
 def get_active_provider() -> str:
     """Return the single effective provider and synchronize the process env.
 
-    Persisted owner selection wins over the deployment environment. The
-    deployment environment remains the bootstrap source before the first
-    Telegram selection. The historical TWELVE_DATA fallback is preserved only
-    for compatibility when no explicit deployment or owner selection exists;
-    production can and currently does select FINNHUB explicitly.
+    Persisted Owner selection wins over the deployment environment. The
+    deployment environment is a bootstrap source only when no persisted state
+    file exists. Existing but invalid persisted state fails closed and never
+    selects an environment fallback.
     """
     persisted = _load_persisted_state()
     if persisted is not None:
@@ -149,9 +190,11 @@ def selection_source() -> str:
 def set_active_provider(provider: str, *, selected_by: Optional[int] = None) -> Dict[str, Any]:
     """Persist one exclusive provider selection and apply it immediately.
 
-    Selection is refused when the target provider has no configured API key;
-    the previous provider remains effective. Provider switching never changes
-    strategy parameters or the persisted Twelve Data symbol selection.
+    Selection is refused when the target provider has no configured API key.
+    A valid explicit Owner selection may replace invalid persisted provider state;
+    the invalid state is never used as a runtime provider before that recovery.
+    Provider switching never changes strategy parameters or the persisted Twelve
+    Data symbol selection.
     """
     normalized = _normalize_provider(provider)
     ready, reason = provider_ready(normalized)
@@ -180,22 +223,43 @@ def set_active_provider(provider: str, *, selected_by: Optional[int] = None) -> 
 
 
 def provider_summary() -> Dict[str, Any]:
-    provider = get_active_provider()
-    ready, reason = provider_ready(provider)
-    return {
-        "active_provider": provider,
-        "mode": "EXCLUSIVE",
-        "ready": ready,
-        "readiness_reason": reason,
-        "selection_source": selection_source(),
-        "symbol_policy": (
-            "EUR/USD_ONLY"
-            if provider == PROVIDER_FINNHUB
-            else "ACTIVE_SYMBOLS_CONFIG"
-        ),
-        "effective_symbols": (
-            list(FINNHUB_EFFECTIVE_SYMBOLS)
-            if provider == PROVIDER_FINNHUB
-            else None
-        ),
-    }
+    """Return provider state for diagnostics without inventing a fallback."""
+    try:
+        provider = get_active_provider()
+        ready, reason = provider_ready(provider)
+        return {
+            "active_provider": provider,
+            "mode": "EXCLUSIVE",
+            "ready": ready,
+            "readiness_reason": reason,
+            "selection_source": selection_source(),
+            "state_status": "VALID",
+            "persisted_state_present": os.path.exists(_state_path()),
+            "symbol_policy": (
+                "EUR/USD_ONLY"
+                if provider == PROVIDER_FINNHUB
+                else "ACTIVE_SYMBOLS_CONFIG"
+            ),
+            "effective_symbols": (
+                list(FINNHUB_EFFECTIVE_SYMBOLS)
+                if provider == PROVIDER_FINNHUB
+                else None
+            ),
+        }
+    except MarketDataProviderControlError as exc:
+        persisted_present = os.path.exists(_state_path())
+        return {
+            "active_provider": None,
+            "mode": "BLOCKED",
+            "ready": False,
+            "readiness_reason": str(exc),
+            "selection_source": (
+                "PERSISTED_STATE_INVALID"
+                if persisted_present
+                else "DEPLOYMENT_ENVIRONMENT_INVALID"
+            ),
+            "state_status": "BLOCKED",
+            "persisted_state_present": persisted_present,
+            "symbol_policy": None,
+            "effective_symbols": None,
+        }

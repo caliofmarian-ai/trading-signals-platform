@@ -516,8 +516,26 @@ def _finnhub_symbol_lock_message() -> str:
     )
 
 
+def _provider_block_message(reason: str) -> str:
+    return (
+        "Market data provider state is BLOCKED: "
+        f"{reason} Select Finnhub or Twelve Data explicitly to recover. "
+        "No symbol setting was changed."
+    )
+
+
+def _current_provider_for_symbols() -> Tuple[Optional[str], Optional[str]]:
+    try:
+        return _provider_control.get_active_provider(), None
+    except _provider_control.MarketDataProviderControlError as exc:
+        return None, _provider_block_message(str(exc))
+
+
 def _symbols_add(symbol: str) -> str:
-    if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+    provider, blocked = _current_provider_for_symbols()
+    if blocked:
+        return blocked
+    if provider == _provider_control.PROVIDER_FINNHUB:
         return _finnhub_symbol_lock_message()
     preferred = _matching_known_symbol(symbol) or str(symbol).strip().upper()
     if not _valid_symbol(preferred):
@@ -532,7 +550,10 @@ def _symbols_add(symbol: str) -> str:
 
 
 def _symbols_remove(symbol: str) -> str:
-    if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+    provider, blocked = _current_provider_for_symbols()
+    if blocked:
+        return blocked
+    if provider == _provider_control.PROVIDER_FINNHUB:
         return _finnhub_symbol_lock_message()
     key = _symbol_key(symbol)
     with _storage.with_lock("active_symbols"):
@@ -561,6 +582,14 @@ def get_all_known_symbols() -> List[str]:
 def _provider_status_text() -> str:
     summary = _provider_control.provider_summary()
     provider = summary["active_provider"]
+    if provider is None:
+        return (
+            "Market data provider: BLOCKED\n"
+            f"Provider state: {summary['readiness_reason']}\n"
+            "Effective symbols: NONE while provider authority is invalid\n"
+            "Symbol controls: BLOCKED\n"
+            "Recovery: explicitly select Finnhub or Twelve Data"
+        )
     if provider == _provider_control.PROVIDER_FINNHUB:
         return (
             "Market data provider: FINNHUB (EXCLUSIVE)\n"
@@ -589,7 +618,8 @@ def handle_symbols_toggle(symbol: str, user_id: int) -> str:
     }
     if action in provider_actions:
         target = provider_actions[action]
-        before = _provider_control.get_active_provider()
+        before_summary = _provider_control.provider_summary()
+        before = str(before_summary.get("active_provider") or "BLOCKED")
         try:
             _provider_control.set_active_provider(target, selected_by=user_id)
         except _provider_control.MarketDataProviderUnavailable as exc:
@@ -625,7 +655,10 @@ def handle_symbols_toggle(symbol: str, user_id: int) -> str:
             "Finnhub is inactive."
         )
 
-    if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+    provider, blocked = _current_provider_for_symbols()
+    if blocked:
+        return render_error(blocked)
+    if provider == _provider_control.PROVIDER_FINNHUB:
         return render_error(_finnhub_symbol_lock_message())
 
     if not _valid_symbol(action):
@@ -653,7 +686,10 @@ def handle_symbols_all(user_id: int) -> str:
     ok, reason = require_permission(user_id, "strategy.symbols.write")
     if not ok:
         return render_error(reason)
-    if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+    provider, blocked = _current_provider_for_symbols()
+    if blocked:
+        return render_error(blocked)
+    if provider == _provider_control.PROVIDER_FINNHUB:
         return render_error(_finnhub_symbol_lock_message())
     all_syms = get_all_known_symbols()
     with _storage.with_lock("active_symbols"):
@@ -666,7 +702,10 @@ def handle_symbols_none(user_id: int) -> str:
     ok, reason = require_permission(user_id, "strategy.symbols.write")
     if not ok:
         return render_error(reason)
-    if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+    provider, blocked = _current_provider_for_symbols()
+    if blocked:
+        return render_error(blocked)
+    if provider == _provider_control.PROVIDER_FINNHUB:
         return render_error(_finnhub_symbol_lock_message())
     with _storage.with_lock("active_symbols"):
         _save_active_symbols([])
@@ -1168,15 +1207,21 @@ def handle_admin_command(text: str, user_id: int) -> str:
                 if not ok:
                     return render_error(reason)
                 observed = _load_active_symbols_observation()
-                if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+                provider_summary = _provider_control.provider_summary()
+                if provider_summary["active_provider"] == _provider_control.PROVIDER_FINNHUB:
                     observed = list(_provider_control.FINNHUB_EFFECTIVE_SYMBOLS)
+                elif provider_summary["active_provider"] is None:
+                    observed = []
                 return _provider_status_text() + "\n\n" + render_symbols(observed)
 
             ok, reason = require_permission(user_id, "strategy.symbols.write")
             if not ok:
                 return render_error(reason)
 
-            if _provider_control.get_active_provider() == _provider_control.PROVIDER_FINNHUB:
+            provider, blocked = _current_provider_for_symbols()
+            if blocked:
+                return render_error(blocked)
+            if provider == _provider_control.PROVIDER_FINNHUB:
                 return render_error(_finnhub_symbol_lock_message())
 
             if len(parts) != 3:
