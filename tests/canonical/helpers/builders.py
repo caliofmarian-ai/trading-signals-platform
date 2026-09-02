@@ -37,15 +37,25 @@ def make_signal_event(signal_id: str = "sig-001", stage: str = "OPEN_NOW", **ove
 
 
 def make_candles(symbol: str = "EURUSD", timeframe: str = "M1", count: int = 30) -> list[dict[str, Any]]:
-    """Build canonical newest-first candles (``candles[0]`` is newest)."""
+    """Build canonical newest-first candles at the declared timeframe cadence."""
+    normalized_timeframe = str(timeframe).strip().upper()
+    cadence_seconds = {
+        "M1": 60,
+        "1MIN": 60,
+        "M5": 300,
+        "5MIN": 300,
+    }.get(normalized_timeframe)
+    if cadence_seconds is None:
+        raise ValueError(f"Unsupported canonical candle timeframe: {timeframe!r}")
+
     candles = []
     for i in range(count):
-        ts = 1720000000 + i * 60
+        ts = 1720000000 + i * cadence_seconds
         base = 1.1000 + (i * 0.0002)
         candles.append(
             {
                 "symbol": symbol,
-                "timeframe": timeframe,
+                "timeframe": normalized_timeframe,
                 "ts": ts,
                 "open": base,
                 "high": base + 0.0004,
