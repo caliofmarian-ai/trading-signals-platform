@@ -318,6 +318,15 @@ class FinnhubForexFeed:
                 f"Finnhub {code} history is still collecting: "
                 f"{len(candles)}/{self.minimum_candles} real candles"
             )
+        contiguous_count = int(
+            integrity.get("contiguous_candle_counts", {}).get(code, 0)
+        )
+        if contiguous_count < self.minimum_candles:
+            raise FinnhubInsufficientHistory(
+                f"Finnhub {code} contiguous history is still collecting after a market-data "
+                f"discontinuity: {contiguous_count}/{self.minimum_candles} real candles at "
+                f"exact cadence"
+            )
         age_seconds = int(self.clock()) - int(last_price_ts)
         if age_seconds < 0 or age_seconds > self.freshness_seconds:
             raise FinnhubStaleMarketData(
@@ -343,6 +352,14 @@ class FinnhubForexFeed:
         else:
             persistence_state = "UNKNOWN"
         age = None if last_price_ts is None else int(self.clock()) - int(last_price_ts)
+        contiguous_counts = dict(integrity.get("contiguous_candle_counts", {}))
+        history_ready = (
+            integrity.get("state") != "INVALID"
+            and all(
+                int(contiguous_counts.get(code, 0)) >= self.minimum_candles
+                for code in ("M1", "M5")
+            )
+        )
         return {
             "provider": "FINNHUB",
             "symbol": self.symbol,
@@ -352,8 +369,9 @@ class FinnhubForexFeed:
             "freshness_limit_seconds": self.freshness_seconds,
             "fresh": age is not None and 0 <= age <= self.freshness_seconds,
             "candle_counts": counts,
+            "contiguous_candle_counts": contiguous_counts,
             "minimum_candles": self.minimum_candles,
-            "history_ready": all(value >= self.minimum_candles for value in counts.values()),
+            "history_ready": history_ready,
             "persistence_state": persistence_state,
             "store_load_state": load_state,
             "store_write_state": write_state,
