@@ -1,8 +1,9 @@
 # R-012 — Strategy Profile Reconciliation
 
-Status: IMPLEMENTED ON REMEDIATION BRANCH — VALIDATION PENDING
+Status: IMPLEMENTED AND VALIDATED ON PR — MERGE PENDING
 Issue: #120
 Parent: #97
+PR: #121
 Base main commit: `dd04a64506e5b62b98f9b885a01414b1e2b0ac8d`
 
 ## Canonical determination
@@ -21,7 +22,22 @@ Active SR v3 defines Trade Physics v1 `required_space = buffer_distance`. The cu
 - new Telegram markup exposes no legacy profile mutation button;
 - stale `PROFILE_CONFIRM:*` callbacks recover safely without displaying legacy parameter bundles;
 - stale `PROFILE_EXEC:*` callbacks route to the fail-closed audited handler and cannot mutate `algo_params.json`;
+- Owner Knowledge no longer claims that a named profile applies a governed parameter bundle;
 - existing direct parameter-control behavior is outside the R-012 scope and is not broadened or redesigned here.
+
+## Validation evidence
+
+Focused remediation validation:
+- R-012 canonical tests: 4 passed;
+- Telegram admin regression: 72 passed;
+- real Telegram navigation: 86 passed;
+- Owner Knowledge regression: 48 passed;
+- Python compile and `git diff --check`: PASS.
+
+Permanent PR workflow on merge candidate `354a54628d431814f5a306f22392af7c636df66f`, run `33653765804`:
+- provider selector: 5 passed;
+- Telegram admin regression: 72 passed;
+- full repository suite: 1050 passed.
 
 ## Safety boundary
 
