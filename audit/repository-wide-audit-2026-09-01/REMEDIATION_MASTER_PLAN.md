@@ -277,10 +277,12 @@ Required outcome:
 
 ### R-013 — Provider-state corruption fail-closed behavior
 Severity: HIGH
-Status: IN PROGRESS
-Issue: #122
-Branch: `remediation/audit-2026-09-01-r013-provider-state-corruption`
+Status: CLOSED
+Issue: #122 — CLOSED
+PR: #123
+Merged main commit: `f37694b640071af4273134b506dda660345ad991`
 Depends on: R-012 — SATISFIED
+Validation: provider selector 5 passed; Telegram admin regression 72 passed; full repository suite 1060 passed.
 
 Required outcome:
 - corrupt persisted provider state produces an explicit blocked/degraded state instead of silently selecting another provider;
@@ -289,7 +291,10 @@ Required outcome:
 
 ### R-014 — Strategy catalog / Owner UI authority reconciliation
 Severity: HIGH
-Status: PENDING
+Status: IN PROGRESS
+Issue: #124
+Branch: `remediation/audit-2026-09-01-r014-strategy-catalog-authority`
+Depends on: R-013 — SATISFIED
 
 Required outcome:
 - strategy catalog and Owner surfaces point to the active canonical strategy authority (`ALGO_SPEC_v3.0.0` where applicable) and accurate implementation/version terminology.
