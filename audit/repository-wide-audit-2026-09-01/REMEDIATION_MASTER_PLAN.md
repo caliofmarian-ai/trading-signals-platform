@@ -137,11 +137,12 @@ Acceptance:
 
 ### R-006 — Canonical parameter validation in live engine
 Severity: HIGH
-Status: IN PROGRESS
-Issue: #108
-PR: #109 (Draft until final audit completion)
+Status: CLOSED
+Issue: #108 — CLOSED
+PR: #109
+Merged main commit: `8911e790ef6d466c39a45a325ae6aeaa864af95a`
 Depends on: R-005 — SATISFIED
-Current validation: 1010 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; GitHub Actions run 33565250011 SUCCESS.
+Validation: 1010 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; final GitHub Actions run 33565403255 SUCCESS.
 
 Required outcome:
 - live Signal Engine loads algo params through the canonical loader/validator;
@@ -153,8 +154,11 @@ Acceptance:
 
 ### R-007 — Fail-closed production startup validation
 Severity: HIGH
-Status: PENDING
-Depends on: R-006
+Status: IN PROGRESS
+Issue: #110
+PR: #111 (Draft until final audit completion)
+Depends on: R-006 — SATISFIED
+Current validation: 1025 full-suite tests passed; provider selector 5 passed; Telegram admin regression 72 passed; GitHub Actions run 33567579775 SUCCESS.
 
 Required outcome:
 - production boot validates required params, symbols, provider selection/readiness, permissions/config, and persistent state before starting decision/distribution threads;
@@ -372,3 +376,5 @@ The repository-wide remediation program is complete only when:
 - 2026-09-01: R-005 started on branch `remediation/audit-2026-09-01-r005-fsm-open-now-idempotency`; Issue #106 and Draft PR #107 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1002 passed, GitHub Actions run 33563918504 SUCCESS.
 - 2026-09-01: R-005 merged through PR #107; main advanced to `1f5a06ffc0de7f83df4a7bb58a2162bf43b217d8`; Issue #106 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1002 passed, GitHub Actions run 33564055667 SUCCESS.
 - 2026-09-01: R-006 started on branch `remediation/audit-2026-09-01-r006-canonical-param-validation`; Issue #108 and Draft PR #109 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1010 passed, GitHub Actions run 33565250011 SUCCESS.
+- 2026-09-01: R-006 merged through PR #109; main advanced to `8911e790ef6d466c39a45a325ae6aeaa864af95a`; Issue #108 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1010 passed, GitHub Actions run 33565403255 SUCCESS.
+- 2026-09-01: R-007 started on branch `remediation/audit-2026-09-01-r007-fail-closed-startup`; Issue #110 and Draft PR #111 created; current validation is provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1025 passed, GitHub Actions run 33567579775 SUCCESS.

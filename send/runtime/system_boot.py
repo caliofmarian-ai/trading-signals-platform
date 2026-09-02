@@ -52,7 +52,7 @@ from runtime.engine_loop import ENGINE_TICK_SECONDS, start_engine
 from runtime.telegram_updates import poll_updates
 from runtime.distribution_scheduler import scheduler_loop
 from runtime.telemetry_market_worker import telemetry_market_loop
-from runtime import runtime_status
+from runtime import runtime_status, startup_preflight
 from core import fsm_runtime
 from core import distribution_router
 from core import telegram_app_nav
@@ -89,6 +89,12 @@ def _should_start_telegram_thread() -> bool:
         source={"module": "system_boot", "function": "_should_start_telegram_thread"},
     )
     return False
+
+
+def _preserve_blocked_startup_state() -> None:
+    """Prevent a blocked boot from being rewritten as a graceful shutdown at atexit."""
+    global _SHUTDOWN_MARKED
+    _SHUTDOWN_MARKED = True
 
 
 def _mark_graceful_shutdown() -> None:
@@ -145,7 +151,45 @@ def _register_shutdown_hooks() -> None:
         signal.signal(sig, _handle_shutdown_signal)
 
 
-def start_system() -> None:
+def _block_for_preflight_failure(start_info, exc: Exception) -> bool:
+    runtime_status.write_status(
+        "blocked",
+        "Critical startup preflight failed",
+        error=str(exc),
+        recovery_required=bool(start_info["recovery_required"]),
+        recovery_state="UNSAFE_BLOCKED",
+        startup_preflight_state="UNSAFE_BLOCKED",
+    )
+    log_event(build_event(
+        "recovery_completed",
+        {
+            "message": "BinaryBot startup preflight failed",
+            "result": "UNSAFE_BLOCKED",
+            "blocked": True,
+            "restart_count": int(start_info["restart_count"]),
+            "blocked_operations": [
+                "engine_start",
+                "telegram_poll",
+                "scheduler_loop",
+                "telemetry_market_loop",
+            ],
+        },
+        source={"module": "system_boot", "function": "start_system"},
+    ))
+    log_event({
+        "event_type": "error",
+        "severity": "CRITICAL",
+        "error_type": "STARTUP_PREFLIGHT_FAILED",
+        "message": "Critical startup preflight failed; live workers were not started",
+        "context": {"error": str(exc)},
+        "source": {"module": "system_boot", "function": "start_system"},
+    })
+    send_control_notification("STARTUP BLOCKED", "Critical startup preflight failed.")
+    _preserve_blocked_startup_state()
+    return False
+
+
+def start_system() -> bool | None:
     _register_shutdown_hooks()
     try:
         start_info = record_start()
@@ -176,6 +220,7 @@ def start_system() -> None:
         recovery_required=bool(start_info["recovery_required"]),
         recovery_state="STARTING",
         market_data_state="UNKNOWN",
+        startup_preflight_state="PENDING",
     )
     if start_info["recovery_required"]:
         send_control_notification("RECOVERY STARTED", "BinaryBot recovery bootstrap started.")
@@ -193,6 +238,17 @@ def start_system() -> None:
     ))
 
     try:
+        preflight = startup_preflight.run_startup_preflight(require_shadow_mode=False)
+    except startup_preflight.StartupPreflightError as exc:
+        return _block_for_preflight_failure(start_info, exc)
+
+    runtime_status.update_status(
+        startup_preflight_state="READY",
+        startup_preflight_provider=preflight.get("active_provider"),
+        startup_preflight_effective_symbols=list(preflight.get("effective_symbols") or []),
+    )
+
+    try:
         fsm_runtime.load_state()
         distribution_router.load_state()
     except Exception as exc:
@@ -202,6 +258,7 @@ def start_system() -> None:
             error=str(exc),
             recovery_required=bool(start_info["recovery_required"]),
             recovery_state="UNSAFE_BLOCKED",
+            startup_preflight_state="READY",
         )
         log_event(build_event(
             "recovery_completed",
@@ -223,7 +280,8 @@ def start_system() -> None:
             "source": {"module": "system_boot", "function": "start_system"},
         })
         send_control_notification("STARTUP BLOCKED", "Runtime state validation failed during boot.")
-        return
+        _preserve_blocked_startup_state()
+        return False
 
     if start_info["crash_loop"]:
         runtime_status.write_status(
@@ -232,6 +290,7 @@ def start_system() -> None:
             crash_loop=True,
             recovery_required=bool(start_info["recovery_required"]),
             recovery_state="UNSAFE_BLOCKED",
+            startup_preflight_state="READY",
         )
         log_event(build_event(
             "recovery_completed",
@@ -257,7 +316,8 @@ def start_system() -> None:
             "source": {"module": "system_boot", "function": "start_system"},
         })
         send_control_notification("STARTUP BLOCKED", "Runtime boot blocked by restart guard.")
-        return
+        _preserve_blocked_startup_state()
+        return False
 
     log_event(build_event(
         "recovery_completed",
@@ -310,6 +370,9 @@ def start_system() -> None:
         readiness_evaluated=_env_flag("RAILWAY_READINESS_EVALUATED", default=False),
         recovery_required=bool(start_info["recovery_required"]),
         recovery_state="DEGRADED_SAFE" if start_info["recovery_required"] else "HEALTHY",
+        startup_preflight_state="READY",
+        startup_preflight_provider=preflight.get("active_provider"),
+        startup_preflight_effective_symbols=list(preflight.get("effective_symbols") or []),
     )
     if start_info["recovery_required"]:
         send_control_notification("RECOVERY COMPLETED", "BinaryBot recovery bootstrap completed.")
