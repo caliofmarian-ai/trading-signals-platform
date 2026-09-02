@@ -409,14 +409,38 @@ def render_distribution_panel(
         else {}
     )
 
+    def _explicit_limit(value: Any) -> tuple[bool, Optional[int]]:
+        if value is None:
+            return False, None
+        normalized = str(value).strip()
+        if not normalized:
+            return False, None
+        if normalized.upper() in {"UNLIMITED", "NONE", "INF"}:
+            return True, None
+        try:
+            return True, int(normalized)
+        except (TypeError, ValueError):
+            return False, None
+
     def _limit_source(tier: str) -> str:
-        if str(os.getenv(f"{tier}_LIMIT") or "").strip():
+        effective_limit = limits.get(tier)
+        env_valid, env_limit = _explicit_limit(os.getenv(f"{tier}_LIMIT"))
+        if env_valid and env_limit == effective_limit:
             return "ENV"
-        if f"{tier}_LIMIT" in raw or tier in raw_limits:
-            return "PERSISTED_CONFIG"
+
         route_cfg = raw_routes.get(tier)
+        persisted_candidates: List[Any] = []
+        if f"{tier}_LIMIT" in raw:
+            persisted_candidates.append(raw.get(f"{tier}_LIMIT"))
+        if tier in raw_limits:
+            persisted_candidates.append(raw_limits.get(tier))
         if isinstance(route_cfg, dict) and "daily_open_now_limit" in route_cfg:
-            return "PERSISTED_CONFIG"
+            persisted_candidates.append(route_cfg.get("daily_open_now_limit"))
+
+        for candidate in persisted_candidates:
+            valid, parsed = _explicit_limit(candidate)
+            if valid and parsed == effective_limit:
+                return "PERSISTED_CONFIG"
         return "CANONICAL_DEFAULT"
 
     for tier in ("FREE", "BASIC", "PRO", "ELITE"):
@@ -428,7 +452,7 @@ def render_distribution_panel(
         counter = counters.get(tier, 0)
         limit = limits.get(tier)
         limit_text = "UNLIMITED" if limit is None else str(limit)
-        counter_text = str(counter) if limit is not None else "unlimited"
+        counter_text = str(counter)
         lines.append(
             f"{tier}: {effective_state} | {counter_text}/{limit_text} | "
             f"mapping {mapping_state} | limit source {_limit_source(tier)}"
