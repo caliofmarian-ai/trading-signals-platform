@@ -1,6 +1,6 @@
 # R-016 — Role / Permission Fail-Closed Reconciliation
 
-Status: IMPLEMENTED — FINAL VALIDATION PENDING
+Status: CLOSED — MERGED AND VALIDATED
 Issue: #128
 Parent: #97
 PR: #129
@@ -47,3 +47,15 @@ R-016 does not change strategy mathematics, score thresholds, SR/Corridor, Trade
 Initial PR validation run `33670036317` proved provider selector **5 passed** and Telegram admin regression **72 passed**, then intentionally exposed five legacy tests that still required the superseded permissive fallback/extension behavior. The implementation was not relaxed. Those legacy expectations were migrated to the R-016 fail-closed contract.
 
 The final exact-head GitHub Actions run, merge candidate, and full-suite count are recorded in PR #129 after successful validation.
+
+## Merge closure evidence
+
+- Final PR head: `ad12a226f0a51caa738da2fe225a5c1146ab86c1`
+- Tested merge candidate: `e4d55685a8ae2e00a5de301b6c4b41d3f4ddcfe9`
+- GitHub Actions run: `33670410669` — SUCCESS
+- Provider selector regression: **5 passed**
+- Telegram admin regression: **72 passed**
+- Full repository suite: **1072 passed**
+- PR #129 merged to `main` as `84363099cf5faa21118346c89aeea065849bc66c`
+- Issue #128 closed automatically by the merged PR.
+
