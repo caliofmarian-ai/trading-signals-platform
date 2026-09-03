@@ -366,6 +366,7 @@ def _send_interactive_page(
             return
         trace_payload["active_edit_result_category"] = category
 
+    transport_sent = False
     try:
         result = telegram_publisher.send_message(
             chat_id=chat_id,
@@ -373,6 +374,7 @@ def _send_interactive_page(
             reply_markup=reply_markup,
             thread_id=thread_id,
         )
+        transport_sent = True
         trace_payload["selected_operation"] = "send_replacement"
         trace_payload["edit_result_category"] = trace_payload.get("active_edit_result_category") or trace_payload.get("preferred_edit_result_category") or "send_required"
         if isinstance(result, dict):
@@ -392,6 +394,27 @@ def _send_interactive_page(
         )
         return
     except Exception as send_exc:
+        # sendMessage may already have succeeded; persistence or trace
+        # failures after that point must never cause a duplicate send.
+        if transport_sent:
+            trace_payload["selected_operation"] = "send_completed_post_send_failure"
+            trace_payload["edit_result_category"] = "post_send_failure"
+            trace_payload["post_send_error"] = telegram_publisher._sanitize(str(send_exc))
+            observability_logger.log_error({
+                "event_type": "error",
+                "data": {
+                    "severity": "WARNING",
+                    "error_type": "telegram_app_nav_post_send_failure",
+                    "message": telegram_publisher._sanitize(str(send_exc)),
+                    "context": {
+                        "chat_id": chat_id,
+                        "user_id": user_id,
+                        "thread_id": thread_id,
+                    },
+                },
+            })
+            return
+
         trace_payload["selected_operation"] = "send_replacement"
         trace_payload["edit_result_category"] = "send_failed"
         trace_payload["send_error"] = telegram_publisher._sanitize(str(send_exc))
