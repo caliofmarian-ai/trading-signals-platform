@@ -17,6 +17,16 @@ jobs:
           ref: hotfix/r017-admin-delivery-failsafe
           fetch-depth: 0
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install -r requirements.txt
+
       - name: Apply targeted bot-service patch
         shell: bash
         run: |
@@ -186,6 +196,9 @@ jobs:
           text = text.replace(old, new, 1)
           path.write_text(text, encoding='utf-8')
           PY
+
+      - name: Compile patched module
+        run: python -m py_compile send/core/bot_service.py
 
       - name: Run focused regression tests
         run: |
