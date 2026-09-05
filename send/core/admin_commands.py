@@ -38,7 +38,8 @@ from core.operational_snapshot import build_status_snapshot
 
 CONFIG_DIR = _storage.root_path("config")
 OBS_DIR = os.getenv("OBS_DIR", _storage.root_path("observability"))
-REPORTS_DIR = os.path.join(os.getenv("ANALYTICS_DIR", _storage.root_path("analytics")), "reports")
+_DEFAULT_REPORTS_DIR = os.path.join(os.getenv("ANALYTICS_DIR", _storage.root_path("analytics")), "reports")
+REPORTS_DIR = _DEFAULT_REPORTS_DIR
 
 ALGO_PARAMS_PATH = os.path.join(CONFIG_DIR, "algo_params.json")
 ACTIVE_SYMBOLS_PATH = os.path.join(CONFIG_DIR, "active_symbols.json")
@@ -76,6 +77,26 @@ _SECRET_PATTERNS: tuple[str, ...] = (
 MAX_DELIVERY_FILE_SIZE_DEFAULT = 5 * 1024 * 1024
 LOG_EXPORT_MAX_LINES = 200
 AUDIT_MAX_LINES_PER_FILE = 50
+
+
+def _strategy_auditor_reports_dir() -> str:
+    if REPORTS_DIR != _DEFAULT_REPORTS_DIR:
+        return REPORTS_DIR
+    try:
+        from tools import strategy_auditor_lib
+
+        return strategy_auditor_lib.resolve_reports_dir()
+    except Exception:
+        return ""
+
+
+def _path_under_runtime_base(path: str) -> bool:
+    try:
+        real_path = os.path.realpath(path)
+        real_base = os.path.realpath(_storage.base_dir())
+    except Exception:
+        return False
+    return real_path == real_base or real_path.startswith(real_base + os.sep)
 
 # ---------------------------------------------------------------------------
 # Strategy-profile authority (R-012)
@@ -404,11 +425,12 @@ def _engine_status() -> Dict[str, Any]:
 
 
 def _find_latest_report_json() -> Optional[str]:
-    if not os.path.isdir(REPORTS_DIR):
+    reports_dir = _strategy_auditor_reports_dir()
+    if not os.path.isdir(reports_dir):
         return None
     candidates = [
-        os.path.join(REPORTS_DIR, name)
-        for name in os.listdir(REPORTS_DIR)
+        os.path.join(reports_dir, name)
+        for name in os.listdir(reports_dir)
         if name.startswith("daily_strategy_audit_") and name.endswith(".json")
     ]
     if not candidates:
@@ -773,7 +795,11 @@ def _resolve_dir_path(dir_key: str) -> Optional[str]:
         return None
     base = _storage.base_dir()
     if dir_key == "rpt":
-        candidate = os.path.join(base, "analytics", "reports")
+        candidate = _strategy_auditor_reports_dir()
+        if not candidate:
+            return None
+        if REPORTS_DIR == _DEFAULT_REPORTS_DIR and not _path_under_runtime_base(candidate):
+            return None
     else:
         candidate = os.path.join(base, subdir)
     return candidate

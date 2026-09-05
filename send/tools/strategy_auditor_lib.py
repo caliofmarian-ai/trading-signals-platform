@@ -2,18 +2,19 @@ import datetime
 import json
 import os
 from collections import Counter, defaultdict
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from core import storage as _storage
 
-# Default settings path is env-var overridable; no /opt/binarybot/ hard-requirement.
-_DEFAULT_SETTINGS_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "config",
-    "intelligence_settings.json",
-)
-SETTINGS_PATH = os.getenv("STRATEGY_AUDITOR_SETTINGS", _DEFAULT_SETTINGS_PATH)
+
+_PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+
+# Package seed fallback; runtime calls prefer BINARYBOT_BASE_DIR/config first.
+_DEFAULT_SETTINGS_PATH = str(_PACKAGE_ROOT / "config" / "intelligence_settings.json")
+SETTINGS_PATH = _DEFAULT_SETTINGS_PATH
 EVENT_SCHEMA_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    str(_PACKAGE_ROOT),
     "schema",
     "event_schema.json",
 )
@@ -26,53 +27,232 @@ PRIMARY_COMPATIBILITY_MODE = "CANONICAL_V3"
 UNKNOWN_VALUE = "UNKNOWN"
 _NORMALIZATION_SAMPLE_LIMIT = 10
 _EVENT_SCHEMA_CACHE: Optional[Dict[str, Any]] = None
+_LEGACY_BINARYBOT_PREFIX = Path("/opt/binarybot")
+_LEGACY_SETTING_DEFAULTS: Dict[str, str] = {
+    "reports.output_dir": "/opt/binarybot/analytics/reports",
+    "reports.cache_dir": "/opt/binarybot/analytics/cache",
+    "sources.engine_events": "/opt/binarybot/observability/engine_events.jsonl",
+    "sources.fsm_events": "/opt/binarybot/observability/fsm_events.jsonl",
+    "sources.distribution_events": "/opt/binarybot/observability/distribution_events.jsonl",
+    "sources.error_events": "/opt/binarybot/observability/error_events.jsonl",
+    "sources.outcomes": "/opt/binarybot/outcomes/outcomes.jsonl",
+}
+_SOURCE_DEFAULTS: Dict[str, str] = {
+    "engine_events": "observability/engine_events.jsonl",
+    "fsm_events": "observability/fsm_events.jsonl",
+    "distribution_events": "observability/distribution_events.jsonl",
+    "error_events": "observability/error_events.jsonl",
+    "outcomes": "outcomes/outcomes.jsonl",
+}
+_SOURCE_ENV_OVERRIDES: Dict[str, str] = {
+    "engine_events": "ENGINE_EVENTS_LOG",
+    "fsm_events": "FSM_EVENTS_LOG",
+    "distribution_events": "DIST_EVENTS_LOG",
+    "error_events": "ERROR_EVENTS_LOG",
+    "outcomes": "OUTCOMES_LOG",
+}
+
+
+class StrategyAuditorSettingsError(RuntimeError):
+    """Raised when strategy auditor settings cannot be safely loaded."""
+
+
+def _runtime_settings_path() -> str:
+    base = Path(_storage.base_dir())
+    return str(base / "config" / "intelligence_settings.json")
+
+
+def _resolve_settings_path(path: Optional[str] = None) -> Tuple[str, str, bool]:
+    if path:
+        return str(Path(path).expanduser()), "argument", True
+
+    env_path = os.getenv("STRATEGY_AUDITOR_SETTINGS", "").strip()
+    if env_path:
+        return str(Path(env_path).expanduser()), "STRATEGY_AUDITOR_SETTINGS", True
+
+    runtime_path = _runtime_settings_path()
+    if os.path.exists(runtime_path):
+        return runtime_path, "runtime_base_config", False
+
+    return _DEFAULT_SETTINGS_PATH, "package_seed", False
+
+
+def _load_json_object(path: str, *, explicit: bool, source: str) -> Dict[str, Any]:
+    if not os.path.exists(path):
+        qualifier = "explicit " if explicit else ""
+        raise StrategyAuditorSettingsError(
+            f"Strategy auditor {qualifier}settings file not found: {path}. "
+            "Set STRATEGY_AUDITOR_SETTINGS env var to override the path."
+        )
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            settings = json.load(f)
+    except json.JSONDecodeError as exc:
+        raise StrategyAuditorSettingsError(
+            f"Strategy auditor settings file is invalid JSON ({source})."
+        ) from exc
+    if not isinstance(settings, dict):
+        raise StrategyAuditorSettingsError("Strategy auditor settings must be a JSON object")
+    return settings
+
+
+def _base_dir() -> Path:
+    return Path(_storage.base_dir()).resolve(strict=False)
+
+
+def _clean_path(path: Path) -> str:
+    return str(path.expanduser().resolve(strict=False))
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return path == root
+
+
+def _has_traversal(path: Path) -> bool:
+    return any(part == ".." for part in path.parts)
+
+
+def _is_known_legacy_default(label: str, raw: str) -> bool:
+    expected = _LEGACY_SETTING_DEFAULTS.get(label)
+    return expected is not None and raw.rstrip("/") == expected
+
+
+def _path_from_setting(raw: Any, *, base_dir: Path, label: str, origin: str = "settings") -> str:
+    if not isinstance(raw, str) or not raw.strip():
+        raise StrategyAuditorSettingsError(f"{label} must be a non-empty path string")
+
+    raw_path = raw.strip()
+    if "\x00" in raw_path:
+        raise StrategyAuditorSettingsError(f"{label} contains an invalid path character")
+
+    candidate = Path(raw_path).expanduser()
+    if _has_traversal(candidate):
+        raise StrategyAuditorSettingsError(f"{label} must not contain path traversal")
+
+    if origin == "env" and not candidate.is_absolute():
+        raise StrategyAuditorSettingsError(f"{label} must be an absolute path when supplied by environment")
+
+    if candidate.is_absolute():
+        if origin == "settings" and _is_known_legacy_default(label, raw_path):
+            relative = candidate.relative_to(_LEGACY_BINARYBOT_PREFIX)
+            return _clean_path(base_dir / relative)
+        return _clean_path(candidate)
+
+    resolved = (base_dir / candidate).resolve(strict=False)
+    if not _is_relative_to(resolved, base_dir):
+        raise StrategyAuditorSettingsError(f"{label} must resolve under BINARYBOT_BASE_DIR")
+    return str(resolved)
+
+
+def _env_path(name: str) -> Optional[str]:
+    value = os.getenv(name, "").strip()
+    return value or None
+
+
+def _bool_setting(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    if value is None:
+        return default
+    return bool(value)
 
 
 def load_settings(path: Optional[str] = None) -> Dict[str, Any]:
     """
     Load strategy auditor settings.
 
-    Accepts an explicit path argument; falls back to STRATEGY_AUDITOR_SETTINGS
-    env var; falls back to project-relative config/intelligence_settings.json.
-    Raises RuntimeError clearly if the file is missing.
+    Precedence:
+    1. explicit ``path`` argument
+    2. STRATEGY_AUDITOR_SETTINGS
+    3. BINARYBOT_BASE_DIR/config/intelligence_settings.json when present
+    4. packaged config/intelligence_settings.json seed
+
+    Settings may use logical relative paths; they resolve under storage.base_dir().
+    Legacy /opt/binarybot paths are mapped to the active base dir to avoid writes
+    leaking outside the configured runtime volume.
     """
-    resolved = path or SETTINGS_PATH
-    if not os.path.exists(resolved):
-        raise RuntimeError(
-            f"Strategy auditor settings file not found: {resolved}. "
-            "Set STRATEGY_AUDITOR_SETTINGS env var to override the path."
-        )
-    with open(resolved, "r", encoding="utf-8") as f:
-        settings = json.load(f)
+    resolved, source, explicit = _resolve_settings_path(path)
+    settings = _load_json_object(resolved, explicit=explicit, source=source)
     return _apply_runtime_path_overrides(settings)
 
 
 def _apply_runtime_path_overrides(settings: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(settings, dict):
-        raise RuntimeError("Strategy auditor settings must be a JSON object")
+        raise StrategyAuditorSettingsError("Strategy auditor settings must be a JSON object")
 
     normalized = dict(settings)
-    analytics_dir = os.getenv("ANALYTICS_DIR", "").strip()
-    obs_dir = os.getenv("OBS_DIR", "").strip()
-    outcomes_log = os.getenv("OUTCOMES_LOG", "").strip()
+    base_dir = _base_dir()
 
     reports = dict(normalized.get("reports", {}) or {})
+    analytics_dir = _env_path("ANALYTICS_DIR")
     if analytics_dir:
-        reports["output_dir"] = os.path.join(analytics_dir, "reports")
-        reports["cache_dir"] = os.path.join(analytics_dir, "cache")
-    if reports:
-        normalized["reports"] = reports
+        analytics_root = _path_from_setting(
+            analytics_dir,
+            base_dir=base_dir,
+            label="ANALYTICS_DIR",
+            origin="env",
+        )
+        reports["output_dir"] = os.path.join(analytics_root, "reports")
+        reports["cache_dir"] = os.path.join(analytics_root, "cache")
+    else:
+        reports["output_dir"] = _path_from_setting(
+            reports.get("output_dir", "analytics/reports"),
+            base_dir=base_dir,
+            label="reports.output_dir",
+            origin="settings",
+        )
+        reports["cache_dir"] = _path_from_setting(
+            reports.get("cache_dir", "analytics/cache"),
+            base_dir=base_dir,
+            label="reports.cache_dir",
+            origin="settings",
+        )
+    reports["enabled"] = _bool_setting(reports.get("enabled"), True)
+    reports["write_json"] = _bool_setting(reports.get("write_json"), True)
+    reports["write_markdown"] = _bool_setting(reports.get("write_markdown"), True)
+    normalized["reports"] = reports
 
     sources = dict(normalized.get("sources", {}) or {})
+    obs_dir = _env_path("OBS_DIR")
     if obs_dir:
-        sources["engine_events"] = os.getenv("ENGINE_EVENTS_LOG", os.path.join(obs_dir, "engine_events.jsonl"))
-        sources["fsm_events"] = os.getenv("FSM_EVENTS_LOG", os.path.join(obs_dir, "fsm_events.jsonl"))
-        sources["distribution_events"] = os.getenv("DIST_EVENTS_LOG", os.path.join(obs_dir, "distribution_events.jsonl"))
-        sources["error_events"] = os.getenv("ERROR_EVENTS_LOG", os.path.join(obs_dir, "error_events.jsonl"))
-    if outcomes_log:
-        sources["outcomes"] = outcomes_log
-    if sources:
-        normalized["sources"] = sources
+        obs_root = _path_from_setting(obs_dir, base_dir=base_dir, label="OBS_DIR", origin="env")
+        sources.setdefault("engine_events", os.path.join(obs_root, "engine_events.jsonl"))
+        sources.setdefault("fsm_events", os.path.join(obs_root, "fsm_events.jsonl"))
+        sources.setdefault("distribution_events", os.path.join(obs_root, "distribution_events.jsonl"))
+        sources.setdefault("error_events", os.path.join(obs_root, "error_events.jsonl"))
+
+    for key, default_path in _SOURCE_DEFAULTS.items():
+        raw_path = _env_path(_SOURCE_ENV_OVERRIDES[key])
+        if raw_path is None and obs_dir and key != "outcomes":
+            filename = {
+                "engine_events": "engine_events.jsonl",
+                "fsm_events": "fsm_events.jsonl",
+                "distribution_events": "distribution_events.jsonl",
+                "error_events": "error_events.jsonl",
+            }[key]
+            raw_path = os.path.join(
+                _path_from_setting(obs_dir, base_dir=base_dir, label="OBS_DIR", origin="env"),
+                filename,
+            )
+        if raw_path is None:
+            raw_path = sources.get(key, default_path)
+            origin = "settings"
+        else:
+            origin = "env"
+        sources[key] = _path_from_setting(
+            raw_path,
+            base_dir=base_dir,
+            label=f"sources.{key}",
+            origin=origin,
+        )
+
+    normalized["sources"] = sources
 
     return normalized
 
@@ -84,25 +264,25 @@ def _read_jsonl(path: str) -> Tuple[List[Dict[str, Any]], int]:
     Invalid lines are counted and reported, not silently dropped.
     Missing files return ([], 0) without error.
     """
-    if not os.path.exists(path):
-        return [], 0
-
     records: List[Dict[str, Any]] = []
     invalid_count = 0
 
-    with open(path, "r", encoding="utf-8") as f:
-        for line_number, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-                if not isinstance(obj, dict):
-                    invalid_count += 1
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line_number, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
                     continue
-                records.append(obj)
-            except json.JSONDecodeError:
-                invalid_count += 1
+                try:
+                    obj = json.loads(line)
+                    if not isinstance(obj, dict):
+                        invalid_count += 1
+                        continue
+                    records.append(obj)
+                except json.JSONDecodeError:
+                    invalid_count += 1
+    except FileNotFoundError:
+        return [], 0
 
     return records, invalid_count
 
@@ -120,10 +300,7 @@ def load_all_events(settings: Dict[str, Any]) -> Dict[str, Any]:
     distribution_records, distribution_invalid = _read_jsonl(sources["distribution_events"])
     error_records, error_invalid = _read_jsonl(sources["error_events"])
 
-    outcomes: List[Dict[str, Any]] = []
-    outcomes_invalid = 0
-    if os.path.exists(sources["outcomes"]):
-        outcomes, outcomes_invalid = _read_jsonl(sources["outcomes"])
+    outcomes, outcomes_invalid = _read_jsonl(sources["outcomes"])
 
     return {
         "engine": engine_records,
@@ -1024,7 +1201,14 @@ def _compatibility_limitations(
     return limitations
 
 
-def build_report(events: Dict[str, Any], settings: Dict[str, Any]) -> Dict[str, Any]:
+def build_report(
+    events: Dict[str, Any],
+    settings: Dict[str, Any],
+    *,
+    report_date: Optional[str] = None,
+    scheduling_metadata: Optional[Dict[str, Any]] = None,
+    analysis_window: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     Build the daily strategy audit report from loaded events.
 
@@ -1051,9 +1235,17 @@ def build_report(events: Dict[str, Any], settings: Dict[str, Any]) -> Dict[str, 
 
     symbol_health = compute_symbol_health(decisions, settings)
 
-    now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
+    now = report_date or datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
 
     invalid_counts = events.get("invalid_counts", {})
+
+    limitations = _compatibility_limitations(events.get("engine", []), compatibility)
+    if scheduling_metadata and scheduling_metadata.get("mode") == "scheduled":
+        limitations = list(limitations)
+        limitations.append(
+            "Scheduled audit currently aggregates all available source history; "
+            "analysis_window.scope=all_available_history."
+        )
 
     report: Dict[str, Any] = {
         "date": now,
@@ -1100,13 +1292,147 @@ def build_report(events: Dict[str, Any], settings: Dict[str, Any]) -> Dict[str, 
         "heatmap": heatmap,
         "bottleneck": bottleneck,
         "symbol_health": symbol_health,
-        "limitations": _compatibility_limitations(events.get("engine", []), compatibility),
+        "limitations": limitations,
     }
+    if analysis_window is not None:
+        report["analysis_window"] = dict(analysis_window)
+    if scheduling_metadata is not None:
+        report["scheduling"] = dict(scheduling_metadata)
 
     return report
 
 
-def write_reports(report: Dict[str, Any], settings: Dict[str, Any]) -> None:
+def resolve_reports_dir(settings: Optional[Dict[str, Any]] = None) -> str:
+    if settings is not None:
+        reports = dict(settings.get("reports", {}) or {})
+        output_dir = reports.get("output_dir")
+        if isinstance(output_dir, str) and output_dir.strip():
+            return _clean_path(Path(output_dir))
+    loaded = load_settings()
+    return str(loaded["reports"]["output_dir"])
+
+
+def report_paths_for_date(report_date: str, settings: Dict[str, Any]) -> Dict[str, str]:
+    output_dir = resolve_reports_dir(settings)
+    return {
+        "json": os.path.join(output_dir, f"daily_strategy_audit_{report_date}.json"),
+        "markdown": os.path.join(output_dir, f"daily_strategy_audit_{report_date}.md"),
+    }
+
+
+def _fsync_dir(dir_path: str) -> None:
+    try:
+        fd = os.open(dir_path, os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
+
+
+def _stage_atomic_bytes(path: str, data: bytes) -> str:
+    import tempfile
+
+    dir_path = os.path.dirname(path) or "."
+    os.makedirs(dir_path, exist_ok=True)
+    suffix = os.path.splitext(path)[1] or ".tmp"
+    fd, tmp_path = tempfile.mkstemp(prefix=".tmp_", suffix=suffix, dir=dir_path)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        return tmp_path
+    except Exception:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        finally:
+            pass
+        raise
+
+
+def _replace_staged_artifact(tmp_path: str, final_path: str) -> None:
+    os.replace(tmp_path, final_path)
+    _fsync_dir(os.path.dirname(final_path) or ".")
+
+
+def _write_atomic_bytes(path: str, data: bytes) -> None:
+    tmp_path = _stage_atomic_bytes(path, data)
+    try:
+        _replace_staged_artifact(tmp_path, path)
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+
+
+def _render_markdown_report(report: Dict[str, Any]) -> str:
+    compatibility = report.get("event_compatibility", {})
+    content_parts = [
+        "# Strategy Audit\n\n",
+        f"Date: {report['date']}\n\n",
+        "## Event Compatibility\n\n",
+        json.dumps({
+            "primary_mode": compatibility.get("primary_mode"),
+            "canonical_v3_decision_events_seen": compatibility.get("canonical_v3_decision_events_seen"),
+            "legacy_decision_events_seen": compatibility.get("legacy_decision_events_seen"),
+            "recognized_non_decision_event_counts": compatibility.get("recognized_non_decision_event_counts"),
+            "normalized_decisions": compatibility.get("normalized_decisions"),
+            "normalized_by_compatibility_mode": compatibility.get("normalized_by_compatibility_mode"),
+            "normalized_decisions_with_warnings": compatibility.get("normalized_decisions_with_warnings"),
+            "supporting_event_counts": compatibility.get("supporting_event_counts"),
+            "unsupported_schema_versions": compatibility.get("unsupported_schema_versions"),
+            "unsupported_event_types": compatibility.get("unsupported_event_types"),
+            "malformed_or_unusable_decision_events": compatibility.get("malformed_or_unusable_decision_events"),
+            "duplicate_events_suppressed": compatibility.get("duplicate_events_suppressed"),
+        }, indent=2),
+        "\n\n## Decision Distribution\n\n",
+        json.dumps({
+            "PRE": report["pre"],
+            "CONFIRM": report["confirm"],
+            "OPEN_NOW": report["open_now"],
+            "REJECT": report["rejects"],
+            "NO_SIGNAL": report["no_signal"],
+            "OTHER_KINDS": {
+                key: value for key, value in report.get("decision_kind_counts", {}).items()
+                if key not in {"PRE", "CONFIRM", "OPEN_NOW", "REJECT", "NO_SIGNAL"}
+            },
+        }, indent=2),
+        "\n\n## Top Reject Reasons\n\n",
+        json.dumps(report["top_reject_reasons"], indent=2),
+        "\n\n## Reject Reason Occurrences\n\n",
+        json.dumps(report["reject_reason_occurrences"], indent=2),
+        "\n\n## Heatmap\n\n",
+        json.dumps(report["heatmap"], indent=2),
+        "\n\n## Bottleneck\n\n",
+        json.dumps(report["bottleneck"], indent=2),
+        "\n\n## Symbol Health\n\n",
+        json.dumps(report["symbol_health"], indent=2),
+    ]
+    if report.get("analysis_window") is not None:
+        content_parts.extend([
+            "\n\n## Analysis Window\n\n",
+            json.dumps(report["analysis_window"], indent=2),
+        ])
+    if report.get("scheduling") is not None:
+        content_parts.extend([
+            "\n\n## Scheduling\n\n",
+            json.dumps(report["scheduling"], indent=2),
+        ])
+    limitations = report.get("limitations") or []
+    if limitations:
+        content_parts.extend([
+            "\n\n## Limitations\n\n",
+            "\n".join(f"- {item}" for item in limitations),
+        ])
+    return "".join(content_parts)
+
+
+def write_reports(report: Dict[str, Any], settings: Dict[str, Any]) -> Dict[str, str]:
     """
     Write report outputs atomically.
 
@@ -1115,99 +1441,60 @@ def write_reports(report: Dict[str, Any], settings: Dict[str, Any]) -> None:
     - Markdown report: written atomically in the same manner.
     - Does not mutate runtime config or live strategy parameters.
     """
-    import tempfile
+    reports = dict(settings.get("reports", {}) or {})
+    if not _bool_setting(reports.get("enabled"), True):
+        raise StrategyAuditorSettingsError("Strategy auditor report output is disabled.")
+    write_json = _bool_setting(reports.get("write_json"), True)
+    write_markdown = _bool_setting(reports.get("write_markdown"), True)
+    if not write_json and not write_markdown:
+        raise StrategyAuditorSettingsError(
+            "At least one strategy auditor report output must be enabled."
+        )
 
-    output_dir = settings["reports"]["output_dir"]
-
+    output_dir = resolve_reports_dir(settings)
     os.makedirs(output_dir, exist_ok=True)
+    cache_dir = reports.get("cache_dir")
+    if isinstance(cache_dir, str) and cache_dir.strip():
+        os.makedirs(cache_dir, exist_ok=True)
 
-    date = report["date"]
+    date = str(report["date"])
+    paths = report_paths_for_date(date, settings)
+    staged: List[Tuple[str, str, str]] = []
+    replaced: List[Tuple[str, bool, bytes]] = []
+    written: Dict[str, str] = {}
 
-    json_path = os.path.join(
-        output_dir,
-        f"daily_strategy_audit_{date}.json",
-    )
+    try:
+        if write_markdown:
+            md_content = _render_markdown_report(report).encode("utf-8")
+            staged.append(("markdown", paths["markdown"], _stage_atomic_bytes(paths["markdown"], md_content)))
+        if write_json:
+            json_content = (json.dumps(report, indent=2) + "\n").encode("utf-8")
+            staged.append(("json", paths["json"], _stage_atomic_bytes(paths["json"], json_content)))
 
-    md_path = os.path.join(
-        output_dir,
-        f"daily_strategy_audit_{date}.md",
-    )
+        for artifact_type, final_path, tmp_path in staged:
+            existed = os.path.exists(final_path)
+            previous = b""
+            if existed:
+                with open(final_path, "rb") as f:
+                    previous = f.read()
+            _replace_staged_artifact(tmp_path, final_path)
+            replaced.append((final_path, existed, previous))
+            written[artifact_type] = final_path
 
-    if settings["reports"]["write_json"]:
-        fd, tmp_path = tempfile.mkstemp(prefix=".tmp_", suffix=".json", dir=output_dir)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(report, f, indent=2)
-                f.write("\n")
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, json_path)
-        finally:
+        return written
+    except Exception:
+        for final_path, existed, previous in reversed(replaced):
             try:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
+                if existed:
+                    _write_atomic_bytes(final_path, previous)
+                elif os.path.exists(final_path):
+                    os.remove(final_path)
+                    _fsync_dir(os.path.dirname(final_path) or ".")
             except Exception:
                 pass
-
-    if settings["reports"]["write_markdown"]:
-        compatibility = report.get("event_compatibility", {})
-        content_parts = [
-            "# Strategy Audit\n\n",
-            f"Date: {report['date']}\n\n",
-            "## Event Compatibility\n\n",
-            json.dumps({
-                "primary_mode": compatibility.get("primary_mode"),
-                "canonical_v3_decision_events_seen": compatibility.get("canonical_v3_decision_events_seen"),
-                "legacy_decision_events_seen": compatibility.get("legacy_decision_events_seen"),
-                "recognized_non_decision_event_counts": compatibility.get("recognized_non_decision_event_counts"),
-                "normalized_decisions": compatibility.get("normalized_decisions"),
-                "normalized_by_compatibility_mode": compatibility.get("normalized_by_compatibility_mode"),
-                "normalized_decisions_with_warnings": compatibility.get("normalized_decisions_with_warnings"),
-                "supporting_event_counts": compatibility.get("supporting_event_counts"),
-                "unsupported_schema_versions": compatibility.get("unsupported_schema_versions"),
-                "unsupported_event_types": compatibility.get("unsupported_event_types"),
-                "malformed_or_unusable_decision_events": compatibility.get("malformed_or_unusable_decision_events"),
-                "duplicate_events_suppressed": compatibility.get("duplicate_events_suppressed"),
-            }, indent=2),
-            "\n\n## Decision Distribution\n\n",
-            json.dumps({
-                "PRE": report["pre"],
-                "CONFIRM": report["confirm"],
-                "OPEN_NOW": report["open_now"],
-                "REJECT": report["rejects"],
-                "NO_SIGNAL": report["no_signal"],
-                "OTHER_KINDS": {
-                    key: value for key, value in report.get("decision_kind_counts", {}).items()
-                    if key not in {"PRE", "CONFIRM", "OPEN_NOW", "REJECT", "NO_SIGNAL"}
-                },
-            }, indent=2),
-            "\n\n## Top Reject Reasons\n\n",
-            json.dumps(report["top_reject_reasons"], indent=2),
-            "\n\n## Reject Reason Occurrences\n\n",
-            json.dumps(report["reject_reason_occurrences"], indent=2),
-            "\n\n## Heatmap\n\n",
-            json.dumps(report["heatmap"], indent=2),
-            "\n\n## Bottleneck\n\n",
-            json.dumps(report["bottleneck"], indent=2),
-            "\n\n## Symbol Health\n\n",
-            json.dumps(report["symbol_health"], indent=2),
-        ]
-        limitations = report.get("limitations") or []
-        if limitations:
-            content_parts.extend([
-                "\n\n## Limitations\n\n",
-                "\n".join(f"- {item}" for item in limitations),
-            ])
-        content = "".join(content_parts)
-
-        fd, tmp_path = tempfile.mkstemp(prefix=".tmp_", suffix=".md", dir=output_dir)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(content)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, md_path)
-        finally:
+        raise
+    finally:
+        for _artifact_type, _final_path, tmp_path in staged:
             try:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)

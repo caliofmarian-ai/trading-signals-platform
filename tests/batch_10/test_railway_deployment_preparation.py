@@ -72,6 +72,8 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch):
         "ADMIN_ROLES_CONFIG",
         "ADMIN_PERMISSIONS_CONFIG",
         "STRATEGY_AUDITOR_SETTINGS",
+        "STRATEGY_AUDITOR_ENABLED",
+        "STRATEGY_AUDITOR_DAILY_TIME_UTC",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -288,6 +290,80 @@ def test_readiness_fails_on_invalid_required_config(railway_root: Path, monkeypa
     (railway_root / "config" / "channel_config.json").write_text("[]\n", encoding="utf-8")
     health_mod = _fresh_import("scripts.railway_healthcheck")
     with pytest.raises(Exception, match="channel_config"):
+        health_mod.readiness_report()
+
+
+def test_invalid_strategy_auditor_settings_do_not_block_init_or_readiness(
+    railway_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _set_base_env(monkeypatch, railway_root)
+    init_mod = _fresh_import("scripts.railway_init")
+    init_mod.initialize_for_railway()
+    settings_path = railway_root / "config" / "intelligence_settings.json"
+    settings_path.write_text("{bad auditor json", encoding="utf-8")
+
+    init_mod.initialize_for_railway()
+    health_mod = _fresh_import("scripts.railway_healthcheck")
+    assert health_mod.readiness_report()["status"] == "ready"
+
+    diagnostic = railway_root / "observability" / "strategy_auditor_events.jsonl"
+    assert not diagnostic.exists()
+
+
+def test_missing_strategy_auditor_settings_do_not_block_full_readiness_path(
+    railway_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _set_base_env(monkeypatch, railway_root)
+    init_mod = _fresh_import("scripts.railway_init")
+    init_mod.initialize_for_railway()
+    (railway_root / "config" / "intelligence_settings.json").unlink()
+
+    assert _fresh_import("scripts.railway_healthcheck").readiness_report()["status"] == "ready"
+    diagnostic = railway_root / "observability" / "strategy_auditor_events.jsonl"
+    assert not diagnostic.exists()
+
+
+def test_invalid_strategy_auditor_schedule_does_not_block_railway_start(
+    railway_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _set_base_env(monkeypatch, railway_root)
+    monkeypatch.setenv("STRATEGY_AUDITOR_ENABLED", "true")
+    monkeypatch.setenv("STRATEGY_AUDITOR_DAILY_TIME_UTC", "25:00")
+    _fresh_import("scripts.railway_init").initialize_for_railway()
+    start_mod = _fresh_import("scripts.railway_start")
+    boot = importlib.import_module("runtime.system_boot")
+    notifications: list[tuple[str, str]] = []
+    boot_calls: list[str] = []
+    monkeypatch.setattr(
+        start_mod,
+        "send_control_notification",
+        lambda title, message: notifications.append((title, message)),
+    )
+    monkeypatch.setattr(boot, "start_system", lambda: boot_calls.append("started"))
+
+    assert start_mod.main() == 0
+    assert boot_calls == ["started"]
+    assert notifications[0][0] == "BOT STARTING"
+    diagnostic = railway_root / "observability" / "strategy_auditor_events.jsonl"
+    assert "STRATEGY_AUDITOR_INVALID_SCHEDULE" in diagnostic.read_text(encoding="utf-8")
+
+
+def test_invalid_trading_params_still_block_init_and_readiness(
+    railway_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _set_base_env(monkeypatch, railway_root)
+    init_mod = _fresh_import("scripts.railway_init")
+    init_mod.initialize_for_railway()
+    (railway_root / "config" / "algo_params.json").write_text("{bad algo params", encoding="utf-8")
+
+    with pytest.raises(init_mod.RailwayInitError, match="algo"):
+        init_mod.initialize_for_railway()
+    health_mod = _fresh_import("scripts.railway_healthcheck")
+    with pytest.raises(Exception, match="algo"):
         health_mod.readiness_report()
 
 
