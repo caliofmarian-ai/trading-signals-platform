@@ -345,11 +345,15 @@ Required outcome:
 
 ### R-018 — Strategy Auditor v3 event compatibility
 Severity: HIGH
-Status: IN PROGRESS
-PR: #136
+Status: CLOSED
+Issue: #139 — CLOSED / COMPLETED
+PR: #136 — MERGED
 Branch: `copilot/r-018-strategy-auditor-v3`
 Base main: `9427fad7633b279b30ab97a49656f87e8b637e59`
-Local validation: changed-module compilation PASS; dedicated R-018 suite 16 passed; focused regressions 266 passed; full repository suite 1142 passed; secret scan clean; CodeQL 0 alerts. GitHub Actions on final head `15873ca2ccbc000bdecfeb4e82919c7b3572e694`: run `33983283104` is `action_required` with 0 jobs executed.
+Final implementation head: `e834e9e66497e635b81a1c3ec279b1939b634bbc`
+Merged main commit: `1dae636555fcc6fdba6304d65f39b359da013629`
+Local validation: changed-module compilation PASS; dedicated R-018 suite 16 passed; focused regressions 266 passed; full repository suite 1142 passed; secret scan clean; CodeQL 0 alerts.
+Final GitHub Actions: run `33983482998` — SUCCESS on final implementation head; provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1142 passed. Earlier `action_required` entries below are historical and superseded.
 
 Required outcome:
 - auditor consumes `decision_evaluated` and other active v3 event families;
@@ -358,8 +362,13 @@ Required outcome:
 
 ### R-019 — Daily auditor scheduling and persistent reports
 Severity: MEDIUM-HIGH
-Status: PENDING
-Depends on: R-018
+Status: IN PROGRESS
+Issue: #140
+Branch: `copilot/caliofmarian-ai-r-019-daily-strategy-auditor`
+Base main: `8037a3dac42a0e1b0c44cb8ab83e3f6f9f5b5f83`
+Depends on: R-018 — SATISFIED
+Scope: operational analytics only; issue stays open until merge and post-merge evidence.
+Local/agent validation: R-019 43 passed; R-018 + Railway 51 passed; analytics/consumer-focused 177 passed; provider-related 15 passed; Telegram admin restoration 72 passed; full repository suite 1189 passed. Exact-head GitHub Actions approval/execution is a separate PR acceptance gate.
 
 Required outcome:
 - governed Railway-compatible scheduling or runtime scheduler integration;
@@ -471,3 +480,5 @@ The repository-wide remediation program is complete only when:
 - 2026-09-05: R-018 hardening pass confirmed PR `#136` head `3223c1f6aada530550f9b710da43984fed4be591` still needed schema-derived non-decision classification, backward-compatible primary reject analytics, real branch metadata, and truthful CI/issue evidence; hardened local rerun produced 16 dedicated R-018 passes, 266 focused passes, and 1142 full-suite passes; GitHub Actions run `33980804764` on that head remained `action_required` with zero jobs executed.
 - 2026-09-05: R-018 hardened final branch head advanced to `dd1b0700665a38f0f7df1f74c522178151617221`; local validation stayed green, but GitHub Actions run `33983225024` for that head remained `action_required` with zero jobs executed pending Owner workflow approval.
 - 2026-09-05: R-018 documentation/evidence finalization advanced PR `#136` head to `15873ca2ccbc000bdecfeb4e82919c7b3572e694`; local validation evidence remains the same, and GitHub Actions run `33983283104` for the exact final head is still `action_required` with zero jobs executed pending Owner workflow approval.
+- 2026-09-05: R-018 post-merge reconciliation verified PR `#136` MERGED, Issue `#139` CLOSED, final implementation head `e834e9e66497e635b81a1c3ec279b1939b634bbc`, merge `1dae636555fcc6fdba6304d65f39b359da013629`, and GitHub Actions `33983482998` SUCCESS (5 provider, 72 Telegram admin, 1142 full-suite passes). Historical approval-required entries above are superseded.
+- 2026-09-05: R-019 started from fetched main `8037a3dac42a0e1b0c44cb8ab83e3f6f9f5b5f83` on the dedicated task branch, using existing Issue `#140`; requirements 12–19 recovered from Owner comment `5555082775`. R-017 and the temporal canon stream remain separate.

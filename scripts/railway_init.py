@@ -136,12 +136,94 @@ def _migrate_legacy_admin_permissions(path: Path) -> Dict[str, Any]:
     }
 
 
+def _record_strategy_auditor_diagnostic(status: str, code: str, context: Dict[str, Any]) -> None:
+    try:
+        from tools import strategy_auditor_runtime
+
+        strategy_auditor_runtime.record_diagnostic(
+            status=status,
+            code=code,
+            message="Strategy auditor optional validation failed; continuing runtime startup.",
+            context=context,
+            severity="WARNING",
+        )
+    except Exception:
+        try:
+            print(
+                json.dumps(
+                    {
+                        "component": "strategy_auditor",
+                        "status": status,
+                        "code": code,
+                        "diagnostic": "unavailable",
+                    },
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:
+            pass
+
+
+def _validate_optional_strategy_auditor(settings_path: Path) -> None:
+    try:
+        from tools import strategy_auditor_lib, strategy_auditor_runtime
+    except Exception as exc:
+        _record_strategy_auditor_diagnostic(
+            "OPTIONAL_VALIDATION_UNAVAILABLE",
+            "STRATEGY_AUDITOR_IMPORT_FAILED",
+            {"error_type": type(exc).__name__},
+        )
+        return
+
+    if settings_path.is_file():
+        try:
+            strategy_auditor_lib.load_settings(path=str(settings_path))
+        except Exception as exc:
+            _record_strategy_auditor_diagnostic(
+                "CONFIGURATION_ERROR",
+                "STRATEGY_AUDITOR_CONFIG_INVALID",
+                {
+                    "path_label": "config.intelligence_settings",
+                    "error_type": type(exc).__name__,
+                },
+            )
+    else:
+        _record_strategy_auditor_diagnostic(
+            "CONFIGURATION_ERROR",
+            "STRATEGY_AUDITOR_CONFIG_MISSING",
+            {"path_label": "config.intelligence_settings"},
+        )
+
+    try:
+        config = strategy_auditor_runtime.runtime_worker_config()
+    except Exception as exc:
+        _record_strategy_auditor_diagnostic(
+            "RUNTIME_CONFIG_ERROR",
+            "STRATEGY_AUDITOR_RUNTIME_CONFIG_INVALID",
+            {"error_type": type(exc).__name__},
+        )
+        return
+
+    status = str(config.get("status") or "UNKNOWN")
+    if status in {"INVALID_SCHEDULE", "INVALID_ENABLED_FLAG", "ADMIN_SETTINGS_UNREADABLE"}:
+        _record_strategy_auditor_diagnostic(
+            status,
+            f"STRATEGY_AUDITOR_{status}",
+            {
+                "schedule_identity": config.get("schedule_identity"),
+                "enabled_reason": config.get("enabled_reason"),
+                "admin_reason": config.get("admin_reason"),
+            },
+        )
+
+
 def _validate_config_tree(base_dir: Path) -> None:
     apply_path_contract(base_dir)
 
     from core import admin_permissions, distribution_router, runtime_param_gate
     from state_store import state_store as runtime_state_store
-    from tools import strategy_auditor_lib
 
     paths = runtime_paths(base_dir)
     config_dir = paths["config"]
@@ -153,7 +235,6 @@ def _validate_config_tree(base_dir: Path) -> None:
         "channel_config": config_dir / "channel_config.json",
         "admin_roles": config_dir / "admin_roles.json",
         "admin_permissions": config_dir / "admin_permissions.json",
-        "intelligence_settings": config_dir / "intelligence_settings.json",
         "symbols": config_dir / "symbols.json",
     }
     for label, path in required.items():
@@ -167,7 +248,7 @@ def _validate_config_tree(base_dir: Path) -> None:
     _load_json_object(required["admin_roles"], label="admin_roles")
     _load_json_object(required["admin_permissions"], label="admin_permissions")
     _load_json_object(required["symbols"], label="symbols")
-    strategy_auditor_lib.load_settings(path=str(required["intelligence_settings"]))
+    _validate_optional_strategy_auditor(config_dir / "intelligence_settings.json")
     admin_permissions.reload_roles_config()
     admin_permissions.reload_permissions_config()
     distribution_router.load_config()

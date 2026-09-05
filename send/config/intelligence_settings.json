@@ -1,17 +1,17 @@
 {
   "reports": {
     "enabled": true,
-    "output_dir": "/opt/binarybot/analytics/reports",
-    "cache_dir": "/opt/binarybot/analytics/cache",
+    "output_dir": "analytics/reports",
+    "cache_dir": "analytics/cache",
     "write_json": true,
     "write_markdown": true
   },
   "sources": {
-    "engine_events": "/opt/binarybot/observability/engine_events.jsonl",
-    "fsm_events": "/opt/binarybot/observability/fsm_events.jsonl",
-    "distribution_events": "/opt/binarybot/observability/distribution_events.jsonl",
-    "error_events": "/opt/binarybot/observability/error_events.jsonl",
-    "outcomes": "/opt/binarybot/outcomes/outcomes.jsonl"
+    "engine_events": "observability/engine_events.jsonl",
+    "fsm_events": "observability/fsm_events.jsonl",
+    "distribution_events": "observability/distribution_events.jsonl",
+    "error_events": "observability/error_events.jsonl",
+    "outcomes": "outcomes/outcomes.jsonl"
   },
   "heatmap": {
     "enabled": true,

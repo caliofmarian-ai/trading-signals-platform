@@ -2,9 +2,22 @@ import os
 import json
 from typing import Optional, Dict, Any
 
+from core import storage
 
-_ANALYTICS_BASE = os.getenv("ANALYTICS_DIR", "/opt/binarybot/analytics")
-REPORTS_DIR = os.path.join(_ANALYTICS_BASE, "reports")
+_ANALYTICS_BASE = os.getenv("ANALYTICS_DIR", storage.root_path("analytics"))
+_DEFAULT_REPORTS_DIR = os.path.join(_ANALYTICS_BASE, "reports")
+REPORTS_DIR = _DEFAULT_REPORTS_DIR
+
+
+def _reports_dir() -> str:
+    if REPORTS_DIR != _DEFAULT_REPORTS_DIR:
+        return REPORTS_DIR
+    try:
+        from tools import strategy_auditor_lib
+
+        return strategy_auditor_lib.resolve_reports_dir()
+    except Exception:
+        return ""
 
 
 def _safe_load_json(path: str) -> Optional[Dict[str, Any]]:
@@ -23,12 +36,14 @@ def list_reports():
     Return all strategy audit report filenames sorted by date.
     """
 
-    if not os.path.isdir(REPORTS_DIR):
+    reports_dir = _reports_dir()
+
+    if not os.path.isdir(reports_dir):
         return []
 
     files = []
 
-    for name in os.listdir(REPORTS_DIR):
+    for name in os.listdir(reports_dir):
 
         if name.startswith("daily_strategy_audit_") and name.endswith(".json"):
             files.append(name)
@@ -43,6 +58,10 @@ def latest_report_path() -> Optional[str]:
     Return full path to latest report.
     """
 
+    reports_dir = _reports_dir()
+    if not reports_dir:
+        return None
+
     reports = list_reports()
 
     if not reports:
@@ -50,7 +69,7 @@ def latest_report_path() -> Optional[str]:
 
     latest = reports[-1]
 
-    return os.path.join(REPORTS_DIR, latest)
+    return os.path.join(reports_dir, latest)
 
 
 def load_latest_report() -> Optional[Dict[str, Any]]:
@@ -73,7 +92,11 @@ def load_report_by_date(date_str: str) -> Optional[Dict[str, Any]]:
 
     filename = f"daily_strategy_audit_{date_str}.json"
 
-    path = os.path.join(REPORTS_DIR, filename)
+    reports_dir = _reports_dir()
+    if not reports_dir:
+        return None
+
+    path = os.path.join(reports_dir, filename)
 
     return _safe_load_json(path)
 

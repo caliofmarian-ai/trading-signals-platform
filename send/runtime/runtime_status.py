@@ -11,6 +11,11 @@ def status_path() -> str:
     return storage.state_path("runtime_status.json")
 
 
+def _read_status_file() -> Dict[str, Any]:
+    raw = storage.load_json(status_path(), default={})
+    return raw if isinstance(raw, dict) else {}
+
+
 def write_status(phase: str, message: str, **extra: Any) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "phase": str(phase),
@@ -24,7 +29,7 @@ def write_status(phase: str, message: str, **extra: Any) -> Dict[str, Any]:
 
 
 def update_status(**changes: Any) -> Dict[str, Any]:
-    payload = read_status()
+    payload = _read_status_file()
     if not isinstance(payload, dict):
         payload = {}
     payload.setdefault("phase", "unknown")
@@ -37,8 +42,19 @@ def update_status(**changes: Any) -> Dict[str, Any]:
 
 
 def read_status() -> Dict[str, Any]:
-    raw = storage.load_json(status_path(), default={})
-    return raw if isinstance(raw, dict) else {}
+    payload = _read_status_file()
+    try:
+        from tools import strategy_auditor_runtime
+
+        auditor_status = strategy_auditor_runtime.read_auditor_status(
+            max_age_seconds=strategy_auditor_runtime.STATUS_OVERLAY_MAX_AGE_SECONDS
+        )
+        if auditor_status:
+            payload = dict(payload)
+            payload["strategy_auditor"] = auditor_status
+    except Exception:
+        pass
+    return payload
 
 
 def is_pid_alive(pid: Any) -> bool:

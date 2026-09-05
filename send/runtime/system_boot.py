@@ -6,6 +6,7 @@ from __future__ import annotations
 import atexit
 import os
 import signal
+import sys
 import threading
 import time
 from pathlib import Path
@@ -62,6 +63,8 @@ from snapshots import snapshot_manager
 
 
 _SHUTDOWN_MARKED = False
+_AUDITOR_STOP_EVENT = threading.Event()
+_AUDITOR_THREAD: threading.Thread | None = None
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -102,6 +105,7 @@ def _mark_graceful_shutdown() -> None:
     if _SHUTDOWN_MARKED:
         return
     _SHUTDOWN_MARKED = True
+    _stop_strategy_auditor_worker()
     try:
         runtime_status.write_status("stopping", "BinaryBot runtime stopping")
     except Exception:
@@ -149,6 +153,50 @@ def _register_shutdown_hooks() -> None:
     atexit.register(_mark_graceful_shutdown)
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, _handle_shutdown_signal)
+
+
+def _start_strategy_auditor_thread() -> dict:
+    global _AUDITOR_THREAD
+    if _AUDITOR_THREAD is not None and _AUDITOR_THREAD.is_alive():
+        return {
+            "component": "strategy_auditor",
+            "status": "WORKER_ALREADY_STARTED",
+            "worker_started": True,
+            "enabled": True,
+        }
+    try:
+        from tools import strategy_auditor_runtime
+
+        _AUDITOR_STOP_EVENT.clear()
+        result = strategy_auditor_runtime.start_worker(_AUDITOR_STOP_EVENT)
+        thread = result.get("thread")
+        _AUDITOR_THREAD = thread if isinstance(thread, threading.Thread) else None
+        return {key: value for key, value in result.items() if key not in {"thread", "stop_event"}}
+    except Exception as exc:
+        payload = {
+            "component": "strategy_auditor",
+            "status": "BOOT_INTEGRATION_FAILED",
+            "worker_started": False,
+            "error": {
+                "error_type": type(exc).__name__,
+                "message": "Strategy auditor worker startup failed.",
+                "operation": "system_boot",
+            },
+        }
+        try:
+            import json
+
+            print(json.dumps(payload, sort_keys=True), file=sys.stderr, flush=True)  # type: ignore[name-defined]
+        except Exception:
+            pass
+        return payload
+
+
+def _stop_strategy_auditor_worker(timeout: float = 2.0) -> None:
+    _AUDITOR_STOP_EVENT.set()
+    thread = _AUDITOR_THREAD
+    if thread and thread.is_alive() and threading.current_thread() is not thread:
+        thread.join(timeout=timeout)
 
 
 def _block_for_preflight_failure(start_info, exc: Exception) -> bool:
@@ -359,6 +407,7 @@ def start_system() -> bool | None:
         telegram_thread = threading.Thread(target=poll_updates, daemon=True)
         telegram_thread.start()
     scheduler_thread.start()
+    auditor_boot = _start_strategy_auditor_thread()
     runtime_status.write_status(
         "running",
         "BinaryBot runtime running",
@@ -373,6 +422,7 @@ def start_system() -> bool | None:
         startup_preflight_state="READY",
         startup_preflight_provider=preflight.get("active_provider"),
         startup_preflight_effective_symbols=list(preflight.get("effective_symbols") or []),
+        strategy_auditor_worker=auditor_boot,
     )
     if start_info["recovery_required"]:
         send_control_notification("RECOVERY COMPLETED", "BinaryBot recovery bootstrap completed.")

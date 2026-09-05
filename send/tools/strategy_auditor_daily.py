@@ -1,36 +1,23 @@
+import json
 import sys
-import traceback
+from typing import Any, Dict, Optional
 
-from tools.strategy_auditor_lib import (
-    load_settings,
-    load_all_events,
-    build_report,
-    write_reports,
-)
+from tools import strategy_auditor_runtime
 
 
-def run_auditor():
+def run_auditor(*, now=None, settings_path: Optional[str] = None) -> Dict[str, Any]:
+    return strategy_auditor_runtime.run_auditor(
+        mode="manual",
+        now=now,
+        settings_path=settings_path,
+    )
 
-    try:
 
-        settings = load_settings()
-
-        events = load_all_events(settings)
-
-        report = build_report(events, settings)
-
-        write_reports(report, settings)
-
-        print("Strategy auditor completed successfully.")
-        print("Report date:", report["date"])
-        print("Total decisions:", report["decisions"])
-
-    except Exception as e:
-
-        print("Strategy auditor failed.")
-        print(str(e))
-        traceback.print_exc()
+def main() -> int:
+    result = run_auditor()
+    print(json.dumps(strategy_auditor_runtime.result_for_cli(result), indent=2, sort_keys=True))
+    return strategy_auditor_runtime.exit_code_for_result(result)
 
 
 if __name__ == "__main__":
-    run_auditor()
+    sys.exit(main())
