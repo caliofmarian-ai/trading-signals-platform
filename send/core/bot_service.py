@@ -366,6 +366,7 @@ def _send_interactive_page(
             return
         trace_payload["active_edit_result_category"] = category
 
+    transport_sent = False
     try:
         result = telegram_publisher.send_message(
             chat_id=chat_id,
@@ -373,6 +374,7 @@ def _send_interactive_page(
             reply_markup=reply_markup,
             thread_id=thread_id,
         )
+        transport_sent = True
         trace_payload["selected_operation"] = "send_replacement"
         trace_payload["edit_result_category"] = trace_payload.get("active_edit_result_category") or trace_payload.get("preferred_edit_result_category") or "send_required"
         if isinstance(result, dict):
@@ -392,16 +394,37 @@ def _send_interactive_page(
         )
         return
     except Exception as send_exc:
+        # sendMessage may already have succeeded; persistence or trace
+        # failures after that point must never cause a duplicate send.
+        if transport_sent:
+            trace_payload["selected_operation"] = "send_completed_post_send_failure"
+            trace_payload["edit_result_category"] = "post_send_failure"
+            trace_payload["post_send_error"] = telegram_publisher._sanitize(str(send_exc))
+            observability_logger.log_error({
+                "event_type": "error",
+                "data": {
+                    "severity": "WARNING",
+                    "error_type": "telegram_app_nav_post_send_failure",
+                    "message": telegram_publisher._sanitize(str(send_exc)),
+                    "context": {
+                        "chat_id": chat_id,
+                        "user_id": user_id,
+                        "thread_id": thread_id,
+                    },
+                },
+            })
+            return
+
         trace_payload["selected_operation"] = "send_replacement"
         trace_payload["edit_result_category"] = "send_failed"
-        trace_payload["send_error"] = str(send_exc)
+        trace_payload["send_error"] = telegram_publisher._sanitize(str(send_exc))
         _emit_interactive_trace(trace_payload, critical=True)
         observability_logger.log_error({
             "event_type": "error",
             "data": {
                 "severity": "ERROR",
                 "error_type": "telegram_app_nav_send_failure",
-                "message": str(send_exc),
+                "message": telegram_publisher._sanitize(str(send_exc)),
                 "context": {
                     "chat_id": chat_id,
                     "user_id": user_id,
@@ -410,6 +433,45 @@ def _send_interactive_page(
                 },
             },
         })
+
+        # Make a keyboard/payload rejection visible without widening access.
+        try:
+            fallback_result = telegram_publisher.send_message(
+                chat_id=chat_id,
+                text=(
+                    "Telegram request reached the runtime, but the interactive "
+                    "response could not be rendered. The failure was logged."
+                ),
+                reply_markup=None,
+                thread_id=thread_id,
+            )
+            trace_payload["selected_operation"] = "send_text_fallback"
+            trace_payload["text_fallback_result"] = "sent"
+            if isinstance(fallback_result, dict):
+                fallback_message = fallback_result.get("result") or {}
+                fallback_message_id = fallback_message.get("message_id")
+                if fallback_message_id:
+                    telegram_app_nav.set_active_message(
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        message_id=fallback_message_id,
+                        thread_id=thread_id,
+                    )
+            _emit_interactive_trace(trace_payload, critical=True)
+        except Exception as fallback_exc:
+            observability_logger.log_error({
+                "event_type": "error",
+                "data": {
+                    "severity": "ERROR",
+                    "error_type": "telegram_app_nav_text_fallback_failure",
+                    "message": telegram_publisher._sanitize(str(fallback_exc)),
+                    "context": {
+                        "chat_id": chat_id,
+                        "user_id": user_id,
+                        "thread_id": thread_id,
+                    },
+                },
+            })
 
 
 def _handle_start_hard_reset(
@@ -791,6 +853,11 @@ def _render_panel_for_command(cmd: str, user_id: int, *, owner_private: bool) ->
         return _format_surface("status", "📊 Status Panel", render_status_text(_build_status_snapshot())), telegram_admin_ui.status_markup()
 
     response_text = handle_admin_command_v2(cmd, user_id)
+    # Preserve file-transport markers for the caller. Wrapping them in a
+    # human-comprehension surface leaks the temp path and prevents delivery.
+    if response_text.startswith("__FILE_PATH__:"):
+        return response_text, None
+
     title_map = {
         "/admin": "⚙️ Admin Control Surface",
         "/strategy": "⚙️ Strategy Panel",
@@ -2007,6 +2074,41 @@ def process_update(update: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "data": {
                 "severity": "ERROR",
                 "error_type": "bot_service_exception",
-                "message": str(e),
+                "message": telegram_publisher._sanitize(str(e)),
             },
         })
+
+        # Authorized Admin requests must not disappear silently when an
+        # internal renderer/navigation failure occurs. Re-check context
+        # fail-closed and emit only a sanitized transport fallback.
+        try:
+            failed_cmd = (
+                text.split()[0].split("@", 1)[0].lower()
+                if isinstance(text, str) and text.startswith("/")
+                else ""
+            )
+            if (
+                msg
+                and failed_cmd in admin_command_names()
+                and _can_run_admin_command(msg, user_id, failed_cmd)
+            ):
+                target = reply_target_from_message(msg)
+                if target is not None:
+                    telegram_publisher.send_message(
+                        chat_id=target.chat_id,
+                        text=(
+                            "Admin request reached the runtime but could not be "
+                            "completed safely. The failure was logged."
+                        ),
+                        reply_markup=None,
+                        thread_id=target.thread_id,
+                    )
+        except Exception as fallback_exc:
+            observability_logger.log_error({
+                "event_type": "error",
+                "data": {
+                    "severity": "ERROR",
+                    "error_type": "bot_service_exception_fallback_failed",
+                    "message": telegram_publisher._sanitize(str(fallback_exc)),
+                },
+            })
