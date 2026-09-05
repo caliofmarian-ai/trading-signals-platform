@@ -345,7 +345,10 @@ Required outcome:
 
 ### R-018 — Strategy Auditor v3 event compatibility
 Severity: HIGH
-Status: PENDING
+Status: IN PROGRESS
+Branch: `remediation/audit-2026-09-01-r018-strategy-auditor-v3-event-compatibility`
+Base main: `9427fad7633b279b30ab97a49656f87e8b637e59`
+Local validation: changed-module compilation PASS; focused regressions 263 passed; full repository suite 1139 passed; secret scan clean; CodeQL 0 alerts.
 
 Required outcome:
 - auditor consumes `decision_evaluated` and other active v3 event families;
@@ -462,3 +465,5 @@ The repository-wide remediation program is complete only when:
 - 2026-09-02: R-016 started on branch `remediation/audit-2026-09-01-r016-role-permission-fail-closed`; Issue #128 created.
 - 2026-09-02: R-016 merged through PR #129; main advanced to `84363099cf5faa21118346c89aeea065849bc66c`; Issue #128 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1072 passed.
 - 2026-09-02: R-017 started on branch `remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance`; Issue #131 created under Telegram parent Issue #23; automated multi-role acceptance matrix materialized.
+- 2026-09-05: R-018 started on branch `remediation/audit-2026-09-01-r018-strategy-auditor-v3-event-compatibility` from main `9427fad7633b279b30ab97a49656f87e8b637e59`; canonical v3 strategy-auditor normalization and regression coverage implemented locally; final repository-wide validation pending.
+- 2026-09-05: R-018 local validation completed on branch `remediation/audit-2026-09-01-r018-strategy-auditor-v3-event-compatibility`; changed-module compilation passed, focused regressions passed (263), full repository suite passed (1139), secret scan was clean, and CodeQL reported 0 alerts.
