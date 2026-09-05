@@ -15,9 +15,8 @@ Validation was executed locally on branch `copilot/r-018-strategy-auditor-v3`.
 ## GitHub Actions state for final head
 
 - PR `#136`
-- Final head: `15873ca2ccbc000bdecfeb4e82919c7b3572e694`
-- Workflow run `33983283104` (`Provider Selector Validation`) — `completed / action_required`
-- Workflow jobs materialized for that run: `0`
-- `pull_request` check runs for PR head: `0`
-- No GitHub CI success is claimed for the final head.
-- Owner action is still required to approve and run workflows for the exact final head.
+- Final implementation head: `e834e9e66497e635b81a1c3ec279b1939b634bbc`
+- Workflow run `33983482998` (`Provider Selector Validation`) — `completed / success`
+- Provider selector: `5 passed`; Telegram admin regression: `72 passed`; full repository suite: `1142 passed`.
+- PR `#136` merged at `1dae636555fcc6fdba6304d65f39b359da013629`; Issue `#139` is closed/completed.
+- Verified against GitHub during R-019 baseline reconciliation. This supersedes the earlier `action_required` evidence; no R-018 implementation changed.

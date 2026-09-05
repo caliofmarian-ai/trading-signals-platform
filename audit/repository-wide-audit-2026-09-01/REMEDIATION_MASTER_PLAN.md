@@ -345,11 +345,15 @@ Required outcome:
 
 ### R-018 — Strategy Auditor v3 event compatibility
 Severity: HIGH
-Status: IN PROGRESS
-PR: #136
+Status: CLOSED
+Issue: #139 — CLOSED / COMPLETED
+PR: #136 — MERGED
 Branch: `copilot/r-018-strategy-auditor-v3`
 Base main: `9427fad7633b279b30ab97a49656f87e8b637e59`
-Local validation: changed-module compilation PASS; dedicated R-018 suite 16 passed; focused regressions 266 passed; full repository suite 1142 passed; secret scan clean; CodeQL 0 alerts. GitHub Actions on final head `15873ca2ccbc000bdecfeb4e82919c7b3572e694`: run `33983283104` is `action_required` with 0 jobs executed.
+Final implementation head: `e834e9e66497e635b81a1c3ec279b1939b634bbc`
+Merged main commit: `1dae636555fcc6fdba6304d65f39b359da013629`
+Local validation: changed-module compilation PASS; dedicated R-018 suite 16 passed; focused regressions 266 passed; full repository suite 1142 passed; secret scan clean; CodeQL 0 alerts.
+Final GitHub Actions: run `33983482998` — SUCCESS on final implementation head; provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1142 passed. Earlier `action_required` entries below are historical and superseded.
 
 Required outcome:
 - auditor consumes `decision_evaluated` and other active v3 event families;
