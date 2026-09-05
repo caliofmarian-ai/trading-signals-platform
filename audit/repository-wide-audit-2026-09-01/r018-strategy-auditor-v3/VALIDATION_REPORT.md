@@ -12,9 +12,12 @@ Validation was executed locally on branch `copilot/r-018-strategy-auditor-v3`.
 - `runtime-tools-secret_scanning` on changed files — PASS (`No secrets detected`)
 - `codeql_checker` — PASS (`0 alerts`)
 
-## GitHub Actions state at hardening start
+## GitHub Actions state for final head
 
-- PR `#136` head `3223c1f6aada530550f9b710da43984fed4be591`
-- Workflow run `33980804764` (`Provider Selector Validation`) concluded `action_required`
-- Job count for that run: `0`
-- No GitHub CI success is claimed for that head
+- PR `#136`
+- Final head: `dd1b0700665a38f0f7df1f74c522178151617221`
+- Workflow run `33983225024` (`Provider Selector Validation`) — `completed / action_required`
+- Workflow jobs materialized for that run: `0`
+- `pull_request` check runs for PR head: `0`
+- No GitHub CI success is claimed for the final head.
+- Owner action is still required to approve and run workflows for the exact final head.
