@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 import pytest
 
+from core import observability_logger, strategy_v2
 from intelligence import report_loader
 from tools import strategy_auditor_lib as lib
 
@@ -83,8 +84,8 @@ def _v3_event(
     score_total: float | None = 72.0,
     score_object_total: float | None = None,
     strategy: str = "BINARY_STRATEGY_V2",
-    strategy_version: str = "3.0.0",
-    canonical_spec: str = "ALGO_SPEC_v3.0.0",
+    strategy_version: str | None = None,
+    canonical_spec: str | None = None,
     direction: str = "BUY",
     candle_ts: int = 1725500000,
     hard_blockers: list[str] | None = None,
@@ -94,6 +95,8 @@ def _v3_event(
     decision_setup_overrides: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     blockers = hard_blockers or []
+    strategy_version = strategy_version or strategy_v2.STRATEGY_VERSION
+    canonical_spec = canonical_spec or strategy_v2.CANONICAL_SPEC
     reject_payload = {
         "reason": reject_reason or ("; ".join(blockers) if blockers else None),
         "category": "STRATEGIC_GATE" if blockers or reject_reason else None,
@@ -111,46 +114,47 @@ def _v3_event(
     if decision_setup_overrides:
         setup.update(decision_setup_overrides)
     object_score_total = score_total if score_object_total is None else score_object_total
-    return {
-        "event_id": event_id,
-        "event_type": "decision_evaluated",
-        "schema_version": schema_version,
-        "ts_utc": "2026-09-05T00:00:00.000Z",
-        "ts_epoch_ms": 1725500000000,
-        "service": "binarybot",
-        "env": "test",
-        "run_id": "run-test",
-        "source": {"module": "tests", "function": "fixture"},
-        "host": {"hostname": "test", "pid": 1, "app_version": "0.0.0"},
+    data = {
+        "decision_kind": decision_kind,
+        "strategic_kind": decision_kind,
+        "strategy": strategy,
+        "strategy_version": strategy_version,
+        "canonical_spec": canonical_spec,
+        "score_total": score_total,
+        "score_tier": "OPEN" if decision_kind == "OPEN_NOW" else "PREP",
+        "direction": direction,
+        "candle_ts": candle_ts,
+        "signal_id": signal_id,
+        "buffer_mode": "MEDIUM",
+        "decision_object": {
+            "signal_id": signal_id,
+            "setup": setup,
+            "score": {
+                "total": object_score_total,
+                "tier": "OPEN" if decision_kind == "OPEN_NOW" else "PREP",
+            },
+            "reject": reject_payload,
+        },
+        "trade_physics": trade_physics or {"TPS": 51.0, "readiness_state": "READY"},
+    }
+    correlation = {
         "setup_correlation_id": setup_correlation_id,
         "signal_id": signal_id,
         "symbol": symbol,
         "timeframe": timeframe,
-        "stage": stage,
-        "data": {
-            "decision_kind": decision_kind,
-            "strategic_kind": decision_kind,
-            "strategy": strategy,
-            "strategy_version": strategy_version,
-            "canonical_spec": canonical_spec,
-            "score_total": score_total,
-            "score_tier": "OPEN" if decision_kind == "OPEN_NOW" else "PREP",
-            "direction": direction,
-            "candle_ts": candle_ts,
-            "signal_id": signal_id,
-            "buffer_mode": "MEDIUM",
-            "decision_object": {
-                "signal_id": signal_id,
-                "setup": setup,
-                "score": {
-                    "total": object_score_total,
-                    "tier": "OPEN" if decision_kind == "OPEN_NOW" else "PREP",
-                },
-                "reject": reject_payload,
-            },
-            "trade_physics": trade_physics or {"TPS": 51.0, "readiness_state": "READY"},
-        },
     }
+    if stage is not None:
+        correlation["stage"] = stage
+
+    event = observability_logger.build_event(
+        "decision_evaluated",
+        data,
+        source={"module": "signal_engine", "function": "run_once"},
+        correlation=correlation,
+    )
+    event["event_id"] = event_id
+    event["schema_version"] = schema_version
+    return event
 
 
 def _legacy_event(
@@ -283,6 +287,73 @@ def test_r018_mixed_stream_surfaces_unknown_event_types_and_unsupported_schema_v
     assert "Unsupported decision schema versions were observed and excluded from metrics." in report["limitations"]
 
 
+def test_r018_recognizes_schema_defined_non_decision_events_without_marking_them_unsupported(tmp_path: Path) -> None:
+    report = lib.build_report(
+        _event_stream(
+            engine=[
+                observability_logger.build_event("engine_start", {"message": "started"}, source={"module": "tests", "function": "event"}),
+                observability_logger.build_event("engine_stop", {"message": "stopped"}, source={"module": "tests", "function": "event"}),
+                observability_logger.build_event(
+                    "dependency_degraded",
+                    {"dependency": "market-data", "reason": "slow"},
+                    source={"module": "tests", "function": "event"},
+                ),
+                observability_logger.build_event(
+                    "duplicate_suppressed",
+                    {"scope": "signal", "reason": "dedup"},
+                    source={"module": "tests", "function": "event"},
+                    correlation={"signal_id": "sig-1", "symbol": "EUR/USD", "timeframe": "M1", "stage": "OPEN_NOW"},
+                ),
+                observability_logger.build_event(
+                    "signal_closed",
+                    {"reason": "EXPIRED"},
+                    source={"module": "tests", "function": "event"},
+                    correlation={"signal_id": "sig-1"},
+                ),
+            ],
+            fsm=[
+                observability_logger.build_event(
+                    "fsm_transition",
+                    {"symbol": "EUR/USD", "prev_state": "NONE", "new_state": "PRE", "trigger": "accepted", "signal_id": "sig-1", "candle_ts": 1725500000},
+                    source={"module": "tests", "function": "event"},
+                ),
+            ],
+            distribution=[
+                observability_logger.build_event(
+                    "tier_publish",
+                    {
+                        "publish_result": "PUBLISHED",
+                        "route_state_before": "ACTIVE",
+                        "route_state_after": "ACTIVE",
+                        "limit": None,
+                        "counter_before": 0,
+                        "counter_after": 1,
+                        "counted": True,
+                        "attempted": True,
+                        "destination_kind": "telegram_group",
+                        "feedback_enabled": True,
+                        "transport": {"ok": True, "message_id": 42, "error": None},
+                        "dedup": {"key": "sig-1", "was_duplicate": False, "action": "accepted"},
+                    },
+                    source={"module": "tests", "function": "event"},
+                    correlation={"signal_id": "sig-1", "route": "ELITE", "tier": "ELITE", "stage": "OPEN_NOW"},
+                ),
+            ],
+        ),
+        _settings(tmp_path),
+    )
+
+    assert report["decisions"] == 0
+    assert report["event_compatibility"]["unsupported_event_types"] == {}
+    assert report["event_compatibility"]["recognized_non_decision_event_counts"]["engine_start"] == 1
+    assert report["event_compatibility"]["recognized_non_decision_event_counts"]["engine_stop"] == 1
+    assert report["event_compatibility"]["recognized_non_decision_event_counts"]["dependency_degraded"] == 1
+    assert report["event_compatibility"]["recognized_non_decision_event_counts"]["duplicate_suppressed"] == 1
+    assert report["event_compatibility"]["recognized_non_decision_event_counts"]["signal_closed"] == 1
+    assert report["event_compatibility"]["recognized_non_decision_event_counts"]["fsm_transition"] == 1
+    assert report["event_compatibility"]["recognized_non_decision_event_counts"]["tier_publish"] == 1
+
+
 def test_r018_deduplicates_by_event_id_without_collapsing_distinct_signal_id_reuse(tmp_path: Path) -> None:
     decisions, compatibility = lib.normalize_decision_events(
         _event_stream(
@@ -341,7 +412,10 @@ def test_r018_normalizes_field_authority_and_surfaces_conflicts(tmp_path: Path) 
 def test_r018_surfaces_missing_fields_without_inventing_values(tmp_path: Path) -> None:
     malformed = _v3_event(event_id="evt-missing", decision_kind="PRE")
     malformed.pop("event_id")
-    partial = _v3_event(event_id="evt-partial", decision_kind="NO_SIGNAL", signal_id=None, symbol=None, timeframe=None, stage=None, score_total=None)
+    partial = _v3_event(event_id="evt-partial", decision_kind="NO_SIGNAL", signal_id=None, stage=None)
+    partial.pop("symbol", None)
+    partial.pop("timeframe", None)
+    partial["data"]["score_total"] = None
     partial["data"]["decision_object"]["setup"]["symbol"] = None
     partial["data"]["decision_object"]["setup"]["timeframe"] = None
     partial["data"]["decision_object"]["score"]["total"] = None
@@ -401,7 +475,9 @@ def test_r018_markdown_and_json_reports_expose_compatibility_state_without_break
     assert json_report["event_compatibility"]["legacy_decision_events_seen"] == 1
     assert json_report["open_now"] == 1
     assert json_report["rejects"] == 1
+    assert json_report["reject_reason_occurrences"]["TIME_NOT_FEASIBLE"] == 1
     assert "## Event Compatibility" in markdown_report
+    assert "## Reject Reason Occurrences" in markdown_report
     assert "normalized_decisions" in markdown_report
     assert "Legacy `decision` compatibility was used" in markdown_report
     assert summary["decisions"] == report["decisions"]
@@ -431,3 +507,46 @@ def test_r018_load_all_events_and_build_report_from_files(tmp_path: Path) -> Non
     assert report["input_sources"]["engine_events"]["valid"] == 2
     assert report["event_compatibility"]["supporting_event_counts"]["fsm_transition"] == 1
     assert report["top_reject_reasons"]["STRUCTURE_NOT_VALID"] == 1
+
+
+def test_r018_preserves_primary_reject_distribution_and_separate_blocker_occurrences(tmp_path: Path) -> None:
+    report = lib.build_report(
+        _event_stream(
+            engine=[
+                _v3_event(
+                    event_id="evt-reject",
+                    decision_kind="REJECT",
+                    signal_id=None,
+                    stage=None,
+                    hard_blockers=["TIME_NOT_FEASIBLE", "STRUCTURE_NOT_VALID"],
+                    reject_reason="TIME_NOT_FEASIBLE; STRUCTURE_NOT_VALID",
+                ),
+            ],
+        ),
+        _settings(tmp_path),
+    )
+
+    assert report["decisions"] == 1
+    assert report["rejects"] == 1
+    assert sum(report["top_reject_reasons"].values()) == 1
+    assert report["top_reject_reasons"]["TIME_NOT_FEASIBLE"] == 1
+    assert sum(report["reject_reason_occurrences"].values()) == 2
+    assert report["reject_reason_occurrences"]["TIME_NOT_FEASIBLE"] == 1
+    assert report["reject_reason_occurrences"]["STRUCTURE_NOT_VALID"] == 1
+    assert report["bottleneck"] == {"reason": "TIME_NOT_FEASIBLE", "share": 1.0}
+    assert report["symbol_health"]["EUR/USD"]["dominant_reject"] == "TIME_NOT_FEASIBLE"
+    assert report["symbol_health"]["EUR/USD"]["dominant_reject_share"] == 1.0
+
+
+def test_r018_fixture_matches_current_producer_version_contract(tmp_path: Path) -> None:
+    event = _v3_event(event_id="evt-real-shape", decision_kind="OPEN_NOW", signal_id="sig-actual", stage="OPEN_NOW")
+    report = lib.build_report(_event_stream(engine=[event]), _settings(tmp_path))
+
+    assert event["schema_version"] == "3.0.0"
+    assert event["source"]["module"] == "signal_engine"
+    assert event["source"]["function"] == "run_once"
+    assert event["data"]["strategy_version"] == strategy_v2.STRATEGY_VERSION
+    assert strategy_v2.STRATEGY_VERSION == "2.0.0"
+    assert event["data"]["canonical_spec"] == strategy_v2.CANONICAL_SPEC
+    assert strategy_v2.CANONICAL_SPEC == "ALGO_SPEC_v3.0.0"
+    assert report["event_compatibility"]["canonical_v3_decision_events_seen"] == 1

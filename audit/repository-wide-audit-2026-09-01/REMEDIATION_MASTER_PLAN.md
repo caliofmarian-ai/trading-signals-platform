@@ -346,9 +346,10 @@ Required outcome:
 ### R-018 — Strategy Auditor v3 event compatibility
 Severity: HIGH
 Status: IN PROGRESS
-Branch: `remediation/audit-2026-09-01-r018-strategy-auditor-v3-event-compatibility`
+PR: #136
+Branch: `copilot/r-018-strategy-auditor-v3`
 Base main: `9427fad7633b279b30ab97a49656f87e8b637e59`
-Local validation: changed-module compilation PASS; focused regressions 263 passed; full repository suite 1139 passed; secret scan clean; CodeQL 0 alerts.
+Local validation: changed-module compilation PASS; dedicated R-018 suite 16 passed; focused regressions 266 passed; full repository suite 1142 passed; secret scan clean; CodeQL 0 alerts.
 
 Required outcome:
 - auditor consumes `decision_evaluated` and other active v3 event families;
@@ -465,5 +466,6 @@ The repository-wide remediation program is complete only when:
 - 2026-09-02: R-016 started on branch `remediation/audit-2026-09-01-r016-role-permission-fail-closed`; Issue #128 created.
 - 2026-09-02: R-016 merged through PR #129; main advanced to `84363099cf5faa21118346c89aeea065849bc66c`; Issue #128 closed; final validation was provider selector 5 passed, Telegram admin regression 72 passed, full repository suite 1072 passed.
 - 2026-09-02: R-017 started on branch `remediation/audit-2026-09-01-r017-telegram-multi-role-acceptance`; Issue #131 created under Telegram parent Issue #23; automated multi-role acceptance matrix materialized.
-- 2026-09-05: R-018 started on branch `remediation/audit-2026-09-01-r018-strategy-auditor-v3-event-compatibility` from main `9427fad7633b279b30ab97a49656f87e8b637e59`; canonical v3 strategy-auditor normalization and regression coverage implemented locally; final repository-wide validation pending.
-- 2026-09-05: R-018 local validation completed on branch `remediation/audit-2026-09-01-r018-strategy-auditor-v3-event-compatibility`; changed-module compilation passed, focused regressions passed (263), full repository suite passed (1139), secret scan was clean, and CodeQL reported 0 alerts.
+- 2026-09-05: R-018 started on PR `#136` branch `copilot/r-018-strategy-auditor-v3` from main `9427fad7633b279b30ab97a49656f87e8b637e59`; canonical v3 strategy-auditor normalization and regression coverage implemented locally; final repository-wide validation pending.
+- 2026-09-05: R-018 local validation completed on PR `#136` branch `copilot/r-018-strategy-auditor-v3`; changed-module compilation passed, focused regressions passed (263), full repository suite passed (1139), secret scan was clean, and CodeQL reported 0 alerts.
+- 2026-09-05: R-018 hardening pass confirmed PR `#136` head `3223c1f6aada530550f9b710da43984fed4be591` still needed schema-derived non-decision classification, backward-compatible primary reject analytics, real branch metadata, and truthful CI/issue evidence; hardened local rerun produced 16 dedicated R-018 passes, 266 focused passes, and 1142 full-suite passes; GitHub Actions run `33980804764` on that head remained `action_required` with zero jobs executed.

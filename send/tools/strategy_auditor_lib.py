@@ -12,25 +12,20 @@ _DEFAULT_SETTINGS_PATH = os.path.join(
     "intelligence_settings.json",
 )
 SETTINGS_PATH = os.getenv("STRATEGY_AUDITOR_SETTINGS", _DEFAULT_SETTINGS_PATH)
+EVENT_SCHEMA_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "schema",
+    "event_schema.json",
+)
 
 CANONICAL_V3_SCHEMA_VERSION = "3.0.0"
 CANONICAL_V3_DECISION_EVENT = "decision_evaluated"
 LEGACY_DECISION_EVENT = "decision"
-CANONICAL_V3_SUPPORTING_EVENTS = frozenset({
-    "candidate_detected",
-    "decision_promoted",
-    "decision_rejected",
-    "decision_no_signal",
-    "fsm_transition",
-    "signal_execution_result",
-    "signal_stage_visible",
-    "route_publish_attempt",
-    "route_publish_result",
-})
 LEGACY_COMPATIBILITY_MODE = "LEGACY_DECISION"
 PRIMARY_COMPATIBILITY_MODE = "CANONICAL_V3"
 UNKNOWN_VALUE = "UNKNOWN"
 _NORMALIZATION_SAMPLE_LIMIT = 10
+_EVENT_SCHEMA_CACHE: Optional[Dict[str, Any]] = None
 
 
 def load_settings(path: Optional[str] = None) -> Dict[str, Any]:
@@ -146,11 +141,42 @@ def load_all_events(settings: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _load_event_schema() -> Dict[str, Any]:
+    global _EVENT_SCHEMA_CACHE
+    if _EVENT_SCHEMA_CACHE is None:
+        with open(EVENT_SCHEMA_PATH, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        _EVENT_SCHEMA_CACHE = loaded if isinstance(loaded, dict) else {}
+    return _EVENT_SCHEMA_CACHE
+
+
+def _schema_event_types() -> Dict[str, Dict[str, Any]]:
+    schema = _load_event_schema()
+    event_types = schema.get("event_types")
+    return dict(event_types) if isinstance(event_types, dict) else {}
+
+
+def _recognized_event_types() -> set[str]:
+    return set(_schema_event_types())
+
+
+def _supported_schema_versions() -> set[str]:
+    schema = _load_event_schema()
+    envelope = _dict(schema.get("envelope"))
+    required = _dict(envelope.get("required"))
+    version_spec = _dict(required.get("schema_version"))
+    versions = version_spec.get("enum")
+    if isinstance(versions, list):
+        return {str(value) for value in versions if str(value).strip()}
+    return {CANONICAL_V3_SCHEMA_VERSION}
+
+
 def _compatibility_template() -> Dict[str, Any]:
     return {
         "primary_mode": PRIMARY_COMPATIBILITY_MODE,
         "canonical_v3_decision_events_seen": 0,
         "legacy_decision_events_seen": 0,
+        "recognized_non_decision_event_counts": {},
         "supporting_event_counts": {},
         "normalized_decisions": 0,
         "normalized_by_compatibility_mode": {
@@ -318,6 +344,10 @@ def _canonical_reject_reasons(data: Dict[str, Any], decision_object: Dict[str, A
     return []
 
 
+def _primary_reject_reason_from_list(reject_reasons: List[str]) -> Optional[str]:
+    return reject_reasons[0] if reject_reasons else None
+
+
 def _legacy_reject_reasons(data: Dict[str, Any]) -> List[str]:
     direct_reason = _text(data.get("reject_reason") or data.get("rejected_reason"))
     if direct_reason:
@@ -475,6 +505,7 @@ def _normalize_v3_decision_event(event: Dict[str, Any], compatibility: Dict[str,
     if decision_kind == "REJECT" and not reject_reasons:
         issues.append("missing_reject_reason")
         _record_warning(compatibility, "missing_reject_reason")
+    primary_reject_reason = _primary_reject_reason_from_list(reject_reasons)
 
     record = {
         "source_event_type": CANONICAL_V3_DECISION_EVENT,
@@ -494,7 +525,8 @@ def _normalize_v3_decision_event(event: Dict[str, Any], compatibility: Dict[str,
         "canonical_spec": canonical_spec,
         "direction": direction,
         "candle_ts": candle_ts,
-        "reject_reason": reject_reasons[0] if reject_reasons else None,
+        "primary_reject_reason": primary_reject_reason,
+        "reject_reason": primary_reject_reason,
         "reject_reasons": reject_reasons,
         "decision_object": decision_object,
         "trade_physics": _dict(data.get("trade_physics")),
@@ -566,6 +598,7 @@ def _normalize_legacy_decision_event(event: Dict[str, Any], compatibility: Dict[
     if decision_kind == "REJECT" and not reject_reasons:
         issues.append("missing_reject_reason")
         _record_warning(compatibility, "missing_reject_reason")
+    primary_reject_reason = _primary_reject_reason_from_list(reject_reasons)
 
     record = {
         "source_event_type": LEGACY_DECISION_EVENT,
@@ -585,7 +618,8 @@ def _normalize_legacy_decision_event(event: Dict[str, Any], compatibility: Dict[
         "canonical_spec": None,
         "direction": _text(data.get("direction") or event.get("direction")),
         "candle_ts": data.get("candle_ts"),
-        "reject_reason": reject_reasons[0] if reject_reasons else None,
+        "primary_reject_reason": primary_reject_reason,
+        "reject_reason": primary_reject_reason,
         "reject_reasons": reject_reasons,
         "decision_object": _dict(data.get("decision_object")),
         "trade_physics": _dict(data.get("trade_physics")),
@@ -609,6 +643,7 @@ def _finalize_compatibility(compatibility: Dict[str, Any], decisions: List[Dict[
         )
         if decision.get("issues"):
             compatibility["normalized_decisions_with_warnings"] += 1
+    compatibility["recognized_non_decision_event_counts"] = dict(sorted(compatibility["recognized_non_decision_event_counts"].items()))
     compatibility["supporting_event_counts"] = dict(sorted(compatibility["supporting_event_counts"].items()))
     compatibility["unsupported_event_types"] = dict(sorted(compatibility["unsupported_event_types"].items()))
     compatibility["unsupported_schema_versions"] = dict(sorted(compatibility["unsupported_schema_versions"].items()))
@@ -630,6 +665,8 @@ def normalize_decision_events(events: Dict[str, Any] | List[Dict[str, Any]]) -> 
         supporting_sources = {"engine": events}
 
     compatibility = _compatibility_template()
+    recognized_event_types = _recognized_event_types()
+    supported_schema_versions = _supported_schema_versions()
     candidates_by_event_id: Dict[str, Dict[str, Any]] = {}
     unkeyed_candidates: List[Dict[str, Any]] = []
 
@@ -638,14 +675,15 @@ def normalize_decision_events(events: Dict[str, Any] | List[Dict[str, Any]]) -> 
             if not isinstance(event, dict):
                 continue
             event_type = _text(event.get("event_type"))
-            if event_type in CANONICAL_V3_SUPPORTING_EVENTS:
+            if event_type in recognized_event_types and event_type not in {CANONICAL_V3_DECISION_EVENT, LEGACY_DECISION_EVENT}:
                 schema_version = _text(event.get("schema_version"))
-                if schema_version not in {None, CANONICAL_V3_SCHEMA_VERSION}:
+                if schema_version not in {None, *supported_schema_versions}:
                     _increment(
                         compatibility["unsupported_schema_versions"],
                         f"{event_type}@{schema_version}",
                     )
                 else:
+                    _increment(compatibility["recognized_non_decision_event_counts"], event_type)
                     _increment(compatibility["supporting_event_counts"], event_type)
 
     for event in engine_events if isinstance(engine_events, list) else []:
@@ -664,7 +702,7 @@ def normalize_decision_events(events: Dict[str, Any] | List[Dict[str, Any]]) -> 
         elif event_type == LEGACY_DECISION_EVENT:
             compatibility["legacy_decision_events_seen"] += 1
             record = _normalize_legacy_decision_event(event, compatibility)
-        elif event_type not in CANONICAL_V3_SUPPORTING_EVENTS:
+        elif event_type not in recognized_event_types:
             _increment(compatibility["unsupported_event_types"], event_type)
 
         if record is None:
@@ -701,6 +739,10 @@ def filter_decision_events(engine_events):
 
 
 def extract_reject_reason(event):
+    primary_reason = _text(event.get("primary_reject_reason"))
+    if primary_reason:
+        return primary_reason
+
     reasons = event.get("reject_reasons")
     if isinstance(reasons, list):
         cleaned = [str(reason) for reason in reasons if str(reason).strip()]
@@ -743,6 +785,19 @@ def compute_decision_distribution(decisions):
 
 
 def compute_reject_distribution(decisions):
+    reasons = defaultdict(int)
+
+    for decision in decisions:
+        kind = _text(decision.get("decision_kind"))
+        if kind != "REJECT":
+            continue
+
+        reasons[extract_reject_reason(decision)] += 1
+
+    return dict(reasons)
+
+
+def compute_reject_reason_occurrences(decisions):
     reasons = defaultdict(int)
 
     for decision in decisions:
@@ -898,12 +953,7 @@ def compute_symbol_health(decisions, settings):
                 pre += 1
 
             if kind == "REJECT":
-                raw_reasons = decision.get("reject_reasons")
-                reject_reasons = [str(reason) for reason in raw_reasons if str(reason).strip()] if isinstance(raw_reasons, list) else []
-                if not reject_reasons:
-                    reject_reasons = [extract_reject_reason(decision)]
-                for reason in reject_reasons:
-                    rejects[reason] += 1
+                rejects[extract_reject_reason(decision)] += 1
 
         pre_rate = pre / total
 
@@ -989,6 +1039,7 @@ def build_report(events: Dict[str, Any], settings: Dict[str, Any]) -> Dict[str, 
     decision_distribution = compute_decision_distribution(decisions)
 
     reject_distribution = compute_reject_distribution(decisions)
+    reject_reason_occurrences = compute_reject_reason_occurrences(decisions)
 
     symbol_activity = compute_symbol_activity(decisions)
 
@@ -1044,6 +1095,7 @@ def build_report(events: Dict[str, Any], settings: Dict[str, Any]) -> Dict[str, 
         "min_score": score_stats["min"],
         "max_score": score_stats["max"],
         "top_reject_reasons": reject_distribution,
+        "reject_reason_occurrences": reject_reason_occurrences,
         "symbol_activity": symbol_activity,
         "heatmap": heatmap,
         "bottleneck": bottleneck,
@@ -1107,6 +1159,7 @@ def write_reports(report: Dict[str, Any], settings: Dict[str, Any]) -> None:
                 "primary_mode": compatibility.get("primary_mode"),
                 "canonical_v3_decision_events_seen": compatibility.get("canonical_v3_decision_events_seen"),
                 "legacy_decision_events_seen": compatibility.get("legacy_decision_events_seen"),
+                "recognized_non_decision_event_counts": compatibility.get("recognized_non_decision_event_counts"),
                 "normalized_decisions": compatibility.get("normalized_decisions"),
                 "normalized_by_compatibility_mode": compatibility.get("normalized_by_compatibility_mode"),
                 "normalized_decisions_with_warnings": compatibility.get("normalized_decisions_with_warnings"),
@@ -1130,6 +1183,8 @@ def write_reports(report: Dict[str, Any], settings: Dict[str, Any]) -> None:
             }, indent=2),
             "\n\n## Top Reject Reasons\n\n",
             json.dumps(report["top_reject_reasons"], indent=2),
+            "\n\n## Reject Reason Occurrences\n\n",
+            json.dumps(report["reject_reason_occurrences"], indent=2),
             "\n\n## Heatmap\n\n",
             json.dumps(report["heatmap"], indent=2),
             "\n\n## Bottleneck\n\n",
