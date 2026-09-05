@@ -38,7 +38,15 @@ The dedicated suite exercises source checksums, unreadable versus genuinely miss
 
 Parent checks: final read-only review found no significant remaining issues. Diff whitespace checks passed with Git's `cr-at-eol` option to recognize the two existing CRLF files; their line-ending style was retained rather than broadly reformatted.
 
-Security scans are recorded after the implementation commit. No new dependencies, test frameworks, workflows or temporary helper scripts were added.
+## Security and committed evidence
+
+- Validated implementation commit: `48819345f1acdaecb5f17e7f73a13d595ac5dbb2`; subsequent evidence-only documentation does not change the tested production code.
+- Secret scanning of all 20 changed/created files: no secrets detected before committing.
+- CodeQL Python analysis after the implementation commit: **0 alerts**. The change was declared non-trivial because it adds scheduling, runtime integration, persistence and concurrency behavior.
+- Final read-only code review: no significant remaining issues.
+- Committed diff/scope checks passed; the worktree was clean before this evidence-only update.
+
+No new dependencies, test frameworks, workflows or temporary helper scripts were added.
 
 ## GitHub / deployment acceptance
 

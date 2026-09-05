@@ -2,6 +2,7 @@
 
 ## Operational acceptance retained for the Owner
 
+- No unresolved implementation-review findings or CodeQL alerts remain in the validated change (1189 local/agent full-suite passes; CodeQL 0 alerts).
 - The daily UTC clock is intentionally not supplied by this remediation. The Owner must choose the clock and explicitly enable the auditor. Until then, no scheduled report is promised.
 - A persistent Railway volume with usable read/write permissions and POSIX locking is required for cross-redeploy idempotency. Local temporary-volume/restart/process tests cannot prove the deployed volume configuration.
 - After merge, verify runtime auditor readiness, an eligible report, JSON/Markdown consumption, success state retained across redeploy, and sanitized failure evidence. Issue #140 remains open until that evidence is reconciled.
