@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import datetime as _dt
+import importlib
 import os
 import threading
 from typing import Any, Callable, Dict, Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from tools import strategy_auditor_runtime as runtime
+# Import the canonical R-019 runtime submodule directly. The tools package may
+# expose this adapter as its public strategy_auditor_runtime when local civil
+# scheduling is configured; keeping this direct module reference prevents a
+# circular alias and preserves the durable R-019 transaction as authority.
+runtime = importlib.import_module("tools.strategy_auditor_runtime")
 
 
 LOCAL_TIME_ENV = "STRATEGY_AUDITOR_DAILY_TIME"
@@ -54,6 +59,12 @@ def _zone(name: str) -> Optional[ZoneInfo]:
         return None
 
 
+def _invalid_schedule(result: Dict[str, Any], identity: Dict[str, Any], reason: str) -> Dict[str, Any]:
+    identity["status"] = reason
+    result.update({"status": "INVALID_SCHEDULE", "enabled": False})
+    return result
+
+
 def runtime_worker_config() -> Dict[str, Any]:
     enabled, enabled_reason = _enabled_flag()
     local_time_raw = os.getenv(LOCAL_TIME_ENV, "").strip()
@@ -82,28 +93,20 @@ def runtime_worker_config() -> Dict[str, Any]:
         return result
 
     if not local_time_raw and not timezone_raw:
-        result.update({"status": "LOCAL_SCHEDULE_NOT_CONFIGURED", "enabled": False})
+        result.update({"status": "SCHEDULE_NOT_CONFIGURED", "enabled": False})
         return result
     if not local_time_raw or not timezone_raw:
-        identity["status"] = "LOCAL_SCHEDULE_INCOMPLETE"
-        result.update({"status": "LOCAL_SCHEDULE_INCOMPLETE", "enabled": False})
-        return result
+        return _invalid_schedule(result, identity, "LOCAL_SCHEDULE_INCOMPLETE")
     if legacy_utc_raw:
-        identity["status"] = "SCHEDULE_CONFIGURATION_CONFLICT"
-        result.update({"status": "SCHEDULE_CONFIGURATION_CONFLICT", "enabled": False})
-        return result
+        return _invalid_schedule(result, identity, "SCHEDULE_CONFIGURATION_CONFLICT")
 
     parsed = _parse_hhmm(local_time_raw)
     if parsed is None:
-        identity["status"] = "INVALID_LOCAL_SCHEDULE"
-        result.update({"status": "INVALID_LOCAL_SCHEDULE", "enabled": False})
-        return result
+        return _invalid_schedule(result, identity, "INVALID_LOCAL_SCHEDULE")
 
     zone = _zone(timezone_raw)
     if zone is None:
-        identity["status"] = "INVALID_TIMEZONE"
-        result.update({"status": "INVALID_TIMEZONE", "enabled": False})
-        return result
+        return _invalid_schedule(result, identity, "INVALID_TIMEZONE")
 
     try:
         admin_enabled, admin_reason = runtime._admin_strategy_auditor_enabled()
