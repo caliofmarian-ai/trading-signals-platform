@@ -15,8 +15,8 @@ Validation was executed locally on branch `copilot/r-018-strategy-auditor-v3`.
 ## GitHub Actions state for final head
 
 - PR `#136`
-- Final head: `dd1b0700665a38f0f7df1f74c522178151617221`
-- Workflow run `33983225024` (`Provider Selector Validation`) — `completed / action_required`
+- Final head: `15873ca2ccbc000bdecfeb4e82919c7b3572e694`
+- Workflow run `33983283104` (`Provider Selector Validation`) — `completed / action_required`
 - Workflow jobs materialized for that run: `0`
 - `pull_request` check runs for PR head: `0`
 - No GitHub CI success is claimed for the final head.

@@ -349,7 +349,7 @@ Status: IN PROGRESS
 PR: #136
 Branch: `copilot/r-018-strategy-auditor-v3`
 Base main: `9427fad7633b279b30ab97a49656f87e8b637e59`
-Local validation: changed-module compilation PASS; dedicated R-018 suite 16 passed; focused regressions 266 passed; full repository suite 1142 passed; secret scan clean; CodeQL 0 alerts. GitHub Actions on final head `dd1b0700665a38f0f7df1f74c522178151617221`: run `33983225024` is `action_required` with 0 jobs executed.
+Local validation: changed-module compilation PASS; dedicated R-018 suite 16 passed; focused regressions 266 passed; full repository suite 1142 passed; secret scan clean; CodeQL 0 alerts. GitHub Actions on final head `15873ca2ccbc000bdecfeb4e82919c7b3572e694`: run `33983283104` is `action_required` with 0 jobs executed.
 
 Required outcome:
 - auditor consumes `decision_evaluated` and other active v3 event families;
@@ -469,4 +469,5 @@ The repository-wide remediation program is complete only when:
 - 2026-09-05: R-018 started on PR `#136` branch `copilot/r-018-strategy-auditor-v3` from main `9427fad7633b279b30ab97a49656f87e8b637e59`; canonical v3 strategy-auditor normalization and regression coverage implemented locally; final repository-wide validation pending.
 - 2026-09-05: R-018 local validation completed on PR `#136` branch `copilot/r-018-strategy-auditor-v3`; changed-module compilation passed, focused regressions passed (263), full repository suite passed (1139), secret scan was clean, and CodeQL reported 0 alerts.
 - 2026-09-05: R-018 hardening pass confirmed PR `#136` head `3223c1f6aada530550f9b710da43984fed4be591` still needed schema-derived non-decision classification, backward-compatible primary reject analytics, real branch metadata, and truthful CI/issue evidence; hardened local rerun produced 16 dedicated R-018 passes, 266 focused passes, and 1142 full-suite passes; GitHub Actions run `33980804764` on that head remained `action_required` with zero jobs executed.
-- 2026-09-05: R-018 hardened final branch head advanced to `dd1b0700665a38f0f7df1f74c522178151617221`; local validation stayed green, but GitHub Actions run `33983225024` for the new head is still `action_required` with zero jobs executed pending Owner workflow approval.
+- 2026-09-05: R-018 hardened final branch head advanced to `dd1b0700665a38f0f7df1f74c522178151617221`; local validation stayed green, but GitHub Actions run `33983225024` for that head remained `action_required` with zero jobs executed pending Owner workflow approval.
+- 2026-09-05: R-018 documentation/evidence finalization advanced PR `#136` head to `15873ca2ccbc000bdecfeb4e82919c7b3572e694`; local validation evidence remains the same, and GitHub Actions run `33983283104` for the exact final head is still `action_required` with zero jobs executed pending Owner workflow approval.
