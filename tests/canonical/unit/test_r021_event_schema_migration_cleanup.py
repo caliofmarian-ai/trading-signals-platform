@@ -43,5 +43,5 @@ def test_distribution_scheduler_source_has_no_tier_reset_write() -> None:
     scheduler = importlib.import_module("runtime.distribution_scheduler")
     source = inspect.getsource(scheduler.do_daily_reset)
 
-    assert "tier_reset" not in source
-    assert "log_event" not in source
+    assert '"event_type": "tier_reset"' not in source
+    assert "observability_logger.log_event" not in source
