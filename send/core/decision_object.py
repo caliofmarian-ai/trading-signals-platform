@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from hashlib import sha256
 from math import isfinite
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 
 SCHEMA_VERSION = "2.0.0"
+DECISION_IDENTITY_VERSION = "1.0.0"
 ALLOWED_DIRECTIONS = frozenset({"BUY", "SELL", "NONE"})
 ALLOWED_DECISION_KINDS = frozenset({"NO_SIGNAL", "PRE", "CONFIRM", "OPEN_NOW", "REJECT"})
 ACTIONABLE_DECISION_KINDS = frozenset({"PRE", "CONFIRM", "OPEN_NOW"})
@@ -54,6 +56,45 @@ def _plain(value: Any) -> Any:
     if isinstance(value, (tuple, list)):
         return [_plain(item) for item in value]
     return value
+
+
+def _materialized_decision_ids(
+    *,
+    kind: str,
+    signal_id: Optional[str],
+    setup: "SetupContext",
+    schema_version: str,
+    producer: str,
+) -> tuple[str, str]:
+    """Materialize stable pre-FSM identity once from immutable decision semantics.
+
+    Event IDs continue to identify individual observations. These identifiers
+    deliberately identify the semantic strategy decision for one setup/stage,
+    so retries or repeated evaluation of the same materialized decision do not
+    create conflicting downstream lineage.
+    """
+
+    canonical = "\x1f".join(
+        (
+            DECISION_IDENTITY_VERSION,
+            producer.strip(),
+            schema_version.strip(),
+            setup.source.strip(),
+            setup.symbol.strip().upper(),
+            setup.timeframe.strip().upper(),
+            setup.direction.strip().upper(),
+            setup.cycle_id.strip(),
+            str(int(setup.evaluated_ts)),
+            kind.strip().upper(),
+            signal_id.strip() if isinstance(signal_id, str) and signal_id.strip() else "NO_SIGNAL_ID",
+        )
+    )
+    decision_digest = sha256(f"decision|{canonical}".encode("utf-8")).hexdigest()[:24]
+    decision_id = f"dec-v1-{decision_digest}"
+    audit_digest = sha256(
+        f"decision-audit|{DECISION_IDENTITY_VERSION}|{decision_id}".encode("utf-8")
+    ).hexdigest()[:24]
+    return decision_id, f"da-v1-{audit_digest}"
 
 
 @dataclass(frozen=True)
@@ -278,6 +319,8 @@ class DecisionObject:
     reject: RejectContext
     fsm_inputs: Mapping[str, Any]
     explanations: Tuple[str, ...]
+    decision_id: str = field(init=False)
+    decision_audit_id: str = field(init=False)
     schema_version: str = SCHEMA_VERSION
     producer: str = "binary_strategy_v2"
     compatibility_mode: bool = False
@@ -301,6 +344,15 @@ class DecisionObject:
             raise ValueError("reject semantics are required for a rejectable decision")
         if not self.explanations:
             raise ValueError("at least one decision explanation is required")
+        decision_id, decision_audit_id = _materialized_decision_ids(
+            kind=self.kind,
+            signal_id=self.signal_id,
+            setup=self.setup,
+            schema_version=self.schema_version,
+            producer=self.producer,
+        )
+        object.__setattr__(self, "decision_id", decision_id)
+        object.__setattr__(self, "decision_audit_id", decision_audit_id)
 
     def to_dict(self) -> Dict[str, Any]:
         return _plain(asdict(self))
