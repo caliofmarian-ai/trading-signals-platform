@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
+import json
 from math import isfinite
 from typing import Any, Dict, Mapping, Optional, Tuple
 
@@ -58,36 +59,25 @@ def _plain(value: Any) -> Any:
     return value
 
 
-def _materialized_decision_ids(
-    *,
-    kind: str,
-    signal_id: Optional[str],
-    setup: "SetupContext",
-    schema_version: str,
-    producer: str,
-) -> tuple[str, str]:
-    """Materialize stable pre-FSM identity once from immutable decision semantics.
+def _materialized_decision_ids(evidence: Mapping[str, Any]) -> tuple[str, str]:
+    """Fingerprint one immutable pre-FSM DecisionObject truth snapshot.
 
-    Event IDs continue to identify individual observations. These identifiers
-    deliberately identify the semantic strategy decision for one setup/stage,
-    so retries or repeated evaluation of the same materialized decision do not
-    create conflicting downstream lineage.
+    ``setup_correlation_id`` owns setup/candle continuity. ``decision_id`` is
+    deliberately narrower: it identifies one exact semantic strategy evaluation.
+    Therefore two 2-second evaluations on the same candle remain distinct when
+    any pre-FSM decision truth changes, while an exact retry/replay of the same
+    DecisionObject yields the same identifiers.
     """
 
-    canonical = "\x1f".join(
-        (
-            DECISION_IDENTITY_VERSION,
-            producer.strip(),
-            schema_version.strip(),
-            setup.source.strip(),
-            setup.symbol.strip().upper(),
-            setup.timeframe.strip().upper(),
-            setup.direction.strip().upper(),
-            setup.cycle_id.strip(),
-            str(int(setup.evaluated_ts)),
-            kind.strip().upper(),
-            signal_id.strip() if isinstance(signal_id, str) and signal_id.strip() else "NO_SIGNAL_ID",
-        )
+    canonical = json.dumps(
+        {
+            "identity_version": DECISION_IDENTITY_VERSION,
+            "decision": _plain(dict(evidence)),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
     )
     decision_digest = sha256(f"decision|{canonical}".encode("utf-8")).hexdigest()[:24]
     decision_id = f"dec-v1-{decision_digest}"
@@ -345,11 +335,22 @@ class DecisionObject:
         if not self.explanations:
             raise ValueError("at least one decision explanation is required")
         decision_id, decision_audit_id = _materialized_decision_ids(
-            kind=self.kind,
-            signal_id=self.signal_id,
-            setup=self.setup,
-            schema_version=self.schema_version,
-            producer=self.producer,
+            {
+                "kind": self.kind,
+                "signal_id": self.signal_id,
+                "setup": asdict(self.setup),
+                "market_context": asdict(self.market_context),
+                "structure": asdict(self.structure),
+                "time": asdict(self.time),
+                "score": asdict(self.score),
+                "strategic_flags": asdict(self.strategic_flags),
+                "reject": asdict(self.reject),
+                "fsm_inputs": _plain(self.fsm_inputs),
+                "explanations": _plain(self.explanations),
+                "schema_version": self.schema_version,
+                "producer": self.producer,
+                "compatibility_mode": self.compatibility_mode,
+            }
         )
         object.__setattr__(self, "decision_id", decision_id)
         object.__setattr__(self, "decision_audit_id", decision_audit_id)
