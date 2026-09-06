@@ -271,11 +271,30 @@ def test_rejected_fsm_result_is_blocked_before_execution_time_matters() -> None:
     assert result.distribution_allowed is False
 
 
-def test_incomplete_real_signal_event_evidence_stays_not_emitted() -> None:
+def test_changed_decision_truth_cannot_reuse_prior_fsm_identity() -> None:
     complete = _decision("OPEN_NOW", 160)
     persistent = advance_persistent_fsm(_after_pre(), complete, now_ts=161)
+    changed = replace(complete, time=replace(complete.time, model_expiry=None))
+
+    result = prepare_signal_execution(
+        persistent,
+        changed,
+        buffer_mode="MEDIUM",
+        created_ts=162,
+        execution_time=_execution(complete),
+    )
+
+    assert result.outcome == "BLOCKED"
+    assert result.reason == "FSM_DECISION_ID_MISMATCH"
+    assert result.candidate is None
+    assert result.distribution_allowed is False
+
+
+def test_incomplete_real_signal_event_evidence_stays_not_emitted_with_matching_identity() -> None:
+    complete = _decision("OPEN_NOW", 160)
     execution_time = _execution(complete)
     incomplete = replace(complete, time=replace(complete.time, model_expiry=None))
+    persistent = advance_persistent_fsm(_after_pre(), incomplete, now_ts=161)
 
     result = prepare_signal_execution(
         persistent,
@@ -307,6 +326,9 @@ def test_execution_trace_exposes_timing_authority_and_no_delivery_side_effects()
 
     assert trace["execution_attempt_id"] == "binary-v2:sig-v2-execution-gate:OPEN_NOW:162"
     assert trace["setup_correlation_id"] == "cycle-160"
+    assert trace["decision_id"] == decision.decision_id
+    assert trace["decision_audit_id"] == decision.decision_audit_id
+    assert trace["fsm_transition_id"] == persistent.fsm_transition_id
     assert trace["candidate"]["distribution_enabled"] is False
     assert trace["distribution_allowed"] is True
     assert trace["execution_time_available"] is True
@@ -314,5 +336,8 @@ def test_execution_trace_exposes_timing_authority_and_no_delivery_side_effects()
     assert event_data["execution_phase"] == "PRE_DISTRIBUTION"
     assert event_data["execution_outcome"] == "DEFERRED"
     assert event_data["destination_state"] == "PRE_DISTRIBUTION_UNRESOLVED"
+    assert event_data["decision_id"] == decision.decision_id
+    assert event_data["decision_audit_id"] == decision.decision_audit_id
+    assert event_data["fsm_transition_id"] == persistent.fsm_transition_id
     assert event_data["execution_time_available"] is True
     assert event_data["execution_calibration_source"] == "test-calibration-v1"

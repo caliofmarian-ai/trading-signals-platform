@@ -10,10 +10,14 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any, Dict, Optional
 
 from . import fsm_runtime
 from .decision_object import ACTIONABLE_DECISION_KINDS, DecisionObject
+
+
+FSM_IDENTITY_VERSION = "1.0.0"
 
 
 @dataclass(frozen=True)
@@ -31,6 +35,9 @@ class PersistentFSMResult:
     trade_execution_ready: bool
     next_state: Dict[str, Any]
     transition_event: Optional[Dict[str, Any]]
+    decision_id: str
+    decision_audit_id: str
+    fsm_transition_id: str
 
     @property
     def candidate_ready(self) -> bool:
@@ -63,7 +70,34 @@ def _runtime_input(decision: DecisionObject, state: Dict[str, Any]) -> Dict[str,
     }
 
 
+def _materialize_fsm_transition_id(
+    decision: DecisionObject,
+    *,
+    requested_stage: Optional[str],
+    accepted_stage: Optional[str],
+    prior_state: str,
+    resulting_state: str,
+    reason: str,
+) -> str:
+    canonical = "\x1f".join(
+        (
+            FSM_IDENTITY_VERSION,
+            decision.decision_id,
+            decision.decision_audit_id,
+            requested_stage or "NO_REQUESTED_STAGE",
+            accepted_stage or "NO_ACCEPTED_STAGE",
+            prior_state,
+            resulting_state,
+            reason,
+            str(decision.setup.evaluated_ts),
+        )
+    )
+    digest = sha256(f"fsm-transition|{canonical}".encode("utf-8")).hexdigest()[:24]
+    return f"fsm-v1-{digest}"
+
+
 def _result(
+    decision: DecisionObject,
     *,
     accepted: bool,
     state_changed: bool,
@@ -93,6 +127,16 @@ def _result(
         trade_execution_ready=trade_execution_ready,
         next_state=next_state,
         transition_event=transition_event,
+        decision_id=decision.decision_id,
+        decision_audit_id=decision.decision_audit_id,
+        fsm_transition_id=_materialize_fsm_transition_id(
+            decision,
+            requested_stage=requested_stage,
+            accepted_stage=accepted_stage,
+            prior_state=prior_state,
+            resulting_state=resulting_state,
+            reason=reason,
+        ),
     )
 
 
@@ -123,6 +167,7 @@ def advance_persistent_fsm(
         and symbol_state.get(last_stage_candle_field) == decision.setup.evaluated_ts
     ):
         return _result(
+            decision,
             accepted=True,
             state_changed=False,
             requested_stage=requested_stage,
@@ -140,6 +185,7 @@ def advance_persistent_fsm(
 
     if decision.kind in {"CONFIRM", "OPEN_NOW"} and current_id != decision.signal_id:
         return _result(
+            decision,
             accepted=False,
             state_changed=False,
             requested_stage=requested_stage,
@@ -158,6 +204,7 @@ def advance_persistent_fsm(
     if decision.kind == "OPEN_NOW":
         if prior_state not in {"WATCHLIST", "CONFIRMED"}:
             return _result(
+                decision,
                 accepted=False,
                 state_changed=False,
                 requested_stage="OPEN_NOW",
@@ -185,6 +232,7 @@ def advance_persistent_fsm(
         state_changed = working != state
 
         return _result(
+            decision,
             accepted=True,
             state_changed=state_changed,
             requested_stage="OPEN_NOW",
@@ -216,6 +264,7 @@ def advance_persistent_fsm(
         next_state, event = fsm_runtime.apply_transition(working, payload, now_ts)
     except ValueError as exc:
         return _result(
+            decision,
             accepted=False,
             state_changed=False,
             requested_stage=requested_stage,
@@ -262,6 +311,7 @@ def advance_persistent_fsm(
         handoff = False
 
     return _result(
+        decision,
         accepted=accepted,
         state_changed=state_changed,
         requested_stage=requested_stage,

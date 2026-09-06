@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from hashlib import sha256
+import json
 from math import isfinite
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 
 SCHEMA_VERSION = "2.0.0"
+DECISION_IDENTITY_VERSION = "1.0.0"
 ALLOWED_DIRECTIONS = frozenset({"BUY", "SELL", "NONE"})
 ALLOWED_DECISION_KINDS = frozenset({"NO_SIGNAL", "PRE", "CONFIRM", "OPEN_NOW", "REJECT"})
 ACTIONABLE_DECISION_KINDS = frozenset({"PRE", "CONFIRM", "OPEN_NOW"})
@@ -54,6 +57,34 @@ def _plain(value: Any) -> Any:
     if isinstance(value, (tuple, list)):
         return [_plain(item) for item in value]
     return value
+
+
+def _materialized_decision_ids(evidence: Mapping[str, Any]) -> tuple[str, str]:
+    """Fingerprint one immutable pre-FSM DecisionObject truth snapshot.
+
+    ``setup_correlation_id`` owns setup/candle continuity. ``decision_id`` is
+    deliberately narrower: it identifies one exact semantic strategy evaluation.
+    Therefore two 2-second evaluations on the same candle remain distinct when
+    any pre-FSM decision truth changes, while an exact retry/replay of the same
+    DecisionObject yields the same identifiers.
+    """
+
+    canonical = json.dumps(
+        {
+            "identity_version": DECISION_IDENTITY_VERSION,
+            "decision": _plain(dict(evidence)),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+    decision_digest = sha256(f"decision|{canonical}".encode("utf-8")).hexdigest()[:24]
+    decision_id = f"dec-v1-{decision_digest}"
+    audit_digest = sha256(
+        f"decision-audit|{DECISION_IDENTITY_VERSION}|{decision_id}".encode("utf-8")
+    ).hexdigest()[:24]
+    return decision_id, f"da-v1-{audit_digest}"
 
 
 @dataclass(frozen=True)
@@ -278,6 +309,8 @@ class DecisionObject:
     reject: RejectContext
     fsm_inputs: Mapping[str, Any]
     explanations: Tuple[str, ...]
+    decision_id: str = field(init=False)
+    decision_audit_id: str = field(init=False)
     schema_version: str = SCHEMA_VERSION
     producer: str = "binary_strategy_v2"
     compatibility_mode: bool = False
@@ -301,6 +334,26 @@ class DecisionObject:
             raise ValueError("reject semantics are required for a rejectable decision")
         if not self.explanations:
             raise ValueError("at least one decision explanation is required")
+        decision_id, decision_audit_id = _materialized_decision_ids(
+            {
+                "kind": self.kind,
+                "signal_id": self.signal_id,
+                "setup": asdict(self.setup),
+                "market_context": asdict(self.market_context),
+                "structure": asdict(self.structure),
+                "time": asdict(self.time),
+                "score": asdict(self.score),
+                "strategic_flags": asdict(self.strategic_flags),
+                "reject": asdict(self.reject),
+                "fsm_inputs": _plain(self.fsm_inputs),
+                "explanations": _plain(self.explanations),
+                "schema_version": self.schema_version,
+                "producer": self.producer,
+                "compatibility_mode": self.compatibility_mode,
+            }
+        )
+        object.__setattr__(self, "decision_id", decision_id)
+        object.__setattr__(self, "decision_audit_id", decision_audit_id)
 
     def to_dict(self) -> Dict[str, Any]:
         return _plain(asdict(self))

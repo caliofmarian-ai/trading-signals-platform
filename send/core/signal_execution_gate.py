@@ -40,6 +40,9 @@ class SignalExecutionGateResult:
     execution_attempt_id: str
     created_ts: int
     setup_correlation_id: str
+    decision_id: str
+    decision_audit_id: str
+    fsm_transition_id: str
     execution_phase: str
     stage_handoff_ready: bool
     trade_execution_ready: bool
@@ -56,10 +59,16 @@ class SignalExecutionGateResult:
             raise ValueError(f"unsupported execution outcome: {self.outcome}")
         if not isinstance(self.reason, str) or not self.reason.strip():
             raise ValueError("reason is required")
-        if not isinstance(self.execution_attempt_id, str) or not self.execution_attempt_id.strip():
-            raise ValueError("execution_attempt_id is required")
-        if not isinstance(self.setup_correlation_id, str) or not self.setup_correlation_id.strip():
-            raise ValueError("setup_correlation_id is required")
+        for name in (
+            "execution_attempt_id",
+            "setup_correlation_id",
+            "decision_id",
+            "decision_audit_id",
+            "fsm_transition_id",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} is required")
         if not isinstance(self.created_ts, int) or isinstance(self.created_ts, bool) or self.created_ts <= 0:
             raise ValueError("created_ts must be a positive integer")
         if self.execution_phase != EXECUTION_PHASE:
@@ -91,6 +100,15 @@ class SignalExecutionGateResult:
                 raise ValueError("candidate Execution Time availability must match execution result")
             if self.candidate.execution_calibration_source != self.execution_calibration_source:
                 raise ValueError("candidate Execution Time source must match execution result")
+            for name in (
+                "setup_correlation_id",
+                "decision_id",
+                "decision_audit_id",
+                "execution_attempt_id",
+                "fsm_transition_id",
+            ):
+                if getattr(self.candidate, name) != getattr(self, name):
+                    raise ValueError(f"candidate {name} must match execution result")
         if self.stage == "OPEN_NOW" and self.distribution_allowed and not self.execution_time_available:
             raise ValueError("OPEN_NOW distribution requires governed Execution Time")
         if self.outcome == "EMITTED":
@@ -105,6 +123,9 @@ class SignalExecutionGateResult:
             "execution_attempt_id": self.execution_attempt_id,
             "created_ts": self.created_ts,
             "setup_correlation_id": self.setup_correlation_id,
+            "decision_id": self.decision_id,
+            "decision_audit_id": self.decision_audit_id,
+            "fsm_transition_id": self.fsm_transition_id,
             "execution_phase": self.execution_phase,
             "stage_handoff_ready": self.stage_handoff_ready,
             "trade_execution_ready": self.trade_execution_ready,
@@ -122,6 +143,11 @@ class SignalExecutionGateResult:
             "execution_phase": self.execution_phase,
             "execution_outcome": self.outcome,
             "execution_reason": self.reason,
+            "setup_correlation_id": self.setup_correlation_id,
+            "decision_id": self.decision_id,
+            "decision_audit_id": self.decision_audit_id,
+            "execution_attempt_id": self.execution_attempt_id,
+            "fsm_transition_id": self.fsm_transition_id,
             "stage_handoff_ready": self.stage_handoff_ready,
             "trade_execution_ready": self.trade_execution_ready,
             "execution_time_available": self.execution_time_available,
@@ -162,6 +188,7 @@ def _base_result(
     execution_time: Optional[ExecutionTimeResult] = None,
     candidate: Optional[SignalEvent] = None,
     distribution_allowed: bool = False,
+    execution_attempt_id: Optional[str] = None,
 ) -> SignalExecutionGateResult:
     execution_time_available, calibration_source, explanation = _execution_time_fields(
         execution_time
@@ -171,9 +198,12 @@ def _base_result(
         reason=reason,
         signal_id=decision.signal_id,
         stage=decision.kind if decision.kind in ACTIONABLE_DECISION_KINDS else None,
-        execution_attempt_id=_attempt_id(decision, created_ts),
+        execution_attempt_id=execution_attempt_id or _attempt_id(decision, created_ts),
         created_ts=created_ts,
         setup_correlation_id=decision.setup.cycle_id,
+        decision_id=decision.decision_id,
+        decision_audit_id=decision.decision_audit_id,
+        fsm_transition_id=persistent_fsm.fsm_transition_id,
         execution_phase=EXECUTION_PHASE,
         stage_handoff_ready=persistent_fsm.stage_handoff_ready,
         trade_execution_ready=persistent_fsm.trade_execution_ready,
@@ -208,6 +238,25 @@ def prepare_signal_execution(
         raise TypeError("decision must be a DecisionObject")
     if execution_time is not None and not isinstance(execution_time, ExecutionTimeResult):
         raise TypeError("execution_time must be an ExecutionTimeResult or None")
+
+    if persistent_fsm.decision_id != decision.decision_id:
+        return _base_result(
+            persistent_fsm,
+            decision,
+            created_ts=created_ts,
+            outcome="BLOCKED",
+            reason="FSM_DECISION_ID_MISMATCH",
+            execution_time=execution_time,
+        )
+    if persistent_fsm.decision_audit_id != decision.decision_audit_id:
+        return _base_result(
+            persistent_fsm,
+            decision,
+            created_ts=created_ts,
+            outcome="BLOCKED",
+            reason="FSM_DECISION_AUDIT_ID_MISMATCH",
+            execution_time=execution_time,
+        )
 
     if decision.kind not in ACTIONABLE_DECISION_KINDS:
         return _base_result(
@@ -278,12 +327,15 @@ def prepare_signal_execution(
             execution_time=execution_time,
         )
 
+    attempt_id = _attempt_id(decision, created_ts)
     try:
         candidate = build_signal_event(
             decision,
             buffer_mode=buffer_mode,
             created_ts=created_ts,
             execution_time=execution_time,
+            execution_attempt_id=attempt_id,
+            fsm_transition_id=persistent_fsm.fsm_transition_id,
         )
     except SignalEventUnavailable as exc:
         return _base_result(
@@ -293,6 +345,7 @@ def prepare_signal_execution(
             outcome="NOT_EMITTED",
             reason=f"SIGNAL_EVENT_UNAVAILABLE:{exc}",
             execution_time=execution_time,
+            execution_attempt_id=attempt_id,
         )
 
     return _base_result(
@@ -304,4 +357,5 @@ def prepare_signal_execution(
         execution_time=execution_time,
         candidate=candidate,
         distribution_allowed=True,
+        execution_attempt_id=attempt_id,
     )

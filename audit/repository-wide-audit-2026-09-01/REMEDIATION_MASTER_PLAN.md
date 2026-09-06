@@ -362,13 +362,17 @@ Required outcome:
 
 ### R-019 — Daily auditor scheduling and persistent reports
 Severity: MEDIUM-HIGH
-Status: IN PROGRESS
-Issue: #140
+Status: CLOSED
+Issue: #140 — CLOSED / COMPLETED
+PR: #141 — MERGED
 Branch: `copilot/caliofmarian-ai-r-019-daily-strategy-auditor`
 Base main: `8037a3dac42a0e1b0c44cb8ab83e3f6f9f5b5f83`
+Merged main commit: `672e35d421a394a46ac0ee0d475fc06abd6e3fec`
+Follow-up local-civil-time PR: #143 — MERGED at `e3e53ab166bccfdef615feebbaaf8c6c8022a14f`
+Follow-up runtime-visibility PR: #145 — MERGED at `4bfb770ee8a380ce49d03fd46e9617c515227128`
 Depends on: R-018 — SATISFIED
-Scope: operational analytics only; issue stays open until merge and post-merge evidence.
-Local/agent validation: R-019 43 passed; R-018 + Railway 51 passed; analytics/consumer-focused 177 passed; provider-related 15 passed; Telegram admin restoration 72 passed; full repository suite 1189 passed. Exact-head GitHub Actions approval/execution is a separate PR acceptance gate.
+Final repository validation: PR #145 exact-head CI passed provider selector 5, Telegram Admin regression 72, full repository suite 1200.
+Live Railway/Telegram acceptance: runtime `running`, recovery `HEALTHY`, startup preflight `READY`; Strategy Auditor worker `WORKER_STARTED`, `enabled=true`, schedule mode `LOCAL_CIVIL_TIME`, configured local time `00:15`, timezone `Europe/Bucharest`; legacy `STRATEGY_AUDITOR_DAILY_TIME_UTC` absent. Report period `2026-09-06` persisted under `/data/analytics/reports/` with 102697 decisions; after redeploy the same period returned `ALREADY_COMPLETED`, proving live restart/idempotency behavior. Broker execution remained disabled.
 
 Required outcome:
 - governed Railway-compatible scheduling or runtime scheduler integration;
@@ -377,10 +381,27 @@ Required outcome:
 
 ### R-020 — Decision audit identity materialization
 Severity: MEDIUM
-Status: PENDING
+Status: IN PROGRESS
+Issue: #146
+PR: #147 — DRAFT
+Branch: `remediation/audit-2026-09-01-r020-decision-audit-identity`
+Base main: `4bfb770ee8a380ce49d03fd46e9617c515227128`
+Depends on: R-019 — SATISFIED
+Current validation: GitHub Actions run `34019608862` SUCCESS on implementation/documentation head `5f7731747d45235b60833f1604ca7b88fbaea8bf`; provider selector 5 passed, Telegram Admin regression 72 passed, full repository suite 1207 passed. Exact final-head CI remains required before Ready for Review.
 
 Required outcome:
 - stable decision audit/correlation identity links DecisionObject, FSM, SignalEvent, distribution, telemetry, and outcomes without recomputing truth.
+
+Implementation boundary:
+- `setup_correlation_id` remains setup/cycle correlation and may span multiple evaluations;
+- `decision_id` / `decision_audit_id` are materialized once from the exact pre-FSM DecisionObject truth and are never recomputed downstream;
+- changed 2-second evidence inside the same candle gets a distinct decision identity while exact replay remains stable;
+- FSM materializes a bounded `fsm_transition_id` from upstream decision identity and actual FSM result semantics;
+- Signal Execution Gate propagates upstream identity and fails closed on DecisionObject/FSM identity mismatch;
+- SignalEvent carries setup/decision/audit/FSM/execution identity into Distribution and objective telemetry;
+- objective Trade Temporal Telemetry preserves the lineage together with Distribution publication evidence and objective outcome updates;
+- COMMUNITY_TRUTH does not receive fabricated market-decision lineage;
+- no strategy threshold, provider, timing, entitlement, Telegram authorization or broker-execution change is part of R-020.
 
 ### R-021 — Event schema migration cleanup
 Severity: MEDIUM
@@ -482,3 +503,5 @@ The repository-wide remediation program is complete only when:
 - 2026-09-05: R-018 documentation/evidence finalization advanced PR `#136` head to `15873ca2ccbc000bdecfeb4e82919c7b3572e694`; local validation evidence remains the same, and GitHub Actions run `33983283104` for the exact final head is still `action_required` with zero jobs executed pending Owner workflow approval.
 - 2026-09-05: R-018 post-merge reconciliation verified PR `#136` MERGED, Issue `#139` CLOSED, final implementation head `e834e9e66497e635b81a1c3ec279b1939b634bbc`, merge `1dae636555fcc6fdba6304d65f39b359da013629`, and GitHub Actions `33983482998` SUCCESS (5 provider, 72 Telegram admin, 1142 full-suite passes). Historical approval-required entries above are superseded.
 - 2026-09-05: R-019 started from fetched main `8037a3dac42a0e1b0c44cb8ab83e3f6f9f5b5f83` on the dedicated task branch, using existing Issue `#140`; requirements 12–19 recovered from Owner comment `5555082775`. R-017 and the temporal canon stream remain separate.
+- 2026-09-06: R-019 closed after PR #141 merge `672e35d421a394a46ac0ee0d475fc06abd6e3fec`, Bucharest local-time follow-up PR #143 merge `e3e53ab166bccfdef615feebbaaf8c6c8022a14f`, and runtime-visibility PR #145 merge `4bfb770ee8a380ce49d03fd46e9617c515227128`. Live `/audit_runtime` proved `running`/`HEALTHY`, Strategy Auditor `WORKER_STARTED`, `LOCAL_CIVIL_TIME` at 00:15 `Europe/Bucharest`, persistent report output, and `ALREADY_COMPLETED` after redeploy; broker execution remained disabled.
+- 2026-09-06: R-020 started under Issue #146 and Draft PR #147 on branch `remediation/audit-2026-09-01-r020-decision-audit-identity` from main `4bfb770ee8a380ce49d03fd46e9617c515227128`. Decision/audit/FSM identity materialization and downstream propagation implemented; GitHub Actions run `34019608862` passed provider 5, Telegram Admin 72, and full repository 1207 tests. R-017 remains separate and open.
