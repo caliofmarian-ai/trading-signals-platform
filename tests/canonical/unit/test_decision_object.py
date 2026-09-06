@@ -53,8 +53,11 @@ def test_decision_object_exposes_all_canonical_semantic_families() -> None:
 
     assert set(payload) == {
         "kind", "signal_id", "setup", "market_context", "structure", "time", "score", "strategic_flags",
-        "reject", "fsm_inputs", "explanations", "schema_version", "producer", "compatibility_mode",
+        "reject", "fsm_inputs", "explanations", "decision_id", "decision_audit_id",
+        "schema_version", "producer", "compatibility_mode",
     }
+    assert payload["decision_id"].startswith("dec-v1-")
+    assert payload["decision_audit_id"].startswith("da-v1-")
     assert payload["time"]["model_time_reach_ratio"] == pytest.approx(0.66)
     assert "expiry_minutes" not in payload["time"]
     assert "buffer_price" not in payload["market_context"]
