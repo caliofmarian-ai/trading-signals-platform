@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional
 
+from core import event_schema_migration
 from core import storage
 from core.jsonl_parser import iter_jsonl
 from intelligence import evidence_contract
@@ -28,30 +29,66 @@ def _classify_stage(stage: Optional[str]) -> str:
 
 
 def compute_signal_funnel() -> Dict[str, Any]:
-    """Count signal_event lifecycle stages without making strategy-quality claims."""
+    """Count candidate lifecycle stages using v3 primary evidence first.
+
+    Current v3 candidate existence is represented by the PRE_DISTRIBUTION
+    `signal_execution_result` with `signal_event_available=true`.  Historical
+    `signal_event` rows remain a bounded fallback under their original identity.
+    POST_DISTRIBUTION execution results are intentionally excluded so one
+    execution attempt is not counted twice.
+    """
+
     counts: Dict[str, int] = {"PRE": 0, "CONFIRM": 0, "OPEN_NOW": 0}
     unsupported_stages: Dict[str, int] = {}
     invalid_count = 0
-    seen_event_ids: set = set()
+    primary_v3_count = 0
+    legacy_fallback_count = 0
+    historical_named_execution_count = 0
+    seen_primary_attempts: set[str] = set()
+    seen_legacy_event_ids: set[str] = set()
 
     try:
         for record, err in iter_jsonl(_ENGINE_LOG):
             if err is not None:
                 invalid_count += 1
                 continue
-            if record.get("event_type") != "signal_event":
-                continue
 
-            event_id = record.get("event_id")
-            if event_id and event_id in seen_event_ids:
+            event_type = record.get("event_type")
+            if event_type == "signal_execution_result":
+                identity_class = event_schema_migration.classify_event_identity(record)
+                if identity_class != event_schema_migration.PRIMARY_V3:
+                    historical_named_execution_count += 1
+                    continue
+
+                data = record.get("data") if isinstance(record.get("data"), dict) else {}
+                if data.get("execution_phase") != "PRE_DISTRIBUTION":
+                    continue
+                if data.get("signal_event_available") is not True:
+                    continue
+
+                attempt_id = str(record.get("execution_attempt_id") or "").strip()
+                if not attempt_id:
+                    invalid_count += 1
+                    continue
+                if attempt_id in seen_primary_attempts:
+                    continue
+                seen_primary_attempts.add(attempt_id)
+                primary_v3_count += 1
+
+            elif event_type == "signal_event":
+                event_id = str(record.get("event_id") or "").strip()
+                if event_id and event_id in seen_legacy_event_ids:
+                    continue
+                if event_id:
+                    seen_legacy_event_ids.add(event_id)
+                legacy_fallback_count += 1
+            else:
                 continue
-            if event_id:
-                seen_event_ids.add(event_id)
 
             stage = record.get("stage")
             classification = _classify_stage(stage)
             if classification == "SUPPORTED":
-                counts[stage] += 1  # type: ignore[index]
+                counts[str(stage)] += 1
             elif classification == "UNSUPPORTED":
                 unsupported_stages[str(stage)] = unsupported_stages.get(str(stage), 0) + 1
             else:
@@ -65,6 +102,9 @@ def compute_signal_funnel() -> Dict[str, Any]:
             "CONFIRM": 0,
             "OPEN_NOW": 0,
             "total_signal_events": 0,
+            "primary_v3_count": 0,
+            "legacy_fallback_count": 0,
+            "historical_named_execution_count": 0,
             "invalid_count": 0,
             "unsupported_stages": {},
         }
@@ -74,6 +114,9 @@ def compute_signal_funnel() -> Dict[str, Any]:
         "no_data": total == 0,
         **counts,
         "total_signal_events": total,
+        "primary_v3_count": primary_v3_count,
+        "legacy_fallback_count": legacy_fallback_count,
+        "historical_named_execution_count": historical_named_execution_count,
         "invalid_count": invalid_count,
         "unsupported_stages": unsupported_stages,
     }
@@ -150,7 +193,7 @@ def build_research_report() -> Dict[str, Any]:
     limitations: List[str] = []
 
     if funnel.get("no_data"):
-        observations.append("No signal_event lifecycle records found in the engine log.")
+        observations.append("No candidate lifecycle records found in the engine log.")
     else:
         observations.append(
             f"Signal funnel: PRE={funnel.get('PRE', 0)}, CONFIRM={funnel.get('CONFIRM', 0)}, "
