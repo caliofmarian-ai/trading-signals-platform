@@ -64,3 +64,63 @@ def test_primary_v3_guard_rejects_legacy_and_unknown_types() -> None:
         migration.require_primary_v3_event_type("not_a_real_event")
 
     assert migration.require_primary_v3_event_type("route_publish_result") == "route_publish_result"
+
+
+def test_primary_v3_builder_constructs_only_v3_identity() -> None:
+    event = migration.build_primary_v3_event(
+        "route_reset",
+        {"route": "FREE", "reason": "TEST_RESET"},
+        source={"module": "tests", "function": "primary_builder"},
+    )
+
+    assert event["event_type"] == "route_reset"
+    assert event["schema_version"] == "3.0.0"
+    assert migration.classify_event_identity(event) == migration.PRIMARY_V3
+
+
+def test_primary_v3_builder_rejects_legacy_family() -> None:
+    with pytest.raises(migration.EventSchemaMigrationError, match="legacy compatibility"):
+        migration.build_primary_v3_event(
+            "tier_reset",
+            {
+                "reset_time_london": "08:10 Europe/London",
+                "effective_date_london": "2026-09-06",
+                "before": {},
+                "after": {},
+            },
+        )
+
+
+def test_primary_v3_builder_does_not_inherit_v2_environment_override(monkeypatch) -> None:
+    monkeypatch.setattr(migration.observability_logger, "SCHEMA_VERSION", "2.0.0")
+
+    event = migration.build_primary_v3_event(
+        "route_reset",
+        {"route": "FREE", "reason": "ENV_OVERRIDE_TEST"},
+    )
+
+    assert event["schema_version"] == "3.0.0"
+    assert migration.classify_event_identity(event) == migration.PRIMARY_V3
+
+
+def test_historical_validator_preserves_v2_identity_without_mutating_source() -> None:
+    current = migration.observability_logger.build_event(
+        "route_reset",
+        {"route": "FREE", "reason": "HISTORICAL_TEST"},
+        source={"module": "tests", "function": "historical_validator"},
+    )
+    historical = dict(current)
+    historical["schema_version"] = "2.0.0"
+    snapshot = deepcopy(historical)
+
+    validated = migration.validate_historical_event(historical)
+
+    assert validated["event_type"] == "route_reset"
+    assert validated["schema_version"] == "2.0.0"
+    assert migration.classify_event_identity(validated) == migration.HISTORICAL_SCHEMA
+    assert historical == snapshot
+
+
+def test_historical_validator_rejects_missing_identity_instead_of_inferring() -> None:
+    with pytest.raises(migration.EventSchemaMigrationError, match="invalid identity"):
+        migration.validate_historical_event({"event_type": "route_reset", "data": {}})
