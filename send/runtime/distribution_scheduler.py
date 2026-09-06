@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from core import distribution_router
+from core import distribution_router_primary_v3 as distribution_router
 from core import observability_logger
 
 
@@ -51,12 +51,6 @@ def scheduler_loop():
 
 
 def do_daily_reset():
-    """Delegate reset evidence to the reset owner; do not emit a second legacy event.
-
-    `distribution_router.reset_daily_counters()` already routes the reset through
-    the distribution reset implementation and its observability contract.  The
-    scheduler must trigger the operation, not manufacture a duplicate
-    `tier_reset` record after the operation returns.
-    """
+    """Delegate daily reset to the primary-v3 distribution boundary."""
 
     distribution_router.reset_daily_counters()
