@@ -30,6 +30,12 @@ def _text(value: str, name: str) -> str:
     return value.strip()
 
 
+def _optional_text(value: Optional[str], name: str) -> Optional[str]:
+    if value is None:
+        return None
+    return _text(value, name)
+
+
 def _positive_number(value: Any, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise SignalEventUnavailable(f"{name} must be a number")
@@ -83,6 +89,11 @@ class SignalEvent:
     payload: Mapping[str, Any]
     schema_version: str = SIGNAL_EVENT_SCHEMA_VERSION
     distribution_enabled: bool = False
+    setup_correlation_id: Optional[str] = None
+    decision_id: Optional[str] = None
+    decision_audit_id: Optional[str] = None
+    execution_attempt_id: Optional[str] = None
+    fsm_transition_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.event_type != "SIGNAL_CANDIDATE":
@@ -91,6 +102,14 @@ class SignalEvent:
             raise SignalEventUnavailable("stage must be PRE, CONFIRM, or OPEN_NOW")
         for name in ("signal_id", "symbol", "timeframe", "schema_version"):
             _text(getattr(self, name), name)
+        for name in (
+            "setup_correlation_id",
+            "decision_id",
+            "decision_audit_id",
+            "execution_attempt_id",
+            "fsm_transition_id",
+        ):
+            _optional_text(getattr(self, name), name)
         if self.direction not in {"BUY", "SELL"}:
             raise SignalEventUnavailable("direction must be BUY or SELL")
         if self.buffer_mode not in ALLOWED_BUFFER_MODES:
@@ -246,13 +265,22 @@ def _execution_snapshot(
 
 
 def _semantic_payload(
-    decision: DecisionObject, execution: Mapping[str, Any]
+    decision: DecisionObject,
+    execution: Mapping[str, Any],
+    *,
+    execution_attempt_id: Optional[str],
+    fsm_transition_id: Optional[str],
 ) -> Dict[str, Any]:
     return {
         "strategy": "Binary Trading",
         "strategy_version": "2.0.0",
         "canonical_specification": "ALGO_SPEC_v3.0.0",
         "decision_object_schema_version": decision.schema_version,
+        "setup_correlation_id": decision.setup.cycle_id,
+        "decision_id": decision.decision_id,
+        "decision_audit_id": decision.decision_audit_id,
+        "execution_attempt_id": execution_attempt_id,
+        "fsm_transition_id": fsm_transition_id,
         "latest_price": float(decision.market_context.latest_price),
         "price_speed": float(decision.market_context.price_speed),
         "directional_effective_speed": decision.market_context.directional_effective_speed,
@@ -282,6 +310,8 @@ def build_signal_event(
     buffer_mode: str,
     created_ts: int,
     execution_time: Optional[ExecutionTimeResult] = None,
+    execution_attempt_id: Optional[str] = None,
+    fsm_transition_id: Optional[str] = None,
 ) -> SignalEvent:
     """Build an internal candidate without conflating Model and Execution Time."""
 
@@ -293,6 +323,8 @@ def build_signal_event(
         raise SignalEventUnavailable("real model_expiry is required")
     model_expiry = _positive_number(decision.time.model_expiry, "model_expiry")
     normalized_buffer_mode = _text(buffer_mode, "buffer_mode").upper()
+    normalized_execution_attempt_id = _optional_text(execution_attempt_id, "execution_attempt_id")
+    normalized_fsm_transition_id = _optional_text(fsm_transition_id, "fsm_transition_id")
     execution = _execution_snapshot(decision, execution_time)
     if decision.kind == "OPEN_NOW" and not execution["available"]:
         raise SignalEventUnavailable(
@@ -318,6 +350,16 @@ def build_signal_event(
         candle_ts=decision.setup.evaluated_ts,
         created_ts=created_ts,
         entry_price=float(decision.market_context.latest_price),
-        payload=_semantic_payload(decision, execution),
+        payload=_semantic_payload(
+            decision,
+            execution,
+            execution_attempt_id=normalized_execution_attempt_id,
+            fsm_transition_id=normalized_fsm_transition_id,
+        ),
         distribution_enabled=False,
+        setup_correlation_id=decision.setup.cycle_id,
+        decision_id=decision.decision_id,
+        decision_audit_id=decision.decision_audit_id,
+        execution_attempt_id=normalized_execution_attempt_id,
+        fsm_transition_id=normalized_fsm_transition_id,
     )
