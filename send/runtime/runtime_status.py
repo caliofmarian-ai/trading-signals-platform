@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import time
 from typing import Any, Dict
@@ -41,16 +42,29 @@ def update_status(**changes: Any) -> Dict[str, Any]:
     return payload
 
 
-def read_status() -> Dict[str, Any]:
-    payload = _read_status_file()
-    try:
-        from tools import strategy_auditor_runtime
+def _strategy_auditor_env_presence() -> Dict[str, bool]:
+    """Return presence-only schedule evidence without disclosing configured values."""
+    return {
+        "STRATEGY_AUDITOR_ENABLED": bool(os.getenv("STRATEGY_AUDITOR_ENABLED", "").strip()),
+        "STRATEGY_AUDITOR_DAILY_TIME": bool(os.getenv("STRATEGY_AUDITOR_DAILY_TIME", "").strip()),
+        "STRATEGY_AUDITOR_TIMEZONE": bool(os.getenv("STRATEGY_AUDITOR_TIMEZONE", "").strip()),
+        "STRATEGY_AUDITOR_DAILY_TIME_UTC": bool(os.getenv("STRATEGY_AUDITOR_DAILY_TIME_UTC", "").strip()),
+    }
 
+
+def read_status() -> Dict[str, Any]:
+    payload = dict(_read_status_file())
+    payload["strategy_auditor_env_presence"] = _strategy_auditor_env_presence()
+    try:
+        # Import the canonical R-019 status authority directly by module name.
+        # `tools.__init__` may intentionally expose the local-time adapter as the
+        # package-level `strategy_auditor_runtime` attribute; that adapter owns
+        # scheduling, while durable status persistence remains in this base module.
+        strategy_auditor_runtime = importlib.import_module("tools.strategy_auditor_runtime")
         auditor_status = strategy_auditor_runtime.read_auditor_status(
             max_age_seconds=strategy_auditor_runtime.STATUS_OVERLAY_MAX_AGE_SECONDS
         )
         if auditor_status:
-            payload = dict(payload)
             payload["strategy_auditor"] = auditor_status
     except Exception:
         pass
