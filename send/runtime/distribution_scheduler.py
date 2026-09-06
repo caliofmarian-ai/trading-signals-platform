@@ -51,10 +51,12 @@ def scheduler_loop():
 
 
 def do_daily_reset():
+    """Delegate reset evidence to the reset owner; do not emit a second legacy event.
+
+    `distribution_router.reset_daily_counters()` already routes the reset through
+    the distribution reset implementation and its observability contract.  The
+    scheduler must trigger the operation, not manufacture a duplicate
+    `tier_reset` record after the operation returns.
+    """
 
     distribution_router.reset_daily_counters()
-
-    observability_logger.log_event({
-        "event_type": "tier_reset",
-        "message": "Daily tier counters reset"
-    })
