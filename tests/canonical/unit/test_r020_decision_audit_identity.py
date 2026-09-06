@@ -99,15 +99,17 @@ def test_decision_identity_is_stable_for_same_materialized_semantics() -> None:
     assert first.to_dict()["decision_audit_id"] == first.decision_audit_id
 
 
-def test_non_identity_market_snapshot_change_does_not_recompute_lineage_identity() -> None:
+def test_same_setup_with_changed_pre_fsm_truth_gets_distinct_decision_identity() -> None:
     first = _decision("PRE", 100, latest_price=1.11234)
-    replay = replace(
+    next_evaluation = replace(
         first,
         market_context=replace(first.market_context, latest_price=1.11235),
     )
 
-    assert replay.decision_id == first.decision_id
-    assert replay.decision_audit_id == first.decision_audit_id
+    assert next_evaluation.setup.cycle_id == first.setup.cycle_id
+    assert next_evaluation.setup.evaluated_ts == first.setup.evaluated_ts
+    assert next_evaluation.decision_id != first.decision_id
+    assert next_evaluation.decision_audit_id != first.decision_audit_id
 
 
 def test_material_decision_boundary_change_changes_decision_identity() -> None:
