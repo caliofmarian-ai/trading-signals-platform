@@ -1,142 +1,144 @@
 # R-021 — Event Schema Migration Cleanup
 
-## Baseline and migration boundary
+## Baseline and implemented migration boundary
 
 Date: 2026-09-06
 Issue: #148
+PR: #149
 Parent remediation: #97
 Base main: `ecc09c4c25ec687c3d2ea1863cf4388c67360c88`
-Status: IN PROGRESS — AUDIT / IMPLEMENTATION BOUNDARY MATERIALIZED
+Status: IMPLEMENTATION MATERIALIZED — FINAL VALIDATION REQUIRED
 
 ## 1. Canonical authority
 
-The active Master Index declares `EVENT_SCHEMA_SPEC_v3.0.0.md` Active Canonical and the runtime/event migration must therefore treat v3 semantics as primary authority.
+The active Master Index declares `EVENT_SCHEMA_SPEC_v3.0.0.md` Active Canonical. Runtime/event migration therefore treats v3 semantics as primary authority.
 
-The active Event Schema v3 specification states that:
-- `signal_execution_result`, `route_publish_result`, and `signal_stage_visible` are primary v3 truth families for their respective domains;
+The active Event Schema v3 authority establishes that:
+- `signal_execution_result`, `route_publish_result`, `route_reset`, and `signal_stage_visible` are primary v3 truth families for their respective domains;
 - historical `signal_emitted` remains valid only under its original historical schema meaning;
-- generic legacy event names including `decision`, `signal_event`, `tier_publish`, and `tier_reset` may exist only in explicit migration adapters and are not primary v3 names;
+- generic legacy names including `decision`, `signal_event`, `tier_publish`, and `tier_reset` are migration-adapter-only and are not primary v3 names;
 - historical evidence must not be silently reinterpreted.
 
-The stale header inside the active `EVENT_SCHEMA_SPEC_v3.0.0.md` still says proposed/not active. That is a real documentation drift but belongs to R-024 canonical header/status cleanup. R-021 uses the Master Index and activation state as authority and does not silently rewrite that separate governance defect.
+The stale lower-level header inside the active Event Schema specification remains an R-024 documentation-governance defect. R-021 does not silently fold that separate cleanup into this remediation.
 
-## 2. Confirmed runtime state on current main
+## 2. Baseline drift confirmed on R-021 base main
 
-### 2.1 Observability logger
+### 2.1 Shared observability/schema surface
 
-`send/core/observability_logger.py` currently:
-- defaults `EVENT_SCHEMA_VERSION` to `3.0.0`;
-- loads `send/schema/event_schema.json` as runtime implementation schema;
-- allows normal `build_event()` and shorthand normalization to construct any event family registered by the runtime schema;
-- validates an envelope against the schema-declared allowed schema versions.
+At the audited base:
+- `send/core/observability_logger.py` defaulted `EVENT_SCHEMA_VERSION` to `3.0.0`;
+- `send/schema/event_schema.json` accepted both `2.0.0` and `3.0.0` envelopes so historical evidence remained validatable;
+- the same schema registered both primary v3 families and legacy compatibility families;
+- the low-level logger/builder therefore served both current construction and historical compatibility plumbing.
 
-This means the write API currently has no explicit boundary between primary v3 construction and legacy compatibility construction.
+Deleting v2/legacy definitions from that shared validator would have broken historical evidence. R-021 therefore separates **primary write authority** from **historical validation authority** instead of rewriting history.
 
-### 2.2 Runtime schema
+### 2.2 Distribution dual-write
 
-`send/schema/event_schema.json` currently:
-- identifies itself as schema `3.0.0`;
-- accepts envelope `schema_version` values `2.0.0` and `3.0.0`;
-- registers primary v3 families such as `decision_evaluated`, `decision_promoted`, `decision_rejected`, `fsm_transition`, `signal_execution_result`, `route_publish_attempt`, `route_publish_result`, `route_reset`, `signal_stage_visible`, and outcome/admin families;
-- also registers legacy compatibility families including `decision`, `signal_event`, `tier_publish`, and `tier_reset` as ordinary constructible event types.
+The base `distribution_router_v3` emitted primary v3 route events but also emitted migration-era `tier_publish` and `tier_reset` adapters. The live distribution scheduler additionally used the legacy reset path and wrote another shorthand `tier_reset`.
 
-The schema therefore mixes write authority and historical compatibility in one undifferentiated surface.
+This was the highest-confidence live legacy re-entry path.
 
-### 2.3 Live strategy/distribution path
+### 2.3 Historical consumers
 
-`send/core/signal_engine.py` imports `core.distribution_router_v3 as distribution_router`, so the live Signal Engine is already routed through the v3 distribution implementation.
+Confirmed compatibility consumers included:
+- `send/core/analytics_engine.py`, which read `tier_publish` distribution evidence;
+- `send/intelligence/research_engine.py`, which read `signal_event` lifecycle evidence;
+- older audit/test readers;
+- the R-018 Strategy Auditor compatibility layer.
 
-`send/core/distribution_router_v3.py` correctly emits primary v3 events including:
-- `route_publish_attempt`;
-- `route_publish_result`;
-- `route_reset`;
-- `route_state_changed`;
-- `route_mapping_invalid`;
-- `signal_stage_visible`.
+These historical readers did not justify continued legacy writes from the current live path.
 
-However, the same live v3 router intentionally also writes legacy adapter events:
-- every route result is additionally passed through `_legacy_publish_adapter()` -> legacy `_log_tier_publish()` -> `tier_publish`;
-- daily reset writes primary `route_reset` events and then additionally constructs/writes a `tier_reset` adapter.
+## 3. Implemented governing distinction
 
-This is the main confirmed R-021 re-entry path: new live v3 activity creates fresh legacy event records instead of limiting legacy semantics to historical compatibility reads.
+### Primary v3 write authority
 
-### 2.4 Live distribution scheduler
+`send/core/event_schema_migration.py` now provides the explicit primary construction contract:
+- `PRIMARY_SCHEMA_VERSION = "3.0.0"`;
+- `build_primary_v3_event()` stamps v3 explicitly and does not inherit a v2 environment override;
+- `require_primary_v3_event_type()` rejects legacy-only families and unknown families;
+- a constructed event must classify as `PRIMARY_V3` or construction fails.
 
-`send/runtime/system_boot.py` starts `runtime.distribution_scheduler.scheduler_loop` as a live worker.
-
-`send/runtime/distribution_scheduler.py` currently:
-- imports the legacy `core.distribution_router`;
-- calls `distribution_router.reset_daily_counters()`;
-- additionally emits a raw shorthand `tier_reset` event.
-
-The legacy router reset path itself also writes `tier_reset`, so this worker is another current producer of fresh legacy distribution events.
-
-### 2.5 Legacy consumers that must not be broken blindly
-
-Repository consumers still exist for historical/legacy evidence. Confirmed examples include:
-- `send/core/analytics_engine.py` distribution summary logic that reads `tier_publish`;
-- `send/intelligence/research_engine.py` signal-funnel logic that reads `signal_event`;
-- older audit/report surfaces and tests that intentionally validate migration-era evidence;
-- R-018 Strategy Auditor compatibility handling, which already distinguishes v3 primary decision events from legacy-compatible inputs.
-
-These are read-side compatibility concerns. They do not justify continued legacy writes from the new live v3 path.
-
-## 3. R-021 governing distinction
-
-R-021 will separate two concerns that are currently conflated:
-
-### Primary write authority
-
-New runtime evidence created by current code must use v3 primary event families and v3 semantics.
+The ordinary low-level observability validator remains compatibility plumbing because historical v2 records still need validation. It is no longer treated as the authority that decides whether an event is a **new primary write**.
 
 ### Historical read compatibility
 
-Existing v2/legacy records remain readable under their original meanings through explicit bounded compatibility paths. Historical records must never be relabeled or silently upgraded to v3 truth.
+The same migration layer provides:
+- `LEGACY_COMPAT` identity for the bounded legacy families;
+- `HISTORICAL_SCHEMA` identity for non-v3 stored events;
+- `validate_historical_event()` for read-side validation without changing original `event_type` or `schema_version`;
+- no silent promotion from v2/legacy evidence to v3 truth.
 
-## 4. Implementation sequence
+This makes compatibility one-way: old evidence can be read, but it is not a source of new primary identity.
 
-### Phase A — stop fresh legacy distribution writes
+## 4. Implemented live runtime boundary
 
-1. Remove live `tier_publish` adapter emission from `distribution_router_v3` after confirming all required v3 `route_publish_result` fields and consumers are preserved.
-2. Remove live `tier_reset` adapter emission from `distribution_router_v3` while preserving primary `route_reset` evidence.
-3. Move the active distribution scheduler away from the legacy reset/write path so it cannot create new `tier_reset` records.
-4. Preserve distribution limits, route state, reset timing, dedup, publication evidence, Telegram behavior, and outcome registration exactly.
+### 4.1 Distribution
 
-### Phase B — separate write validation from legacy read validation
+`send/core/distribution_router_primary_v3.py` wraps the existing validated v3 routing mechanics while replacing only the migration-era write hooks:
+- route evaluation, entitlements, daily limits, destination mapping, deduplication, Telegram publication, feedback, outcome registration, and publication evidence remain unchanged;
+- primary `route_publish_attempt`, `route_publish_result`, `route_reset`, route-state events, and `signal_stage_visible` remain written;
+- fresh `tier_publish` and `tier_reset` writes are suppressed from the active primary runtime boundary.
 
-1. Introduce an explicit primary-v3 construction boundary in `observability_logger`.
-2. Prevent ordinary new-runtime `build_event()` / shorthand logging paths from constructing legacy-only families.
-3. Keep a narrow explicit compatibility validator/adapter for historical evidence where still required.
-4. Do not mutate original schema_version or event_type while reading historical records.
+### 4.2 Engine and scheduler entry points
 
-### Phase C — migrate consumers without erasing history
+The active runtime entry points bind to the primary-v3 distribution boundary:
+- `runtime.engine_loop` binds Signal Engine distribution to `distribution_router_primary_v3` before the engine loop executes;
+- `runtime.distribution_scheduler` imports `distribution_router_primary_v3` directly for daily reset.
 
-1. Update analytics/research consumers to prefer v3 primary families.
-2. Keep bounded fallback parsing for historical `tier_publish`, `signal_event`, `decision`, and other explicitly supported legacy records.
-3. Ensure a single physical event is never double-counted merely because both primary and legacy representations existed historically.
-4. Document authoritative precedence when both formats are present.
+An AST regression guard inspects these active write entry points and fails if a literal `decision`, `signal_event`, `tier_publish`, or `tier_reset` construction is reintroduced through `build_event`, `_log_event`, or shorthand `log_event` calls.
 
-### Phase D — runtime schema boundary
+## 5. Implemented consumer migration
 
-1. Keep runtime schema definitions sufficient to validate historical evidence through the explicit compatibility path.
-2. Make v3 the only ordinary live write schema.
-3. Prevent new code from using v2 schema_version or legacy-only event families through the primary builder.
+### Distribution analytics
 
-## 5. Regression requirements
+`analytics_engine._load_distribution_metrics()` now:
+- treats `route_publish_result` with v3 identity as primary evidence;
+- retains older `tier_publish`/historical route-result rows as bounded fallback;
+- suppresses a matching legacy representation when the same observable publication fingerprint already has primary v3 evidence;
+- reports primary, fallback, duplicate-suppression, historical-named, and invalid counts separately.
 
-R-021 tests must prove at minimum:
-- live distribution writes v3 primary route events without fresh `tier_publish`/`tier_reset` duplication;
-- live scheduler cannot reintroduce legacy reset writes;
-- ordinary primary event construction rejects legacy-only event families;
-- historical legacy validation/reading remains available through an explicit compatibility path;
-- v2 history is not silently rewritten to v3;
-- analytics/research can consume v3 primary evidence and historical legacy evidence without double counting;
-- R-018 Strategy Auditor behavior remains correct;
-- provider selector regression passes;
-- Telegram Admin regression passes;
-- full repository suite passes.
+### Research funnel
 
-## 6. Non-goals / safety boundary
+`research_engine.compute_signal_funnel()` now:
+- uses PRE_DISTRIBUTION `signal_execution_result` with `signal_event_available=true` as primary v3 candidate evidence;
+- deduplicates by `execution_attempt_id`;
+- excludes POST_DISTRIBUTION rows from candidate counting;
+- retains historical `signal_event` as bounded fallback;
+- suppresses matching `(signal_id, stage)` legacy rows when primary v3 candidate evidence exists;
+- leaves unmatched historical evidence explicitly countable as fallback.
+
+## 6. Historical integrity rules
+
+R-021 does not:
+- edit stored JSONL history;
+- change an existing record's `schema_version`;
+- relabel a legacy `event_type` as v3;
+- infer missing correlation merely to force deduplication;
+- convert COMMUNITY_TRUTH or operational evidence into strategy-performance truth.
+
+If evidence cannot be unambiguously correlated, it remains separately classified rather than guessed.
+
+## 7. Regression requirements and current evidence
+
+R-021 regression coverage proves:
+- live distribution writes primary route events without fresh `tier_publish` / `tier_reset` duplication;
+- live scheduler cannot manufacture a second legacy reset event;
+- primary event construction rejects legacy-only event families;
+- primary construction remains v3 even if the lower-level logger's configured version is altered to v2 in a test;
+- historical v2 validation preserves original identity;
+- analytics uses v3-first distribution evidence with bounded legacy fallback and deduplication;
+- Research uses v3-first candidate evidence with bounded legacy fallback and transition deduplication;
+- active runtime entry points cannot reintroduce literal legacy event writes without failing CI.
+
+A previously exact PR head `7fb5e15fd33d17b68a57751928f2ff8a88b7a049` passed:
+- provider selector: 5 tests;
+- Telegram Admin regression: 72 tests;
+- full repository suite: 1232 tests.
+
+Later Research mixed-history deduplication, anti-reentry coverage, and documentation synchronization changed the branch head. The resulting exact final head must pass the same CI gates before PR #149 is marked Ready for Review.
+
+## 8. Non-goals / safety boundary
 
 R-021 does not change:
 - strategy mathematics or thresholds;
@@ -145,12 +147,12 @@ R-021 does not change:
 - 2-second evaluation cadence;
 - FSM trading policy;
 - distribution entitlements or daily limits;
-- Telegram authorization/roles;
+- Telegram authorization or roles;
 - outcome truth definitions;
 - broker execution state.
 
 Broker execution remains disabled.
 
-## 7. Current conclusion
+## 9. Completion rule
 
-R-021 is required. The repository already has a v3 primary event model, but its runtime compatibility layer is still bidirectional: historical compatibility is allowed to generate new legacy writes. The remediation target is one-way compatibility — v3-only primary writes, bounded legacy reads, preserved historical meaning, and no silent schema reinterpretation.
+R-021 is complete only when the exact final PR head passes CI and final review finds no unresolved migration correctness defect. After Owner merge, `REMEDIATION_MASTER_PLAN.md` must be reconciled on `main` with the merged R-020/R-021 state and final main validation evidence.
