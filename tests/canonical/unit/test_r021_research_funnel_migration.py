@@ -32,12 +32,12 @@ def _execution(*, phase: str, attempt_id: str = "A-1", stage: str = "OPEN_NOW", 
     }
 
 
-def _legacy(*, event_id: str = "L-1", stage: str = "PRE") -> dict:
+def _legacy(*, event_id: str = "L-1", signal_id: str = "OLD-1", stage: str = "PRE") -> dict:
     return {
         "event_type": "signal_event",
         "schema_version": "2.0.0",
         "event_id": event_id,
-        "signal_id": "OLD-1",
+        "signal_id": signal_id,
         "stage": stage,
         "data": {},
     }
@@ -60,6 +60,7 @@ def test_v3_funnel_counts_only_pre_distribution_candidate(monkeypatch, tmp_path:
     assert funnel["total_signal_events"] == 1
     assert funnel["primary_v3_count"] == 1
     assert funnel["legacy_fallback_count"] == 0
+    assert funnel["legacy_duplicate_suppressed_count"] == 0
 
 
 def test_v3_funnel_deduplicates_execution_attempt_identity(monkeypatch, tmp_path: Path) -> None:
@@ -76,6 +77,22 @@ def test_v3_funnel_deduplicates_execution_attempt_identity(monkeypatch, tmp_path
     assert funnel["primary_v3_count"] == 1
 
 
+def test_matching_legacy_candidate_is_suppressed_when_primary_v3_exists(monkeypatch, tmp_path: Path) -> None:
+    path = tmp_path / "engine.jsonl"
+    primary = _execution(phase="PRE_DISTRIBUTION", attempt_id="A-1", stage="OPEN_NOW")
+    legacy = _legacy(event_id="L-1", signal_id="SIG-1", stage="OPEN_NOW")
+    _write(path, [legacy, primary])
+    research = _reload_research(monkeypatch, path)
+
+    funnel = research.compute_signal_funnel()
+
+    assert funnel["OPEN_NOW"] == 1
+    assert funnel["total_signal_events"] == 1
+    assert funnel["primary_v3_count"] == 1
+    assert funnel["legacy_fallback_count"] == 0
+    assert funnel["legacy_duplicate_suppressed_count"] == 1
+
+
 def test_legacy_signal_event_remains_bounded_historical_fallback(monkeypatch, tmp_path: Path) -> None:
     path = tmp_path / "engine.jsonl"
     event = _legacy(event_id="L-1", stage="PRE")
@@ -87,6 +104,24 @@ def test_legacy_signal_event_remains_bounded_historical_fallback(monkeypatch, tm
     assert funnel["PRE"] == 1
     assert funnel["primary_v3_count"] == 0
     assert funnel["legacy_fallback_count"] == 1
+    assert funnel["legacy_duplicate_suppressed_count"] == 0
+
+
+def test_non_matching_legacy_candidate_remains_fallback(monkeypatch, tmp_path: Path) -> None:
+    path = tmp_path / "engine.jsonl"
+    primary = _execution(phase="PRE_DISTRIBUTION", attempt_id="A-1", stage="OPEN_NOW")
+    legacy = _legacy(event_id="L-1", signal_id="OLD-1", stage="PRE")
+    _write(path, [primary, legacy])
+    research = _reload_research(monkeypatch, path)
+
+    funnel = research.compute_signal_funnel()
+
+    assert funnel["OPEN_NOW"] == 1
+    assert funnel["PRE"] == 1
+    assert funnel["total_signal_events"] == 2
+    assert funnel["primary_v3_count"] == 1
+    assert funnel["legacy_fallback_count"] == 1
+    assert funnel["legacy_duplicate_suppressed_count"] == 0
 
 
 def test_non_v3_signal_execution_result_is_not_silently_reinterpreted(monkeypatch, tmp_path: Path) -> None:
