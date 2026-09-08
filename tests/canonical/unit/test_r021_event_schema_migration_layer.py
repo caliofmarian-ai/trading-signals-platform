@@ -1,10 +1,55 @@
 from __future__ import annotations
 
+import ast
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
 from core import event_schema_migration as migration
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+ACTIVE_RUNTIME_WRITE_PATHS = (
+    REPO_ROOT / "send" / "core" / "signal_engine.py",
+    REPO_ROOT / "send" / "core" / "distribution_router_primary_v3.py",
+    REPO_ROOT / "send" / "runtime" / "engine_loop.py",
+    REPO_ROOT / "send" / "runtime" / "distribution_scheduler.py",
+)
+
+
+def _literal_event_type_from_call(node: ast.Call) -> str | None:
+    function_name = ""
+    if isinstance(node.func, ast.Attribute):
+        function_name = node.func.attr
+    elif isinstance(node.func, ast.Name):
+        function_name = node.func.id
+
+    if function_name not in {"build_event", "log_event", "_log_event"}:
+        return None
+
+    if node.args:
+        first = node.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            return first.value
+        if isinstance(first, ast.Dict):
+            for key, value in zip(first.keys, first.values):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "event_type"
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    return value.value
+
+    for keyword in node.keywords:
+        if (
+            keyword.arg == "event_type"
+            and isinstance(keyword.value, ast.Constant)
+            and isinstance(keyword.value.value, str)
+        ):
+            return keyword.value.value
+    return None
 
 
 def test_legacy_compat_inventory_is_explicit_and_bounded() -> None:
@@ -124,3 +169,22 @@ def test_historical_validator_preserves_v2_identity_without_mutating_source() ->
 def test_historical_validator_rejects_missing_identity_instead_of_inferring() -> None:
     with pytest.raises(migration.EventSchemaMigrationError, match="invalid identity"):
         migration.validate_historical_event({"event_type": "route_reset", "data": {}})
+
+
+def test_active_runtime_entrypoints_cannot_reintroduce_literal_legacy_event_writes() -> None:
+    violations: list[str] = []
+    legacy_types = set(migration.legacy_compat_event_types())
+
+    for path in ACTIVE_RUNTIME_WRITE_PATHS:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            event_type = _literal_event_type_from_call(node)
+            if event_type in legacy_types:
+                violations.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}:{event_type}")
+
+    assert violations == [], (
+        "active runtime write paths must not construct legacy compatibility events: "
+        + ", ".join(violations)
+    )
