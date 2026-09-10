@@ -2,11 +2,13 @@
 
 Issue: #151 — R-023 Dependency security compatibility upgrade
 
-Baseline reviewed: `e520a51269a7ff34ffc7398276b75005dd67f20f`
+Original baseline reviewed: `e520a51269a7ff34ffc7398276b75005dd67f20f`
+
+Reconciled canonical main: `800a24f595a3064a7be37d5829c8af40dc27aa99` (R-022 / PR #155 merged)
 
 Branch: `remediation/r023-dependency-security`
 
-Date: 2026-09-10
+Date: 2026-09-11
 
 ## Scope and decision
 
@@ -93,19 +95,31 @@ Residual risk: fresh environments can resolve newer compatible transitive versio
 
 These tests make no external network calls and contain no production credentials.
 
+## R-022 reconciliation
+
+PR #155 / R-022 is canonical in `main` at `800a24f595a3064a7be37d5829c8af40dc27aa99` and provides the permanent `Repository CI` workflow with stable required-check identity `Required Repository CI` and explicit exact-head verification.
+
+R-023 was reconciled onto that exact main. The reconciled branch is one commit ahead and zero commits behind the R-022 main, with the same three-file R-023 write-set only:
+
+- `requirements.txt`;
+- `tests/canonical/unit/test_dependency_transport_compatibility.py`;
+- `audit/repository-wide-audit-2026-09-01/R-023_DEPENDENCY_SECURITY_COMPATIBILITY.md`.
+
+No R-022 workflow file was modified by R-023.
+
 ## Required exact-head validation
 
-Before merge readiness, the final branch head must pass:
+Before merge readiness, the final branch head must pass the canonical `Required Repository CI` gate, including:
 
-1. import/compile validation;
-2. `tests/canonical/unit/test_dependency_transport_compatibility.py`;
-3. existing Requests/Twelve Data/Finnhub compatibility regressions;
-4. `tests/canonical/unit/test_market_data_provider_control.py`;
-5. `tests/telegram_admin_ui_restoration/test_admin_ui_restoration.py`;
-6. full `python -m pytest -q`;
-7. exact-head GitHub Actions CI.
+1. exact-head checkout and exact SHA verification;
+2. dependency install and critical compile validation;
+3. repository CI governance contract;
+4. provider selector regression;
+5. Telegram Admin regression;
+6. critical canonical contract regressions;
+7. full `python -m pytest -q` repository regression, which includes the focused R-023 dependency transport compatibility tests.
 
-If R-022 becomes canonical first, this branch must be rebased/reconciled onto the new main and revalidated under the permanent CI gate before merge.
+Only the GitHub Actions run attached to the final R-023 head is authoritative for merge readiness. A run attached to any superseded head is historical evidence only.
 
 ## Invariants unchanged
 
