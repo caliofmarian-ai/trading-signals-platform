@@ -1,0 +1,78 @@
+name: Repository CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repository-ci:
+    name: Required Repository CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact change head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Verify exact checked-out commit
+        shell: bash
+        run: |
+          EXPECTED_SHA="${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Expected exact SHA $EXPECTED_SHA but checked out $ACTUAL_SHA" >&2
+            exit 1
+          fi
+          echo "Validated exact commit: $ACTUAL_SHA"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install -r requirements.txt
+
+      - name: Compile critical provider and admin modules
+        run: |
+          python -m py_compile \
+            send/core/market_data_provider_control.py \
+            send/core/admin_commands.py \
+            send/core/telegram_admin_ui.py \
+            send/runtime/market_client.py
+
+      - name: Validate repository CI governance contract
+        run: |
+          python -m pytest -q tests/repository_governance/test_required_ci_gate.py
+
+      - name: Run provider selector regression
+        run: |
+          python -m pytest -q tests/canonical/unit/test_market_data_provider_control.py
+
+      - name: Run Telegram Admin regression
+        run: |
+          python -m pytest -q tests/telegram_admin_ui_restoration/test_admin_ui_restoration.py
+
+      - name: Run critical canonical contract regressions
+        run: |
+          python -m pytest -q \
+            tests/canonical/contract \
+            tests/canonical/integration/test_r021_primary_distribution_runtime.py \
+            tests/canonical/unit/test_r021_distribution_analytics_migration.py \
+            tests/canonical/unit/test_r021_event_schema_migration_cleanup.py \
+            tests/canonical/unit/test_r021_event_schema_migration_layer.py \
+            tests/canonical/unit/test_r021_research_funnel_migration.py
+
+      - name: Run full repository regression suite
+        run: |
+          python -m pytest -q
