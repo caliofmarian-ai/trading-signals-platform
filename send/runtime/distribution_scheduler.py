@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from core import distribution_router
+from core import distribution_router_primary_v3 as distribution_router
 from core import observability_logger
 
 
@@ -51,10 +51,6 @@ def scheduler_loop():
 
 
 def do_daily_reset():
+    """Delegate daily reset to the primary-v3 distribution boundary."""
 
     distribution_router.reset_daily_counters()
-
-    observability_logger.log_event({
-        "event_type": "tier_reset",
-        "message": "Daily tier counters reset"
-    })

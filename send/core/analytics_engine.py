@@ -7,6 +7,7 @@ import hashlib
 import os
 from typing import Any, Dict, List, Optional
 
+from core import event_schema_migration
 from core import storage
 from core.jsonl_parser import iter_jsonl
 
@@ -341,21 +342,77 @@ def _load_operational_truth(path: str) -> Dict[str, Any]:
     return result
 
 
+def _distribution_fingerprint(record: Dict[str, Any], publish_result: str) -> tuple[str, ...]:
+    """Build a bounded correlation key for v3/legacy dual-write suppression.
+
+    No missing field is invented.  Empty components remain empty, which means
+    suppression occurs only when the observable identities actually line up.
+    """
+
+    data = record.get("data") if isinstance(record.get("data"), dict) else {}
+    transport = data.get("transport") if isinstance(data.get("transport"), dict) else {}
+    message_id = record.get("message_id")
+    if message_id is None:
+        message_id = transport.get("message_id")
+    return (
+        str(record.get("signal_id") or ""),
+        str(record.get("route") or record.get("tier") or ""),
+        str(record.get("stage") or ""),
+        str(record.get("destination_id") or ""),
+        str(publish_result or ""),
+        str(message_id or ""),
+    )
+
+
 def _load_distribution_metrics(path: str) -> Dict[str, Any]:
-    counts: Dict[str, int] = {key: 0 for key in _DIST_RESULTS}
+    """Read v3 route truth first, with bounded historical tier_publish fallback.
+
+    Historical periods may contain both a primary `route_publish_result` and the
+    migration-era `tier_publish` adapter for the same logical publication.  The
+    v3 record wins when their observable correlation fingerprint matches; the
+    legacy row is then reported as suppressed compatibility evidence rather than
+    counted as a second publication.
+    """
+
+    primary_counts: Dict[str, int] = {key: 0 for key in _DIST_RESULTS}
+    legacy_records: list[tuple[str, tuple[str, ...]]] = []
+    primary_fingerprints: set[tuple[str, ...]] = set()
     invalid_count = 0
+    primary_v3_count = 0
+    historical_named_route_result_count = 0
+
     try:
         for record, err in iter_jsonl(path):
             if err is not None:
                 invalid_count += 1
                 continue
-            if record.get("event_type") != "tier_publish":
+
+            event_type = record.get("event_type")
+            if event_type not in {"route_publish_result", "tier_publish"}:
                 continue
-            result = (record.get("data") or {}).get("publish_result")
-            if result in counts:
-                counts[result] += 1
-            elif result is not None:
-                invalid_count += 1
+
+            data = record.get("data") if isinstance(record.get("data"), dict) else {}
+            publish_result = data.get("publish_result")
+            if publish_result not in _DIST_RESULTS:
+                if publish_result is not None:
+                    invalid_count += 1
+                continue
+
+            fingerprint = _distribution_fingerprint(record, str(publish_result))
+            identity_class = event_schema_migration.classify_event_identity(record)
+
+            if event_type == "route_publish_result" and identity_class == event_schema_migration.PRIMARY_V3:
+                primary_counts[str(publish_result)] += 1
+                primary_fingerprints.add(fingerprint)
+                primary_v3_count += 1
+                continue
+
+            # A route_publish_result carrying an older schema version is valid
+            # historical evidence, but it is not relabeled as PRIMARY_V3.
+            if event_type == "route_publish_result":
+                historical_named_route_result_count += 1
+
+            legacy_records.append((str(publish_result), fingerprint))
     except FileNotFoundError:
         return {
             "no_data": True,
@@ -363,13 +420,32 @@ def _load_distribution_metrics(path: str) -> Dict[str, Any]:
             "path": path,
             **{key: 0 for key in _DIST_RESULTS},
             "total_distribution_events": 0,
+            "primary_v3_count": 0,
+            "legacy_fallback_count": 0,
+            "legacy_duplicate_suppressed_count": 0,
+            "historical_named_route_result_count": 0,
             "invalid_count": 0,
         }
+
+    counts = dict(primary_counts)
+    legacy_fallback_count = 0
+    legacy_duplicate_suppressed_count = 0
+    for publish_result, fingerprint in legacy_records:
+        if fingerprint in primary_fingerprints:
+            legacy_duplicate_suppressed_count += 1
+            continue
+        counts[publish_result] += 1
+        legacy_fallback_count += 1
+
     total = sum(counts.values())
     return {
         "no_data": total == 0,
         **counts,
         "total_distribution_events": total,
+        "primary_v3_count": primary_v3_count,
+        "legacy_fallback_count": legacy_fallback_count,
+        "legacy_duplicate_suppressed_count": legacy_duplicate_suppressed_count,
+        "historical_named_route_result_count": historical_named_route_result_count,
         "invalid_count": invalid_count,
     }
 

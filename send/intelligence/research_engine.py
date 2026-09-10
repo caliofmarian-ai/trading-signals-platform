@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional
 
+from core import event_schema_migration
 from core import storage
 from core.jsonl_parser import iter_jsonl
 from intelligence import evidence_contract
@@ -28,34 +29,93 @@ def _classify_stage(stage: Optional[str]) -> str:
 
 
 def compute_signal_funnel() -> Dict[str, Any]:
-    """Count signal_event lifecycle stages without making strategy-quality claims."""
+    """Count candidate lifecycle stages using v3 primary evidence first.
+
+    Current v3 candidate existence is represented by the PRE_DISTRIBUTION
+    `signal_execution_result` with `signal_event_available=true`. Historical
+    `signal_event` rows remain a bounded fallback under their original identity.
+    POST_DISTRIBUTION execution results are intentionally excluded so one
+    execution attempt is not counted twice.
+
+    Transition periods can contain both identities for the same logical
+    candidate. A matching `(signal_id, stage)` legacy row is therefore
+    suppressed whenever primary v3 evidence exists; unmatched legacy evidence
+    remains countable as historical fallback and is never rewritten as v3.
+    """
+
     counts: Dict[str, int] = {"PRE": 0, "CONFIRM": 0, "OPEN_NOW": 0}
     unsupported_stages: Dict[str, int] = {}
     invalid_count = 0
-    seen_event_ids: set = set()
+    primary_v3_count = 0
+    legacy_fallback_count = 0
+    legacy_duplicate_suppressed_count = 0
+    historical_named_execution_count = 0
+    seen_primary_attempts: set[str] = set()
+    primary_candidate_keys: set[tuple[str, str]] = set()
+    seen_legacy_event_ids: set[str] = set()
+    legacy_candidates: list[tuple[str, str]] = []
+
+    def _count_stage(stage: Any) -> None:
+        nonlocal invalid_count
+        stage_value = str(stage) if stage is not None else None
+        classification = _classify_stage(stage_value)
+        if classification == "SUPPORTED":
+            counts[str(stage_value)] += 1
+        elif classification == "UNSUPPORTED":
+            unsupported_stages[str(stage_value)] = unsupported_stages.get(str(stage_value), 0) + 1
+        else:
+            invalid_count += 1
 
     try:
         for record, err in iter_jsonl(_ENGINE_LOG):
             if err is not None:
                 invalid_count += 1
                 continue
-            if record.get("event_type") != "signal_event":
+
+            event_type = record.get("event_type")
+            if event_type == "signal_execution_result":
+                identity_class = event_schema_migration.classify_event_identity(record)
+                if identity_class != event_schema_migration.PRIMARY_V3:
+                    historical_named_execution_count += 1
+                    continue
+
+                data = record.get("data") if isinstance(record.get("data"), dict) else {}
+                if data.get("execution_phase") != "PRE_DISTRIBUTION":
+                    continue
+                if data.get("signal_event_available") is not True:
+                    continue
+
+                attempt_id = str(record.get("execution_attempt_id") or "").strip()
+                if not attempt_id:
+                    invalid_count += 1
+                    continue
+                if attempt_id in seen_primary_attempts:
+                    continue
+                seen_primary_attempts.add(attempt_id)
+
+                signal_id = str(record.get("signal_id") or "").strip()
+                stage = record.get("stage")
+                stage_key = str(stage or "").strip()
+                if signal_id and stage_key:
+                    primary_candidate_keys.add((signal_id, stage_key))
+
+                primary_v3_count += 1
+                _count_stage(stage)
                 continue
 
-            event_id = record.get("event_id")
-            if event_id and event_id in seen_event_ids:
+            if event_type != "signal_event":
+                continue
+
+            event_id = str(record.get("event_id") or "").strip()
+            if event_id and event_id in seen_legacy_event_ids:
                 continue
             if event_id:
-                seen_event_ids.add(event_id)
+                seen_legacy_event_ids.add(event_id)
 
-            stage = record.get("stage")
-            classification = _classify_stage(stage)
-            if classification == "SUPPORTED":
-                counts[stage] += 1  # type: ignore[index]
-            elif classification == "UNSUPPORTED":
-                unsupported_stages[str(stage)] = unsupported_stages.get(str(stage), 0) + 1
-            else:
-                invalid_count += 1
+            signal_id = str(record.get("signal_id") or "").strip()
+            stage = str(record.get("stage") or "").strip()
+            legacy_candidates.append((signal_id, stage))
+
     except FileNotFoundError:
         return {
             "no_data": True,
@@ -65,15 +125,30 @@ def compute_signal_funnel() -> Dict[str, Any]:
             "CONFIRM": 0,
             "OPEN_NOW": 0,
             "total_signal_events": 0,
+            "primary_v3_count": 0,
+            "legacy_fallback_count": 0,
+            "legacy_duplicate_suppressed_count": 0,
+            "historical_named_execution_count": 0,
             "invalid_count": 0,
             "unsupported_stages": {},
         }
+
+    for signal_id, stage in legacy_candidates:
+        if signal_id and stage and (signal_id, stage) in primary_candidate_keys:
+            legacy_duplicate_suppressed_count += 1
+            continue
+        legacy_fallback_count += 1
+        _count_stage(stage or None)
 
     total = sum(counts.values())
     return {
         "no_data": total == 0,
         **counts,
         "total_signal_events": total,
+        "primary_v3_count": primary_v3_count,
+        "legacy_fallback_count": legacy_fallback_count,
+        "legacy_duplicate_suppressed_count": legacy_duplicate_suppressed_count,
+        "historical_named_execution_count": historical_named_execution_count,
         "invalid_count": invalid_count,
         "unsupported_stages": unsupported_stages,
     }
@@ -150,7 +225,7 @@ def build_research_report() -> Dict[str, Any]:
     limitations: List[str] = []
 
     if funnel.get("no_data"):
-        observations.append("No signal_event lifecycle records found in the engine log.")
+        observations.append("No candidate lifecycle records found in the engine log.")
     else:
         observations.append(
             f"Signal funnel: PRE={funnel.get('PRE', 0)}, CONFIRM={funnel.get('CONFIRM', 0)}, "
