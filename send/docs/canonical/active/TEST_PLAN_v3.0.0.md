@@ -1,12 +1,12 @@
 # TEST_PLAN_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: canonical validation protocol for strategy, Trade Physics, staged execution, evidence, telemetry, learned models and production readiness  
-Supersession Intent: `TEST_PLAN_v2.0.0.md`
+Supersedes: `TEST_PLAN_v2.0.0.md`
 
-Linked proposed/current authorities:
+Linked active/current authorities:
 - `SYSTEM_INVARIANTS_v3.0.0.md`
 - `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md`
 - `CANONICAL_STRATEGY_STACK_v2.0.0.md`
@@ -23,18 +23,18 @@ Linked proposed/current authorities:
 - `OBSERVABILITY_SPEC_v3.0.0.md`
 - `TRADE_TEMPORAL_TELEMETRY_SPEC_v3.0.0.md`
 - `OUTCOME_TRACKING_SPEC_v3.0.0.md`
-- Analytics/Research/Intelligence successors
-- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md`
-- `DEPLOYMENT_PROTOCOL_v2.0.0.md`
-- `FAILURE_RECOVERY_SPEC_v2.0.0.md`
+- Analytics/Research/Intelligence active authorities
+- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md`
+- `DEPLOYMENT_PROTOCOL_v2.0.1.md`
+- `FAILURE_RECOVERY_SPEC_v2.0.1.md`
 
 ---
 
 ## 0. Authority and promotion status
 
-This is a complete proposed validation successor.
+This is the active canonical validation authority.
 
-Until explicit promotion, `TEST_PLAN_v2.0.0.md` remains active.
+The executed canonical promotion supersedes `TEST_PLAN_v2.0.0.md`, which remains historical only. Canonical activation does not itself authorize runtime or deployment changes.
 
 The major version adds required validation for:
 - deterministic Trade Physics calculations;
@@ -205,7 +205,7 @@ Trade Physics assertions:
 
 ## 10. Directional effective speed validation
 
-The promoted Time/Trade Physics implementation must have deterministic tests for:
+The active Time/Trade Physics implementation must have deterministic tests for:
 - BUY movement counts only/primarily governed favorable directional deltas according to formula;
 - SELL uses opposite favorable direction;
 - recency weighting gives newer movement the governed weight;
@@ -605,7 +605,7 @@ Use fixed datasets to compare:
 - event sequences;
 - telemetry linkage.
 
-Every intentional behavior change must be attributable to promoted canon; unexplained changes are regressions.
+Every intentional behavior change must be attributable to active canon; unexplained changes are regressions.
 
 ---
 
@@ -640,7 +640,7 @@ No naked unexplained TPS/probability control is acceptable where operational int
 ## 34. Deployment-readiness gate
 
 Before governed rollout, require:
-- canonical promotion complete;
+- active canonical set confirmed and internally consistent;
 - code-to-canon audit complete;
 - affected unit/integration tests pass;
 - replay/regression pass;
@@ -704,12 +704,11 @@ Transient console-only PASS is insufficient for structural releases.
 
 ## 38. Relationship to #73
 
-PR #73 or successor runtime work remains blocked until:
-1. the combined canonical set is promoted active;
-2. active canon is re-audited;
-3. code is audited against active contracts;
-4. implementation is corrected accordingly;
-5. this v3 test plan is executed against the resulting code.
+PR #73 or successor runtime work remains subject to:
+1. the active canonical set being re-audited and internally consistent;
+2. code being audited against active contracts;
+3. implementation being corrected accordingly;
+4. this v3 test plan being executed against the resulting code.
 
 ---
 
