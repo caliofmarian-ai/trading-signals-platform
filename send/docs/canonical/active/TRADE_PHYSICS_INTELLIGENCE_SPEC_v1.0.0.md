@@ -1,10 +1,12 @@
 # TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md  
 Version: 1.0.0  
-Status: PROPOSED CURRENT-SCOPE CANON — NOT ACTIVE  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Trade Physics learned intelligence, feature lineage, probability calibration, model readiness, recommendations, governed adaptation
+
+Activation basis: `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`.
 
 Source provenance:
 - `send/docs/intake/AI_TRADE_PHYSICS_INTELLIGENCE_SPEC.md`
