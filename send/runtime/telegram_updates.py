@@ -66,7 +66,9 @@ def is_poller_alive() -> bool:
 
 
 def _runtime_instance_id() -> str:
-    for name in ("RUN_ID", "RAILWAY_DEPLOYMENT_ID", "RAILWAY_SERVICE_ID"):
+    # In Railway, the immutable deployment identifier is more authoritative
+    # than a generic RUN_ID, which may be a local/operator placeholder.
+    for name in ("RAILWAY_DEPLOYMENT_ID", "RAILWAY_SERVICE_ID", "RUN_ID"):
         value = os.getenv(name, "").strip()
         if value:
             return value
@@ -82,14 +84,22 @@ def _emit_poller_startup(event: str, extra: Dict[str, Any]) -> None:
         "deployment_identifier": os.getenv("RAILWAY_DEPLOYMENT_ID", "").strip() or "unknown",
     }
     payload.update(extra)
-    observability_logger.log_warning(
-        warn_type="telegram_poller_startup",
-        message="Telegram polling instance state changed",
-        context=payload,
-        source={"module": "telegram_updates", "function": "poll_updates"},
-    )
+
+    is_healthy_start = event == "poller_started"
+    if not is_healthy_start:
+        observability_logger.log_warning(
+            warn_type="telegram_poller_startup",
+            message="Telegram polling instance state changed",
+            context=payload,
+            source={"module": "telegram_updates", "function": "poll_updates"},
+        )
+
     try:
-        print(json.dumps(payload, sort_keys=True), file=sys.stderr, flush=True)
+        print(
+            json.dumps(payload, sort_keys=True),
+            file=sys.stdout if is_healthy_start else sys.stderr,
+            flush=True,
+        )
     except Exception:
         pass
 
@@ -198,9 +208,9 @@ def process_update(update: Dict[str, Any]):
 
     # callback button
     if "callback_query" in update:
- 
+
         cb = update["callback_query"]
- 
+
         data = cb.get("data")
         callback_id = cb.get("id")
         user_id = cb["from"]["id"]
@@ -208,7 +218,7 @@ def process_update(update: Dict[str, Any]):
         chat = message.get("chat") or {}
         chat_id = chat.get("id")
         message_id = message.get("message_id")
- 
+
         if data and data.startswith("VOTE_"):
             result = outcome_service.handle_vote_callback_data(
                 callback_data=data,
