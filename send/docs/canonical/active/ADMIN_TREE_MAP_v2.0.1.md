@@ -2,9 +2,9 @@
 
 BinaryBot — Admin Tree Map  
 Version: 2.0.1  
-Status: PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: /opt/binarybot/docs/canonical/proposed/ADMIN_TREE_MAP_v2.0.1.md  
-Supersession Intent: `ADMIN_TREE_MAP_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: /opt/binarybot/docs/canonical/active/ADMIN_TREE_MAP_v2.0.1.md  
+Supersedes: `ADMIN_TREE_MAP_v2.0.0.md`
 
 Linked Documents:
 - ADMIN_CONTROL_SPEC_v2.0.1.md
@@ -27,7 +27,7 @@ This successor preserves the navigation hierarchy and role-scoped surface semant
 
 The patch only updates normative canonical references and this document's version/status/path metadata. It does not add, remove, rename, authorize, or reclassify admin branches or controls.
 
-Until explicit active promotion, `ADMIN_TREE_MAP_v2.0.0.md` remains authoritative.
+The executed canonical promotion makes `ADMIN_TREE_MAP_v2.0.1.md` authoritative; `ADMIN_TREE_MAP_v2.0.0.md` remains a historical predecessor.
 
 ---
 
@@ -541,8 +541,8 @@ Compact Telegram presentation is permitted, but deeper canonical explanation MUS
 
 | Version | Date | Description |
 |---|---|---|
-| 2.0.1 | 2026-09-01 | Proposed PATCH successor for reference repair only; navigation and authorization semantics unchanged. |
-| 2.0.0 | 2026-07-12 | Active canonical governed admin tree before this proposed patch. |
+| 2.0.1 | 2026-09-01 | Active PATCH successor for reference repair only; navigation and authorization semantics unchanged. |
+| 2.0.0 | 2026-07-12 | Historical active canonical predecessor before supersession by v2.0.1. |
 
 ---
 
