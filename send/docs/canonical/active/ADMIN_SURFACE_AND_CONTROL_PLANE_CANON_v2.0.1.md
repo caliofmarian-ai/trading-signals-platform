@@ -2,15 +2,15 @@
 
 **Canonical Name:** ADMIN_SURFACE_AND_CONTROL_PLANE_CANON  
 **Version:** 2.0.1  
-**Status:** PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
+**Status:** ACTIVE CANONICAL  
 **Owner:** BinaryBot / DROPi Signals  
-**Canonical Path:** `send/docs/canonical/proposed/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md`  
+**Canonical Path:** `send/docs/canonical/active/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md`  
 **Governance Record:** canonical-reconciliation-01 (OWNER-007 = A)  
-**Supersession Intent:** `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md`  
+**Supersedes:** `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md`  
 **Scope:** Canonical root manifest for the admin/control-plane specification cluster. Defines the human/operator control plane: Owner authority, hierarchical admin layers, Telegram admin interface relation, observability consumption, affiliate/admin segmentation, and separation between truth, control, execution, delivery and governance surfaces.
 
 **Predecessor / Superseded Documents:**
-- `send/docs/canonical/active/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md` — active predecessor until explicit promotion of this patch successor.
+- `send/docs/canonical/active/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md` — historical predecessor superseded by this active canonical patch.
 - `send/docs/canonical/proposed/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v1.0.0.md` — proposed historical source.
 
 ---
@@ -20,13 +20,13 @@
 This successor preserves the authority hierarchy and human-control-plane semantics of v2.0.0.
 
 The patch:
-- updates all normative links to the final proposed successor filenames required by the Trade Physics + staged-execution promotion graph;
+- updates all normative links to the final active canonical filenames required by the executed Trade Physics + staged-execution authority graph;
 - updates this document's version/status/path metadata;
 - clarifies the already-governed delivery ownership boundary so Signal Engine handoff/candidate construction is not described as external delivery.
 
 It does not change Owner authority, admin roles, permissions, control-plane hierarchy, distribution policy, strategy truth, or publication entitlement.
 
-Until explicit active promotion, `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md` remains authoritative.
+The executed canonical promotion makes `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md` authoritative; `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.0.md` remains a historical predecessor.
 
 ---
 
@@ -65,18 +65,18 @@ The following documents are subordinate members of this cluster. They govern the
 
 Depends on:
 
-- `send/docs/canonical/proposed/CANONICAL_STRATEGY_STACK_v2.0.0.md`
-- `send/docs/canonical/proposed/ALGO_SPEC_v3.0.0.md`
-- `send/docs/canonical/proposed/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`
-- `send/docs/canonical/proposed/FSM_DECISION_ENGINE_SPEC_v2.0.0.md`
-- `send/docs/canonical/proposed/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
-- `send/docs/canonical/proposed/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`
-- `send/docs/canonical/proposed/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `send/docs/canonical/proposed/SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md`
-- `send/docs/canonical/proposed/OBSERVABILITY_SPEC_v3.0.0.md`
-- `send/docs/canonical/proposed/GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md`
-- `send/docs/canonical/proposed/AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.1.md`
-- `send/docs/canonical/proposed/SECURITY_MODEL_v2.0.1.md`
+- `send/docs/canonical/active/CANONICAL_STRATEGY_STACK_v2.0.0.md`
+- `send/docs/canonical/active/ALGO_SPEC_v3.0.0.md`
+- `send/docs/canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`
+- `send/docs/canonical/active/FSM_DECISION_ENGINE_SPEC_v2.0.0.md`
+- `send/docs/canonical/active/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
+- `send/docs/canonical/active/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`
+- `send/docs/canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
+- `send/docs/canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md`
+- `send/docs/canonical/active/OBSERVABILITY_SPEC_v3.0.0.md`
+- `send/docs/canonical/active/GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md`
+- `send/docs/canonical/active/AFFILIATE_SIGNAL_DISTRIBUTION_MODEL_v2.0.1.md`
+- `send/docs/canonical/active/SECURITY_MODEL_v2.0.1.md`
 
 ---
 
@@ -458,9 +458,9 @@ Presentation MUST remain traceable to active canonical ownership and MUST NOT be
 
 | Version | Date | Description |
 |---|---|---|
-| 2.0.1 | 2026-09-01 | Proposed PATCH successor for canonical reference repair and execution/delivery ownership wording clarification; control-plane authority semantics unchanged. |
-| 2.0.0 | 2026-07-12 | Promoted to active canonical status as root manifest for admin/control-plane cluster (OWNER-007 = A, canonical-reconciliation-01). |
-| 1.0.0 | — | Proposed document: `send/docs/canonical/proposed/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v1.0.0.md` |
+| 2.0.1 | 2026-09-01 | Active PATCH successor for canonical reference repair and execution/delivery ownership wording clarification; control-plane authority semantics unchanged. |
+| 2.0.0 | 2026-07-12 | Historical predecessor promoted under OWNER-007 = A before supersession by v2.0.1. |
+| 1.0.0 | — | Proposed historical document: `send/docs/canonical/proposed/ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v1.0.0.md` |
 
 ---
 
