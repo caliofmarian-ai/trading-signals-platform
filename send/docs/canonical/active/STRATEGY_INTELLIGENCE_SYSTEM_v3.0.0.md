@@ -1,26 +1,28 @@
 # STRATEGY_INTELLIGENCE_SYSTEM_v3.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/STRATEGY_INTELLIGENCE_SYSTEM_v3.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/STRATEGY_INTELLIGENCE_SYSTEM_v3.0.0.md  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Governed strategy intelligence, operator understanding, Trade Physics intelligence integration, readiness, recommendations, control-facing evidence
 
-Supersession intent: `STRATEGY_INTELLIGENCE_SYSTEM_v2.0.0.md`
+Supersedes: `STRATEGY_INTELLIGENCE_SYSTEM_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 Linked documents:
-- `canonical/proposed/ALGO_SPEC_v3.0.0.md`
-- `canonical/proposed/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `canonical/proposed/TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md`
-- `canonical/proposed/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`
-- active/proposed Performance Analytics, Research/Learning and Autonomous Evolution successors
+- `canonical/active/ALGO_SPEC_v3.0.0.md`
+- `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
+- `canonical/active/TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md`
+- `canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`
+- `canonical/active/PERFORMANCE_ANALYTICS_SPEC_v3.0.0.md`
+- `canonical/active/RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v3.0.0.md`
+- `canonical/active/AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v3.0.0.md`
 
 ---
 
 ## 0. PROMOTION STATUS
 
-Until explicit promotion, v2.0.0 remains authoritative. This proposed successor does not authorize runtime code or strategy mutation.
+This document is active under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`; v2.0.0 is superseded and historical only. This document does not authorize runtime code or strategy mutation.
 
 ---
 
