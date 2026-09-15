@@ -452,7 +452,7 @@ Fail-safe must not mean silent failure. It must remain observable and reviewable
 Implementation may vary, but the recovery model assumes persistence exists for the domains that matter operationally, such as:
 - route state / counters
 - reset reference or equivalent daily/periodic boundary evidence
-- dedup-relevant state or durable reconstructable evidence
+- dedup-relevantant state or durable reconstructable evidence
 - FSM/watchlist state where materially required
 - append-only observability logs for forensic reconstruction
 
@@ -504,7 +504,7 @@ The legacy `FAILURE_RECOVERY_SPEC.md` established strong operational truths:
 - severe corruption may justify startup refusal
 
 The v2 model preserved those truths while upgrading the model to:
-- explicit recovery-health states;
+- explicit recovery-health states
 - route-governance terminology
 - stronger degraded-mode governance
 - better admin/control integration
