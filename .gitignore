@@ -38,6 +38,16 @@ tmp_decision_*
 *.temp
 *~
 
+# Live-adjacent source backups. Historical provenance belongs in explicit archive/deprecated trees.
+send/**/*.bak
+send/**/*.bak_*
+send/**/*.bak.*
+send/**/*.orig
+send/**/*.rej
+!send/_archive/**
+!send/docs/_deprecated/**
+!send/docs/canonical/deprecated/**
+
 # Development archives
 *.zip
 
