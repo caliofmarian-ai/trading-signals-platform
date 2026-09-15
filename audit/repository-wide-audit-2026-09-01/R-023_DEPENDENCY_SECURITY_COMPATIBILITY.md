@@ -8,7 +8,7 @@ Reconciled canonical main: `800a24f595a3064a7be37d5829c8af40dc27aa99` (R-022 / P
 
 Branch: `remediation/r023-dependency-security`
 
-Date: 2026-09-11
+Original review date: 2026-09-11. Transport-evidence extension: 2026-09-15.
 
 ## Scope and decision
 
@@ -73,7 +73,7 @@ No repository use of `WebSocketApp` was found, so callback-signature and `run_fo
 
 ### Finnhub
 
-`send/runtime/finnhub_market_data.py` uses `websocket.create_connection(..., timeout=30)` and a single governed `OANDA:EUR_USD` subscription. Existing canonical tests verify subscription identity, persistence, freshness, real-history requirements, and fail-closed behavior. R-023 adds a compatibility test that exercises the installed websocket-client entry point through a monkeypatched connection function, so no external credential or fabricated live network result is required.
+`send/runtime/finnhub_market_data.py` uses `websocket.create_connection(..., timeout=30)` and a single governed `OANDA:EUR_USD` subscription. Existing canonical tests verify subscription identity, persistence, freshness, real-history requirements, and fail-closed behavior. The original R-023 test verifies the application's connection call shape by replacing `websocket.create_connection`; it does not execute the underlying connection implementation. The September 15 extension below separately exercises real library code without external I/O.
 
 ## Transitive dependency decision
 
@@ -90,22 +90,39 @@ Residual risk: fresh environments can resolve newer compatible transitive versio
 - Requests `Session` retains TLS certificate verification enabled by default;
 - Telegram `requests.post` call shape and timeout remain compatible;
 - Telegram RequestException timeout handling remains fail-closed;
-- Finnhub low-level `websocket.create_connection(..., timeout=30)` remains compatible;
-- Twelve Data low-level `websocket.create_connection(..., timeout=30)` remains compatible.
+- Finnhub low-level `websocket.create_connection(..., timeout=30)` call shape remains compatible;
+- Twelve Data low-level `websocket.create_connection(..., timeout=30)` call shape remains compatible.
 
 These tests make no external network calls and contain no production credentials.
+
+### September 15 real-library extension
+
+`tests/canonical/unit/test_dependency_library_io_compatibility.py` adds seven parametrized cases without deleting or weakening the original tests:
+
+- real Requests POST/Session/PreparedRequest/Response preparation, JSON serialization, timeout propagation and TLS-verification default;
+- Timeout and SSLError classification through real Requests dispatch into Telegram deletion handling;
+- real websocket-client HTTP upgrade validation, masked client-frame encoding, server-frame decoding and close behavior;
+- rejection of an invalid upgrade response;
+- receive timeout and connection-close exceptions.
+
+Only HTTP adapter I/O and a preconnected in-memory WebSocket socket are simulated. The tests retain DNS and socket-connect guards. The canonical offline fixture blocks top-level `requests.post`; after installing the adapter stub, these three HTTP cases temporarily restore the real `requests.api.post` implementation under those lower-level guards. The shared canonical fixture is unchanged.
+
+Failed run `35007952732` on `93218fe883b278958ebfa3b45c72339d1678b040` recorded `3 failed, 1249 passed`. The three HTTP tests were stopped by the existing top-level offline guard before reaching their adapter stubs; the four new WebSocket cases passed. Commit `4504a39fbf07ce378feb03adaa0245fe09935daa` corrects that test-fixture interaction without changing runtime code or disabling external-network isolation. This failed run is retained as history, not certified evidence.
+
+These cases do not prove real TLS certificate handshakes, live provider connectivity, Railway deployment, Telegram multi-role acceptance or exhaustive dependency security. Final validation must use the exact final PR head under the canonical workflow; its SHA, run/job IDs and observed result belong in the PR evidence record.
 
 ## R-022 reconciliation
 
 PR #155 / R-022 is canonical in `main` at `800a24f595a3064a7be37d5829c8af40dc27aa99` and provides the permanent `Repository CI` workflow with stable required-check identity `Required Repository CI` and explicit exact-head verification.
 
-R-023 was reconciled onto that exact main. The reconciled branch is one commit ahead and zero commits behind the R-022 main, with the same three-file R-023 write-set only:
+R-023 was reconciled onto that exact main. The September 15 extension retains a bounded four-file write-set:
 
 - `requirements.txt`;
 - `tests/canonical/unit/test_dependency_transport_compatibility.py`;
+- `tests/canonical/unit/test_dependency_library_io_compatibility.py`;
 - `audit/repository-wide-audit-2026-09-01/R-023_DEPENDENCY_SECURITY_COMPATIBILITY.md`.
 
-No R-022 workflow file was modified by R-023.
+No R-022 workflow file was modified by R-023. Ahead/behind counts are snapshot-dependent; re-read the final main/head comparison before merge rather than treating historical commit counts as current authority.
 
 ## Required exact-head validation
 
@@ -117,9 +134,9 @@ Before merge readiness, the final branch head must pass the canonical `Required 
 4. provider selector regression;
 5. Telegram Admin regression;
 6. critical canonical contract regressions;
-7. full `python -m pytest -q` repository regression, which includes the focused R-023 dependency transport compatibility tests.
+7. full `python -m pytest -q` repository regression, including both R-023 dependency compatibility test files.
 
-Only the GitHub Actions run attached to the final R-023 head is authoritative for merge readiness. A run attached to any superseded head is historical evidence only.
+Only the GitHub Actions run attached to the final R-023 head is authoritative for merge readiness. A run or review attached to any superseded head is historical evidence only. The author of the extension must not represent CI success as an independent review of their own change. No self-merge or auto-merge is authorized.
 
 ## Invariants unchanged
 
