@@ -174,7 +174,7 @@ Required fields:
 - destination state;
 - candidate/payload reference where available;
 - FSM handoff reference;
-- DecisionObject/Trade Physics snapshot/reference.
+- DecisionObject/Trade Physics snapshot reference.
 
 For POST_DISTRIBUTION EMITTED, include linked publication evidence.
 
