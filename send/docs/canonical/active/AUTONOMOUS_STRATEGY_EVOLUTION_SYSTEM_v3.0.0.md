@@ -1,19 +1,19 @@
 # AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v3.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v3.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v3.0.0.md  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Governed strategy evolution, Trade Physics/model recommendations, staging, approval, rollback, bounded authority
 
-Supersession intent: `AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v2.0.0.md`
+Supersedes: `AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 ---
 
 ## 0. PROMOTION STATUS
 
-Until promotion, v2.0.0 remains authoritative. This proposed successor does not authorize autonomous production mutation.
+This document is active under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`; v2.0.0 is superseded and historical only. This document does not authorize autonomous production mutation.
 
 ---
 
@@ -149,7 +149,7 @@ Possible readiness states include:
 
 ## 8. DETERMINISTIC TPS PARAMETER PROPOSALS
 
-The current proposed defaults are structural constants until Parameter Control canon says otherwise.
+The current canonical defaults are structural constants until Parameter Control canon says otherwise.
 
 Evolution may recommend changes only with:
 
@@ -168,7 +168,7 @@ A recommendation to change a deterministic formula may require a MAJOR canonical
 
 ## 9. DIRECTIONAL SPEED EVOLUTION
 
-The initial proposed directional speed uses:
+The initial canonical directional speed uses:
 
 - 20 M1 intervals;
 - linear recency weights 1..20;
