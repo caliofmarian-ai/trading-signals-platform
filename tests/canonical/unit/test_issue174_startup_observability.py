@@ -39,8 +39,8 @@ def test_healthy_poller_startup_uses_stdout_without_warning_log(monkeypatch, cap
     )
 
     captured = capsys.readouterr()
-    assert captured.stderr == ""
-    payload = json.loads(captured.stdout.strip())
+    assert captured.err == ""
+    payload = json.loads(captured.out.strip())
     assert payload["event"] == "poller_started"
     assert payload["runtime_instance_id"] == "deployment-healthy"
     assert payload["deployment_identifier"] == "deployment-healthy"
@@ -60,8 +60,8 @@ def test_duplicate_poller_warning_stays_on_stderr_and_warning_log(monkeypatch, c
     updates._emit_poller_startup("duplicate_poller_blocked", {"last_update_id": 42})
 
     captured = capsys.readouterr()
-    assert captured.stdout == ""
-    payload = json.loads(captured.stderr.strip())
+    assert captured.out == ""
+    payload = json.loads(captured.err.strip())
     assert payload["event"] == "duplicate_poller_blocked"
     assert payload["last_update_id"] == 42
     assert len(warnings) == 1
@@ -84,8 +84,8 @@ def test_railway_ui_adapter_routes_only_healthy_initialization_to_stdout(capsys)
             {"status": "ok", "path": "/data/state/telegram_ui_state.json"},
         )
         healthy = capsys.readouterr()
-        assert healthy.stderr == ""
-        healthy_payload = json.loads(healthy.stdout.strip())
+        assert healthy.err == ""
+        healthy_payload = json.loads(healthy.out.strip())
         assert healthy_payload["code"] == "TELEGRAM_UI_STATE_INITIALIZED"
         assert healthy_payload["context"]["status"] == "ok"
 
@@ -94,8 +94,8 @@ def test_railway_ui_adapter_routes_only_healthy_initialization_to_stdout(capsys)
             {"status": "error", "reason": "unreadable"},
         )
         warning = capsys.readouterr()
-        assert warning.stdout == ""
-        warning_payload = json.loads(warning.stderr.strip())
+        assert warning.out == ""
+        warning_payload = json.loads(warning.err.strip())
         assert warning_payload["code"] == "TELEGRAM_UI_STATE_LOAD_FAILED"
         assert warning_payload["context"]["status"] == "error"
     finally:
