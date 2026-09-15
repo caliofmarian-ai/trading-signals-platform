@@ -1,33 +1,33 @@
 # TIME_MODEL_UNIFIED_CANON_v3.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/TIME_MODEL_UNIFIED_CANON_v3.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/TIME_MODEL_UNIFIED_CANON_v3.0.0.md  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Unified Model Time, Execution Time, Telemetry Time, directional-speed time feasibility, Trade Physics time handoff, DecisionObject time contract
 
-Supersession intent: `TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
+Supersedes: `TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 Linked documents:
-- `canonical/proposed/ALGO_SPEC_v3.0.0.md`
-- `canonical/proposed/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
-- `canonical/proposed/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md` until successor promotion
-- `canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md` until successor promotion
-- `canonical/active/TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md`
+- `canonical/active/ALGO_SPEC_v3.0.0.md`
+- `canonical/active/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
+- `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
+- `canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`
+- `canonical/active/FSM_DECISION_ENGINE_SPEC_v2.0.0.md`
+- `canonical/active/TRADE_TEMPORAL_TELEMETRY_SPEC_v3.0.0.md`
 
 ---
 
 ## 0. PROMOTION STATUS
 
-This document is a complete proposed successor. Until explicit promotion, `TIME_MODEL_UNIFIED_CANON_v2.0.0.md` remains the sole active time authority and no runtime change is authorized by this file.
+This document is the active canonical Time Model authority. The executed canonical promotion supersedes `TIME_MODEL_UNIFIED_CANON_v2.0.0.md`, which remains historical only. Canonical activation alone does not authorize runtime change.
 
 ---
 
 ## 1. PURPOSE
 
-This document is the proposed unified authority for all BinaryBot time semantics after current Trade Physics integration.
+This document is the unified authority for all BinaryBot time semantics after current Trade Physics integration.
 
 It preserves three distinct layers:
 
@@ -147,7 +147,7 @@ They may appear only in compatibility/migration mappings or where an explicitly 
 
 ## 7. CANONICAL RELATION BETWEEN TIME METRICS
 
-The proposed v3 Model Time chain is:
+The v3 Model Time chain is:
 
 ```text
 real M1/M5 market evidence
@@ -211,7 +211,7 @@ It may be derived from absolute price movement and is useful for:
 - flow-efficiency derivation;
 - analytics.
 
-It is no longer the preferred primary denominator speed for intended-direction `t_needed` in the proposed v3 model.
+It is no longer the preferred primary denominator speed for intended-direction `t_needed` in the active v3 model.
 
 A high gross speed with low directional speed can indicate choppy or opposing movement and must not falsely imply fast reachability.
 
@@ -515,7 +515,7 @@ Required handoff includes:
 
 TPS T-component is derived from `time_to_buffer_ratio` under Trade Physics canon.
 
-No TPS score may be calculated using legacy generic `expiry_minutes` as the primary model-time source after v3 promotion.
+No TPS score may be calculated using legacy generic `expiry_minutes` as the primary model-time source under active v3.
 
 ---
 
@@ -577,7 +577,7 @@ Signal Engine does not recalculate Model Time or Trade Physics time ratios.
 
 It consumes already-established post-strategy/FSM semantics and may carry time evidence into downstream payload/observability.
 
-The current legacy/undocumented TPS extraction path that derives time ratio from generic `expiry_minutes` must be removed or converted to compatibility-only behavior after canonical implementation.
+The current legacy/undocumented TPS extraction path that derives time ratio from generic `expiry_minutes` must be removed or converted to compatibility-only behavior during governed implementation alignment.
 
 ---
 
@@ -615,7 +615,7 @@ Vocabulary mapping:
 Formula migration:
 
 - old conceptual `t_needed = buffer_distance / gross price_speed`
-- proposed v3 `t_needed = buffer_distance / directional_effective_speed`
+- v3 `t_needed = buffer_distance / directional_effective_speed`
 
 Gross speed remains observable context; it is not silently discarded.
 
@@ -642,7 +642,7 @@ All denominators must be finite and positive.
 Forbidden:
 
 - Time Model before Corridor;
-- gross absolute speed silently standing in for directional speed after v3 promotion;
+- gross absolute speed silently standing in for directional speed under active v3;
 - Signal Engine recalculating authoritative time ratios;
 - `expiry_minutes` used as model expiry without explicit compatibility mapping;
 - ratio orientation left unlabeled;
@@ -655,7 +655,7 @@ Forbidden:
 
 ## 34. IMPLEMENTATION RULE
 
-After promotion, implementation must:
+Under active v3, implementation must:
 
 1. derive deterministic directional speed from real M1 candles using the promoted formula;
 2. keep gross speed as separate context;
@@ -694,7 +694,7 @@ Trade Physics strengthens it by making movement-time feasibility directional:
 
 **the relevant question is not how much the price moves in total, but how efficiently it is moving toward the intended trade direction.**
 
-The canonical proposed chain is:
+The canonical active chain is:
 
 `buffer_distance / directional_effective_speed -> t_needed -> adjusted time -> model_expiry -> reachability -> Trade Physics time ratio -> time state`.
 

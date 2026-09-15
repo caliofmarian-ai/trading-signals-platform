@@ -1,12 +1,12 @@
 # SYSTEM_ARCHITECTURE_MAP_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: top-level system architecture, layer ownership, current-scope Trade Physics, staged execution and evidence/intelligence flow  
-Supersession Intent: `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md`
+Supersedes: `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md`
 
-Linked proposed/current authorities:
+Linked active authorities:
 - `CANONICAL_STRATEGY_STACK_v2.0.0.md`
 - `SYSTEM_INVARIANTS_v3.0.0.md`
 - `MODULE_INTERFACE_SPEC_v3.0.0.md`
@@ -17,20 +17,20 @@ Linked proposed/current authorities:
 - `OUTCOME_TRACKING_SPEC_v3.0.0.md`
 - `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
 - `TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md`
-- `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md`
-- `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md`
+- `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.1.md`
+- `SIGNAL_DISTRIBUTION_SPEC_v2.0.1.md`
 - `STRATEGY_INTELLIGENCE_SYSTEM_v3.0.0.md`
 - `AUTONOMOUS_STRATEGY_EVOLUTION_SYSTEM_v3.0.0.md`
-- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md`
+- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md`
 - `TEST_PLAN_v3.0.0.md`
 
 ---
 
 ## 0. Authority and promotion status
 
-This document is a complete proposed successor for the top-level system architecture map.
+This document is the active canonical authority for the top-level system architecture map.
 
-Until explicit promotion, `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md` remains active.
+Activation is governed by `CANONICAL_MASTER_INDEX_v2.0.0.md` and the executed `CANONICAL_ACTIVATION_RECORD_20260901.md`. `SYSTEM_ARCHITECTURE_MAP_v2.0.0.md` is superseded and historical only. Documentation activation does not itself authorize runtime changes.
 
 The major version is required because the architecture now explicitly includes:
 - deterministic Trade Physics inside the runtime strategy path;
@@ -508,7 +508,7 @@ This is why deterministic Trade Physics and Trade Physics Intelligence have sepa
 
 Code modules are implementations of canonical ownership, not authority themselves.
 
-After promotion, code audit must identify:
+The required post-promotion code audit must identify:
 - modules that own too much;
 - duplicate formulas;
 - missing contracts;
@@ -521,9 +521,9 @@ After promotion, code audit must identify:
 
 ## 26. Promotion / migration rule
 
-On v3 promotion:
-- v2 moves to superseded storage;
-- all active references are repaired to final successor versions;
+Following the executed v3 documentation promotion recorded in `CANONICAL_ACTIVATION_RECORD_20260901.md`:
+- v2 is superseded and historical only;
+- all active references must point to final successor versions;
 - Root Stack/Master Index/System Invariants/Test Plan must be mutually compatible;
 - runtime code remains unchanged until post-promotion audit.
 

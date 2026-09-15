@@ -1,28 +1,28 @@
 # DECISION_OBJECT_CANONICAL_SPEC_v2.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md  
 Version: 2.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Official strategic output contract between strategy/scoring and FSM, including complete current Trade Physics evidence
 
-Supersession intent: `DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
+Supersedes: `DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
-Linked proposed/current documents:
-- `canonical/proposed/ALGO_SPEC_v3.0.0.md`
-- `canonical/proposed/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
-- `canonical/proposed/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`
-- `canonical/proposed/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md` until successor promotion
-- `canonical/active/OBSERVABILITY_SPEC_v2.0.0.md` until successor promotion
-- `canonical/active/DECISION_AUDIT_SPEC_v2.0.0.md` until successor promotion
+Linked active/current documents:
+- `canonical/active/ALGO_SPEC_v3.0.0.md`
+- `canonical/active/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
+- `canonical/active/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`
+- `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
+- `canonical/active/FSM_DECISION_ENGINE_SPEC_v2.0.0.md`
+- `canonical/active/OBSERVABILITY_SPEC_v3.0.0.md`
+- `canonical/active/DECISION_AUDIT_SPEC_v3.0.0.md`
 
 ---
 
 ## 0. PROMOTION STATUS
 
-This is a proposed complete successor. Until explicit promotion, v1.0.0 remains authoritative and no runtime code change is authorized by this document.
+This is the active canonical DecisionObject authority. The executed promotion supersedes v1.0.0; canonical activation alone does not authorize runtime code change.
 
 ---
 
@@ -174,7 +174,7 @@ Trade Physics `available_space` must be traceable to this structural domain.
 
 ## 9. TIME DOMAIN
 
-Must use the unified v3 time vocabulary once promoted:
+Must use the unified v3 time vocabulary:
 
 - `buffer_distance` reference;
 - `directional_effective_speed` reference;
@@ -244,7 +244,7 @@ When not READY, the domain must expose readiness and reason without fabricating 
 
 DecisionObject must distinguish physical-feasibility readiness from arithmetic score existence.
 
-Proposed readiness families:
+Recognized readiness families:
 
 - `READY`;
 - `UNAVAILABLE_MISSING_STRUCTURE`;
@@ -254,7 +254,7 @@ Proposed readiness families:
 - `BLOCKED_UNSTABLE_MARKET`;
 - `INVALID_EVIDENCE`.
 
-Final enum names must be synchronized across Trade Physics model, DecisionObject implementation, Decision Audit and Event Schema before promotion.
+Final enum names must remain synchronized across Trade Physics model, DecisionObject implementation, Decision Audit and Event Schema through governed implementation alignment.
 
 No downstream layer may treat a non-READY object as if TPS were valid merely because a legacy field exists.
 
@@ -427,7 +427,7 @@ This metadata is necessary for replay and model-dataset lineage.
 
 ## 21. REQUIRED CANONICAL TRUTHS
 
-This v2 proposal locks the following if promoted:
+Active v2 locks the following:
 
 1. DecisionObject remains before FSM.
 2. It is the official strategy output.
@@ -550,7 +550,7 @@ Direction:
 
 ## 28. CODE ALIGNMENT RULE
 
-After promotion, implementation must answer:
+Under active v2, implementation must answer:
 
 - where Trade Physics is calculated before DecisionObject;
 - which exact structural/time/speed evidence was used;

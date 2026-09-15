@@ -1,12 +1,12 @@
 # SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE CONSOLIDATED SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: post-FSM signal execution, SignalEvent candidate construction, execution outcomes, distribution handoff, execution observability, Trade Physics downstream boundary  
-Supersession Intent: `SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`
+Supersedes: `SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`
 
-Linked proposed/current authorities:
+Linked active/current authorities:
 - Root Strategy Stack successor
 - `ALGO_SPEC_v3.0.0.md`
 - `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
@@ -18,23 +18,23 @@ Linked proposed/current authorities:
 - `MODULE_INTERFACE_SPEC_v3.0.0.md`
 - `OBSERVABILITY_SPEC_v3.0.0.md`
 - `EVENT_SCHEMA_SPEC_v3.0.0.md`
-- `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.0.md`
-- `SIGNAL_DISTRIBUTION_SPEC_v2.0.0.md`
-- `CHANNEL_CONFIG_SPEC_v2.0.0.md`
+- `SIGNAL_DISTRIBUTION_ARCHITECTURE_v2.0.1.md`
+- `SIGNAL_DISTRIBUTION_SPEC_v2.0.1.md`
+- `CHANNEL_CONFIG_SPEC_v2.0.1.md`
 
 ---
 
 ## 0. Authority and promotion status
 
-This document is the complete consolidated proposed successor for the signal-execution domain.
+This document is the active canonical authority for the signal-execution domain.
 
 It incorporates:
 - staged execution / post-FSM observability remediation;
 - the Trade Physics ownership boundary required by current-scope integration.
 
-Until explicit promotion, `SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md` remains active.
+The executed canonical promotion supersedes `SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`, which remains historical only.
 
-Merge of this proposal does not authorize runtime changes, distribution activation, Telegram publication, outcome creation, or broker execution.
+Canonical activation alone does not authorize runtime changes, distribution activation, Telegram publication, outcome creation, or broker execution.
 
 ---
 
@@ -190,7 +190,7 @@ Signal Engine must not calculate or recalculate:
 - deterministic `TPS`;
 - `trade_success_probability`.
 
-If runtime currently computes TPS inside Signal Engine, that behavior is implementation drift to be corrected after canonical promotion.
+If runtime currently computes TPS inside Signal Engine, that behavior is implementation drift to be corrected through governed implementation work.
 
 ---
 
@@ -535,14 +535,14 @@ If these answers are unclear, alignment is incomplete.
 
 ---
 
-## 31. Promotion and migration
+## 31. Promotion and migration record
 
-On promotion:
-- this v3 becomes the single signal-execution authority;
-- v2 moves to superseded storage;
-- active references are repaired atomically;
-- FSM/Module Interface/Event Schema/Observability/Root/Master versions must be compatible;
-- runtime remains unchanged until post-promotion re-audit.
+The executed canonical promotion:
+- makes this v3 the single signal-execution authority;
+- supersedes v2 and retains it as historical material;
+- repairs active references to the compatible authority graph;
+- requires FSM/Module Interface/Event Schema/Observability/Root/Master versions to remain compatible;
+- does not itself change runtime; runtime changes remain subject to governed post-activation re-audit.
 
 ---
 

@@ -1,19 +1,19 @@
 # PERFORMANCE_ANALYTICS_SPEC_v3.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/PERFORMANCE_ANALYTICS_SPEC_v3.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/PERFORMANCE_ANALYTICS_SPEC_v3.0.0.md  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Multi-truth performance analytics, Trade Physics effectiveness, model calibration, drift, segmentation, evidence for research/governance
 
-Supersession intent: `PERFORMANCE_ANALYTICS_SPEC_v2.0.0.md`
+Supersedes: `PERFORMANCE_ANALYTICS_SPEC_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 ---
 
 ## 0. PROMOTION STATUS
 
-Until explicit promotion, v2.0.0 remains authoritative. This document does not authorize code or strategy mutation.
+This document is active under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`; v2.0.0 is superseded and historical only. This document does not authorize code or strategy mutation.
 
 ---
 
@@ -202,7 +202,7 @@ Analytics must detect redundant features/double counting rather than assume ever
 
 ## 10. DIRECTIONAL SPEED MIGRATION ANALYTICS
 
-Because proposed Time Model v3 changes `t_needed` from gross absolute speed to directional effective speed, replay and post-implementation analytics must compare:
+Because active Time Model v3 changes `t_needed` from gross absolute speed to directional effective speed, replay and post-implementation analytics must compare:
 
 - old gross-speed t_needed;
 - new directional-speed t_needed;

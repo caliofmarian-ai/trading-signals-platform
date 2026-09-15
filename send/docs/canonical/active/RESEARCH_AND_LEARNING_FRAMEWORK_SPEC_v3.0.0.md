@@ -1,19 +1,19 @@
 # RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v3.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v3.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v3.0.0.md  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Evidence-led research, Trade Physics hypothesis/testing/model validation, experiment governance, learning without silent production mutation
 
-Supersession intent: `RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v2.0.0.md`
+Supersedes: `RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 ---
 
 ## 0. PROMOTION STATUS
 
-Until explicit promotion, v2.0.0 remains authoritative. This proposal does not authorize code or production mutation.
+This document is active under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`; v2.0.0 is superseded and historical only. This document does not authorize code or production mutation.
 
 ---
 
@@ -26,7 +26,7 @@ v3 makes Trade Physics a current research domain rather than a future-only idea.
 Research must determine from real evidence:
 
 - whether deterministic TPS adds measurable value;
-- whether the proposed directional-speed model improves time feasibility;
+- whether the canonical directional-speed model improves time feasibility;
 - how S/T/P/V behave by regime;
 - whether learned probability adds incremental value and is calibrated;
 - which Trade Physics changes are safe to test or recommend.
@@ -274,7 +274,7 @@ Each is a governed experiment. Current defaults remain canonical until changed t
 
 ## 16. DIRECTIONAL SPEED EXPERIMENT
 
-Because the proposed canonical v3 Time Model materially changes speed semantics, research must maintain an explicit comparison:
+Because the active canonical v3 Time Model materially changes speed semantics, research must maintain an explicit comparison:
 
 Control:
 - prior gross absolute speed logic.

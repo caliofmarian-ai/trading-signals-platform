@@ -1,29 +1,30 @@
 # OUTCOME_TRACKING_SPEC_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: operational/admin outcome reconciliation and Trade Physics training-label lineage support  
-Supersession Intent: `OUTCOME_TRACKING_SPEC_v2.0.0.md`
+Supersedes: `OUTCOME_TRACKING_SPEC_v2.0.0.md`
 
-Linked proposed/current authorities:
-- Root Strategy Stack successor
+Linked active authorities:
+- `CANONICAL_STRATEGY_STACK_v2.0.0.md`
 - `ALGO_SPEC_v3.0.0.md`
 - `DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`
 - `DECISION_AUDIT_SPEC_v3.0.0.md`
 - `TRADE_TEMPORAL_TELEMETRY_SPEC_v3.0.0.md`
 - `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
 - `TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md`
-- Performance Analytics successor
-- Research & Learning successor
-- Strategy Intelligence successor
-- Event/Observability successors
+- `PERFORMANCE_ANALYTICS_SPEC_v3.0.0.md`
+- `RESEARCH_AND_LEARNING_FRAMEWORK_SPEC_v3.0.0.md`
+- `STRATEGY_INTELLIGENCE_SYSTEM_v3.0.0.md`
+- `EVENT_SCHEMA_SPEC_v3.0.0.md`
+- `OBSERVABILITY_SPEC_v3.0.0.md`
 
 ---
 
 ## 0. Authority and promotion status
 
-This is a complete proposed successor. Until explicit promotion, v2.0.0 remains active.
+This document is active under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`; v2.0.0 is superseded and historical only.
 
 The major version reflects a structural expansion of reconciliation lineage so operational outcomes remain distinguishable from market labels while still being usable safely by Trade Physics analytics and intelligence.
 
@@ -263,7 +264,7 @@ Exact taxonomy may evolve through versioning, but discrepancy must be explicit r
 
 Every meaningful outcome mutation/reconciliation action must be observable.
 
-Canonical event naming is governed by Event Schema successor; the outcome layer must provide evidence for at least:
+Canonical event naming is governed by `EVENT_SCHEMA_SPEC_v3.0.0.md`; the outcome layer must provide evidence for at least:
 - submission/mutation attempt;
 - accepted/rejected mutation result;
 - reconciliation completion;

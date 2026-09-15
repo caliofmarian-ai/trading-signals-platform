@@ -2,9 +2,9 @@
 
 BinaryBot — Admin Control Surface Specification  
 Version: 2.0.1  
-Status: PROPOSED COMPLETE PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: `send/docs/canonical/proposed/ADMIN_CONTROL_SPEC_v2.0.1.md`  
-Supersession Intent: `ADMIN_CONTROL_SPEC_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: `send/docs/canonical/active/ADMIN_CONTROL_SPEC_v2.0.1.md`  
+Supersedes: `ADMIN_CONTROL_SPEC_v2.0.0.md`
 
 Linked Documents:
 - ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md
@@ -33,7 +33,7 @@ Linked Documents:
 
 ## 0. Patch status
 
-Until atomic promotion, `ADMIN_CONTROL_SPEC_v2.0.0.md` remains active.
+`ADMIN_CONTROL_SPEC_v2.0.1.md` is active canonical under the executed atomic promotion; `ADMIN_CONTROL_SPEC_v2.0.0.md` is superseded.
 
 This v2.0.1 successor preserves the admin control model, roles/action boundaries and operator capabilities of v2.0.0. Changes are reference/truth-source alignment only.
 

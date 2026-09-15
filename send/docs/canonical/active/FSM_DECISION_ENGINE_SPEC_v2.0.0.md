@@ -1,12 +1,12 @@
 # FSM_DECISION_ENGINE_SPEC_v2.0.0
 
 Version: 2.0.0  
-Status: PROPOSED COMPLETE CONSOLIDATED SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: operational lifecycle interpretation between DecisionObject and Signal Engine, including exact-stage handoff semantics  
-Supersession Intent: `FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
+Supersedes: `FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
 
-Linked proposed/current authorities:
+Linked active/current authorities:
 - Root Strategy Stack successor
 - `ALGO_SPEC_v3.0.0.md`
 - `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
@@ -15,15 +15,15 @@ Linked proposed/current authorities:
 - `MODULE_INTERFACE_SPEC_v3.0.0.md`
 - `EVENT_SCHEMA_SPEC_v3.0.0.md`
 - `OBSERVABILITY_SPEC_v3.0.0.md`
-- `SYSTEM_INVARIANTS_v2.0.0.md`
+- `SYSTEM_INVARIANTS_v3.0.0.md`
 
 ---
 
 ## 0. Authority and promotion status
 
-This is the complete proposed successor for FSM decision truth.
+This is the active canonical authority for FSM decision truth.
 
-Until explicit promotion, `FSM_DECISION_ENGINE_SPEC_v1.0.0.md` remains active.
+The executed canonical promotion supersedes `FSM_DECISION_ENGINE_SPEC_v1.0.0.md`; v1 remains historical only.
 
 The major version is required because the post-FSM handoff contract becomes explicit and distinguishes lifecycle-stage release from final trade-execution readiness.
 
@@ -296,7 +296,7 @@ Examples of allowable use:
 - apply a future canonical gate only if ALGO/DecisionObject/FSM canon explicitly authorizes that gate;
 - preserve Trade Physics snapshot reference in observability handoff.
 
-Current proposed integration does not automatically convert TPS interpretation bands into FSM stage thresholds.
+Current active integration does not automatically convert TPS interpretation bands into FSM stage thresholds.
 
 ---
 
@@ -370,7 +370,7 @@ Forbidden:
 
 ## 24. Code alignment questions
 
-After promotion, implementation must answer:
+Implementation alignment must answer:
 - how requested/accepted stage are represented;
 - where `stage_handoff_ready` is computed;
 - where `trade_execution_ready` is computed;
@@ -382,13 +382,13 @@ After promotion, implementation must answer:
 
 ---
 
-## 25. Promotion rule
+## 25. Promotion record
 
-On promotion:
-- v2 becomes single active FSM authority;
-- v1 moves to superseded status;
-- Signal Engine/Module Interface/Event Schema/Observability/Root/Master must reference the compatible version;
-- runtime remains unchanged until post-promotion canonical/code audit.
+The executed canonical promotion:
+- makes v2 the single active FSM authority;
+- supersedes v1, which is retained as historical material;
+- requires Signal Engine/Module Interface/Event Schema/Observability/Root/Master to reference the compatible version;
+- did not itself change runtime; runtime changes remain subject to governed canonical/code audit.
 
 ---
 

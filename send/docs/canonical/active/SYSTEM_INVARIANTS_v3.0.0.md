@@ -2,11 +2,11 @@
 
 BinaryBot — Non-Negotiable System Invariants  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
-Supersession Intent: `SYSTEM_INVARIANTS_v2.0.0.md`
+Supersedes: `SYSTEM_INVARIANTS_v2.0.0.md`
 
-Linked proposed/current authorities:
+Linked active/current authorities:
 - `CANONICAL_STRATEGY_STACK_v2.0.0.md`
 - `SYSTEM_ARCHITECTURE_MAP_v3.0.0.md`
 - `ALGO_SPEC_v3.0.0.md`

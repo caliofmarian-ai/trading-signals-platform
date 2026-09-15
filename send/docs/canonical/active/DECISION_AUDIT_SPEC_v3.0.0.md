@@ -1,27 +1,29 @@
 # DECISION_AUDIT_SPEC_v3.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/DECISION_AUDIT_SPEC_v3.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/DECISION_AUDIT_SPEC_v3.0.0.md  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Pre-FSM strategy-decision audit, Trade Physics decision evidence, rejection taxonomy, lifecycle reasoning, downstream correlation
 
-Supersession intent: `DECISION_AUDIT_SPEC_v2.0.0.md`
+Supersedes: `DECISION_AUDIT_SPEC_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 Linked documents:
-- `canonical/proposed/ALGO_SPEC_v3.0.0.md`
-- `canonical/proposed/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
-- `canonical/proposed/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`
-- `canonical/proposed/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `canonical/proposed/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`
-- active FSM/observability/event-schema versions until their staged/consolidated successors are promoted
+- `canonical/active/ALGO_SPEC_v3.0.0.md`
+- `canonical/active/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
+- `canonical/active/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`
+- `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
+- `canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`
+- `canonical/active/FSM_DECISION_ENGINE_SPEC_v2.0.0.md`
+- `canonical/active/OBSERVABILITY_SPEC_v3.0.0.md`
+- `canonical/active/EVENT_SCHEMA_SPEC_v3.0.0.md`
 
 ---
 
 ## 0. PROMOTION STATUS
 
-This is a complete proposed successor. Until promotion, v2.0.0 remains authoritative. No runtime change is authorized by this proposal alone.
+This is the active canonical Decision Audit authority. The executed promotion supersedes v2.0.0, which remains historical only. Canonical activation alone does not authorize runtime change.
 
 ---
 
@@ -89,7 +91,7 @@ FSM_HANDOFF
 FSM / SIGNAL / DISTRIBUTION / TELEMETRY / OUTCOME CORRELATION
 ```
 
-This ordering is mandatory if v3 is promoted.
+This ordering is mandatory under active v3.
 
 ---
 
@@ -491,7 +493,7 @@ Forbidden:
 
 ## 23. CODE ALIGNMENT RULE
 
-After promotion, code must demonstrate:
+Under active v3, code must demonstrate:
 
 - decision audit occurs from the final pre-FSM DecisionObject;
 - score is computed before DecisionObject;

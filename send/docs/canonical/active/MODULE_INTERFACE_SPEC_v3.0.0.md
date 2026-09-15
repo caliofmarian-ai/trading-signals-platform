@@ -1,13 +1,13 @@
 # MODULE_INTERFACE_SPEC_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE CONSOLIDATED SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: canonical module ownership, shared contracts and interfaces across strategy, Trade Physics, FSM, Signal Engine, Distribution, Telemetry, Outcome, Analytics and Intelligence  
-Supersession Intent: `MODULE_INTERFACE_SPEC_v2.0.0.md`
+Supersedes: `MODULE_INTERFACE_SPEC_v2.0.0.md`
 
-Linked proposed/current authorities:
-- Root Strategy Stack successor
+Linked active authorities:
+- `CANONICAL_STRATEGY_STACK_v2.0.0.md`
 - `ALGO_SPEC_v3.0.0.md`
 - `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
 - `TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md`
@@ -26,9 +26,9 @@ Linked proposed/current authorities:
 
 ## 0. Authority and promotion status
 
-This is the complete proposed successor for module ownership/interface truth.
+This is the active canonical authority for module ownership/interface truth.
 
-Until explicit promotion, `MODULE_INTERFACE_SPEC_v2.0.0.md` remains active.
+Activation is governed by `CANONICAL_MASTER_INDEX_v2.0.0.md` and the executed `CANONICAL_ACTIVATION_RECORD_20260901.md`. `MODULE_INTERFACE_SPEC_v2.0.0.md` is superseded and historical only. Documentation activation does not itself authorize runtime changes.
 
 The major version consolidates:
 - explicit FSM execution handoff semantics;
@@ -499,7 +499,7 @@ It does not own:
 - outcome reconciliation;
 - model training.
 
-Any current TPS calculation in Signal Engine is implementation drift against the proposed target contract.
+Any current TPS calculation in Signal Engine is implementation drift against the active canonical contract.
 
 ---
 
@@ -584,7 +584,7 @@ Forbidden:
 
 ## 26. Code alignment requirements
 
-After promotion, code audit must map each module/function to these owners/contracts and identify:
+The required post-promotion code audit must map each module/function to these owners/contracts and identify:
 - missing contract fields;
 - legacy vocabulary;
 - duplicated formulas;

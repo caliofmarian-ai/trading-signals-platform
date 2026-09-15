@@ -2,9 +2,9 @@
 
 BinaryBot — Canonical Event Envelope, Correlation & Domain Schema Specification  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE CONSOLIDATED SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
-Supersession Intent: `EVENT_SCHEMA_SPEC_v2.0.0.md`
+Supersedes: `EVENT_SCHEMA_SPEC_v2.0.0.md`
 
 Scope includes:
 - common event envelope;
@@ -14,8 +14,8 @@ Scope includes:
 - Trade Physics evidence/version lineage;
 - learned-probability identity separation.
 
-Linked proposed/current authorities:
-- Root Strategy Stack successor
+Linked active authorities:
+- `CANONICAL_STRATEGY_STACK_v2.0.0.md`
 - `ALGO_SPEC_v3.0.0.md`
 - `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
 - `TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md`
@@ -33,9 +33,9 @@ Linked proposed/current authorities:
 
 ## 0. Authority and promotion status
 
-This document is a complete proposed successor and does not depend on v2 to supply omitted normative behavior.
+This document is the complete active successor and does not depend on v2 to supply omitted normative behavior.
 
-Until explicit promotion, `EVENT_SCHEMA_SPEC_v2.0.0.md` remains active.
+`EVENT_SCHEMA_SPEC_v3.0.0.md` is active under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`; `EVENT_SCHEMA_SPEC_v2.0.0.md` is superseded and historical only.
 
 The major version is required because:
 - post-FSM signal-execution truth becomes a first-class event domain;

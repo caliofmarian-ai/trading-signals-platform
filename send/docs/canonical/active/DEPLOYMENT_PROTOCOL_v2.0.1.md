@@ -1,9 +1,9 @@
 # DEPLOYMENT_PROTOCOL_v2.0.1
 
 Version: 2.0.1  
-Status: PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: /opt/binarybot/docs/canonical/proposed/DEPLOYMENT_PROTOCOL_v2.0.1.md  
-Supersession Intent: `DEPLOYMENT_PROTOCOL_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: /opt/binarybot/docs/canonical/active/DEPLOYMENT_PROTOCOL_v2.0.1.md  
+Supersedes: `DEPLOYMENT_PROTOCOL_v2.0.0.md`
 
 Linked Documents:
 - SYSTEM_INVARIANTS_v3.0.0.md
@@ -51,7 +51,7 @@ This successor preserves the complete deployment classes, evidence, backup, pre/
 
 The patch only updates normative references and version/status/path metadata. No deployment class or operational release requirement is changed.
 
-Until explicit active promotion, `DEPLOYMENT_PROTOCOL_v2.0.0.md` remains authoritative.
+This document is active under `CANONICAL_MASTER_INDEX_v2.0.0.md` and the executed `CANONICAL_ACTIVATION_RECORD_20260901.md`. `DEPLOYMENT_PROTOCOL_v2.0.0.md` is superseded and historical only. Documentation activation does not itself authorize deployment or runtime changes.
 
 ---
 

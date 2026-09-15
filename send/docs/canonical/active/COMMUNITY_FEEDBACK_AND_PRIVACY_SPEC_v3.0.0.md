@@ -2,32 +2,32 @@
 
 Canonical Name: COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
-Supersession Intent: `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v2.0.0.md`  
+Supersedes: `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v2.0.0.md`  
 Scope: community/self-reported feedback, member execution experience, private member statistics, optional leaderboard, privacy, and reconciliation with objective/operational truth
 
-Linked proposed/current authorities:
-- `SIGNAL_DISTRIBUTION_SPEC` current promoted successor
-- `CHANNEL_CONFIG_SPEC` current promoted successor
-- `TELEGRAM_UX` current promoted successor
+Linked active/current authorities:
+- `SIGNAL_DISTRIBUTION_SPEC_v2.0.1.md`
+- `CHANNEL_CONFIG_SPEC_v2.0.1.md`
+- `TELEGRAM_UX_v2.0.1.md`
 - `OBSERVABILITY_LOGGING_SPEC_v3.0.0.md`
 - `EVENT_SCHEMA_SPEC_v3.0.0.md`
 - `TRADE_TEMPORAL_TELEMETRY_SPEC_v3.0.0.md`
 - `OUTCOME_TRACKING_SPEC_v3.0.0.md`
 - `PERFORMANCE_ANALYTICS_SPEC_v3.0.0.md`
 - `SYSTEM_INVARIANTS_v3.0.0.md`
-- `GOVERNANCE_AND_CHANGE_CONTROL` current promoted successor
-- `SECURITY_MODEL` current promoted successor
+- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md`
+- `SECURITY_MODEL_v2.0.1.md`
 - `TRADE_PHYSICS_INTELLIGENCE_SPEC_v1.0.0.md`
 
 ---
 
 ## 0. Authority and promotion status
 
-Until explicit atomic canonical promotion, `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v2.0.0.md` remains active.
+The executed canonical promotion makes `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v3.0.0.md` authoritative and supersedes `COMMUNITY_FEEDBACK_AND_PRIVACY_SPEC_v2.0.0.md`.
 
-This v3 successor is required because v2 describes Admin Outcome as the single canonical truth used for strategy evaluation. The current proposed canonical graph separates:
+This v3 successor is required because v2 describes Admin Outcome as the single canonical truth used for strategy evaluation. The active canonical graph separates:
 - objective market truth;
 - operational/admin reconciliation truth;
 - community/self-reported truth.
@@ -565,14 +565,14 @@ If implemented according to this specification:
 
 ## 30. Migration from v2
 
-On promotion:
-- v2 becomes Superseded;
-- the sentence/semantics that Admin Outcome is the single canonical truth for strategy evaluation are retired;
-- community data is explicitly classified as self-reported truth;
-- admin outcome is explicitly operational/reconciliation truth;
-- telemetry remains objective market truth;
-- community consensus becomes a review/analytics signal, not an overwrite authority;
-- original privacy, vote, reason, membership, dedup and private-statistics protections are preserved.
+The executed canonical promotion:
+- supersedes v2;
+- retires the sentence/semantics that Admin Outcome is the single canonical truth for strategy evaluation;
+- explicitly classifies community data as self-reported truth;
+- explicitly classifies admin outcome as operational/reconciliation truth;
+- preserves telemetry as objective market truth;
+- makes community consensus a review/analytics signal, not an overwrite authority;
+- preserves the original privacy, vote, reason, membership, dedup and private-statistics protections.
 
 ---
 
@@ -580,8 +580,8 @@ On promotion:
 
 | Version | Date | Description |
 |---|---|---|
-| 3.0.0 | 2026-09-01 | Proposed structural truth-model successor separating community self-report, operational reconciliation and objective market truth; adds Trade Physics/AI label safety. |
-| 2.0.0 | 2026-07-12 | Active canonical community feedback/privacy specification. |
+| 3.0.0 | 2026-09-01 | Active structural truth-model successor separating community self-report, operational reconciliation and objective market truth; adds Trade Physics/AI label safety. |
+| 2.0.0 | 2026-07-12 | Historical canonical community feedback/privacy specification before supersession by v3. |
 
 ---
 

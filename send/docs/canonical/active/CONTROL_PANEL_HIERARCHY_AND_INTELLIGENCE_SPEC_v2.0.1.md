@@ -2,9 +2,9 @@
 
 BinaryBot — Control Panel Hierarchy and Intelligence Specification  
 Version: 2.0.1  
-Status: PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: /opt/binarybot/docs/canonical/proposed/CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.1.md  
-Supersession Intent: `CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: /opt/binarybot/docs/canonical/active/CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.1.md  
+Supersedes: `CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.0.md`
 
 Linked Documents:
 - ADMIN_CONTROL_SPEC_v2.0.1.md
@@ -30,7 +30,7 @@ This successor preserves the hierarchy, visibility model, action types, RBAC bou
 
 The patch only updates normative references and version/status/path metadata. No new control, permission, panel authority, mutation path, or automatic intelligence-to-production pathway is introduced.
 
-Until explicit active promotion, `CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.0.md` remains authoritative.
+The executed canonical promotion makes `CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.1.md` authoritative; `CONTROL_PANEL_HIERARCHY_AND_INTELLIGENCE_SPEC_v2.0.0.md` remains a historical predecessor.
 
 ---
 
@@ -683,8 +683,8 @@ Explanation visibility does not imply mutation or governance authority.
 
 | Version | Date | Description |
 |---|---|---|
-| 2.0.1 | 2026-09-01 | Proposed PATCH successor for canonical reference repair only; hierarchy, permission and control semantics unchanged. |
-| 2.0.0 | 2026-07-12 | Active canonical control-panel hierarchy before this proposed patch. |
+| 2.0.1 | 2026-09-01 | Active PATCH successor for canonical reference repair only; hierarchy, permission and control semantics unchanged. |
+| 2.0.0 | 2026-07-12 | Historical active canonical predecessor before supersession by v2.0.1. |
 
 ---
 

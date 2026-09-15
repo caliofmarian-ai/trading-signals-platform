@@ -1,9 +1,9 @@
 # GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1
 
 Version: 2.0.1  
-Status: PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: /opt/binarybot/docs/canonical/proposed/GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md  
-Supersession Intent: `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: /opt/binarybot/docs/canonical/active/GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md  
+Supersedes: `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md`
 
 Linked Documents:
 - SYSTEM_INVARIANTS_v3.0.0.md
@@ -46,7 +46,7 @@ This successor preserves the complete governance framework of v2.0.0: authority 
 
 The patch only updates normative references and version/status/path metadata and removes non-canonical formatting artifacts. No governance burden is weakened or expanded.
 
-Until explicit active promotion, `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md` remains authoritative.
+The executed canonical promotion makes `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md` authoritative; `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md` remains a historical predecessor.
 
 ---
 
@@ -650,7 +650,7 @@ No deployment is valid without rollback discipline.
 No tuning is valid without evidence.  
 No structural evolution is valid without canonical documentation.
 
-This document is the authoritative governance and change-control framework for the project when promoted.
+This document is the active authoritative governance and change-control framework for the project.
 
 ---
 
@@ -658,8 +658,8 @@ This document is the authoritative governance and change-control framework for t
 
 | Version | Date | Description |
 |---|---|---|
-| 2.0.1 | 2026-09-01 | Proposed PATCH successor for canonical reference repair and non-semantic cleanup; governance semantics unchanged. |
-| 2.0.0 | 2026-07-12 | Active canonical governance/change-control framework before this proposed patch. |
+| 2.0.1 | 2026-09-01 | Active PATCH successor for canonical reference repair and non-semantic cleanup; governance semantics unchanged. |
+| 2.0.0 | 2026-07-12 | Historical active canonical governance/change-control predecessor before supersession by v2.0.1. |
 
 ---
 

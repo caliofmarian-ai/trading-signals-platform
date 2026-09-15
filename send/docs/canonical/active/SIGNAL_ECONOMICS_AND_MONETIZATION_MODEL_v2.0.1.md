@@ -1,9 +1,9 @@
 # SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.1
 
 Version: 2.0.1  
-Status: PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: /opt/binarybot/docs/canonical/proposed/SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.1.md  
-Supersession Intent: `SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: /opt/binarybot/docs/canonical/active/SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.1.md  
+Supersedes: `SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.0.md`
 
 Linked Documents:
 - SYSTEM_INVARIANTS_v3.0.0.md
@@ -52,7 +52,7 @@ This successor preserves the commercial tier, monetization, premium-feature, aff
 
 The patch only updates normative references, version/status/path metadata, and terminology needed to keep the commercial description aligned with the promoted strategy/execution graph. It does not alter tier limits, pricing, signal quality, entitlement policy, distribution routing, or strategy behavior.
 
-Until explicit active promotion, `SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.0.md` remains authoritative.
+The executed canonical promotion makes `SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.1.md` authoritative; `SIGNAL_ECONOMICS_AND_MONETIZATION_MODEL_v2.0.0.md` remains a historical predecessor.
 
 ---
 
@@ -570,8 +570,8 @@ Commercial growth is allowed only inside canonical control, never instead of it.
 
 | Version | Date | Description |
 |---|---|---|
-| 2.0.1 | 2026-09-01 | Proposed PATCH successor for canonical reference repair and terminology alignment only; commercial tier and monetization semantics unchanged. |
-| 2.0.0 | 2026-07-12 | Active canonical monetization model before this proposed patch. |
+| 2.0.1 | 2026-09-01 | Active PATCH successor for canonical reference repair and terminology alignment only; commercial tier and monetization semantics unchanged. |
+| 2.0.0 | 2026-07-12 | Historical active canonical monetization predecessor before supersession by v2.0.1. |
 
 ---
 

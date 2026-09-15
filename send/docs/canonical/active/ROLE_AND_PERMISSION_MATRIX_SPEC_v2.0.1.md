@@ -2,9 +2,9 @@
 
 BinaryBot — Role and Permission Matrix Specification  
 Version: 2.0.1  
-Status: PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANONICAL  
-Path: /opt/binarybot/docs/canonical/proposed/ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.1.md  
-Supersession Intent: `ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md`
+Status: ACTIVE CANONICAL  
+Path: /opt/binarybot/docs/canonical/active/ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.1.md  
+Supersedes: `ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md`
 
 Linked Documents:
 - ADMIN_CONTROL_SPEC_v2.0.1.md
@@ -25,7 +25,7 @@ This successor preserves the role family, permission matrix, action classes, sco
 
 The patch only updates normative canonical references and version/status/path metadata. No role receives additional access and no existing permission is widened or narrowed by this patch.
 
-Until explicit active promotion, `ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md` remains authoritative.
+The executed canonical promotion makes `ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.1.md` authoritative; `ROLE_AND_PERMISSION_MATRIX_SPEC_v2.0.0.md` remains a historical predecessor.
 
 ---
 
@@ -631,8 +631,8 @@ If this specification is implemented correctly, BinaryBot gains:
 
 | Version | Date | Description |
 |---|---|---|
-| 2.0.1 | 2026-09-01 | Proposed PATCH successor for canonical reference repair only; permission semantics unchanged. |
-| 2.0.0 | 2026-07-12 | Active canonical role/permission model before this proposed patch. |
+| 2.0.1 | 2026-09-01 | Active PATCH successor for canonical reference repair only; permission semantics unchanged. |
+| 2.0.0 | 2026-07-12 | Historical active canonical role/permission predecessor before supersession by v2.0.1. |
 
 ---
 

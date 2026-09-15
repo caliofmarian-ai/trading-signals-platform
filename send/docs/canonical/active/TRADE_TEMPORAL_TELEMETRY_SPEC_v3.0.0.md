@@ -1,12 +1,12 @@
 # TRADE_TEMPORAL_TELEMETRY_SPEC_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: post-executable market truth, temporal checkpoints, Trade Physics feature/outcome lineage  
-Supersession Intent: `TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md`
+Supersedes: `TRADE_TEMPORAL_TELEMETRY_SPEC_v2.0.0.md`
 
-Linked proposed/current authorities:
+Linked active/current authorities:
 - `CANONICAL_STRATEGY_STACK` successor
 - `ALGO_SPEC_v3.0.0.md`
 - `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
@@ -23,7 +23,7 @@ Linked proposed/current authorities:
 
 ## 0. Authority and promotion status
 
-This is a complete proposed successor. Until explicit promotion, v2.0.0 remains active.
+This is the active canonical Trade Temporal Telemetry authority. The executed promotion supersedes v2.0.0, which remains historical only.
 
 The major version is justified by structural expansion of the telemetry contract to make Trade Physics feature snapshots, feature-version lineage, label provenance, and learned-probability separation first-class current-scope requirements.
 
@@ -70,7 +70,7 @@ It adds objective market evidence linked to those layers.
 
 ## 3. Telemetry eligibility
 
-Baseline telemetry trade registration occurs only for an effective executable `OPEN_NOW` that satisfies the canonical execution/visibility boundary defined by the promoted Signal Engine/Event/Distribution contracts.
+Baseline telemetry trade registration occurs only for an effective executable `OPEN_NOW` that satisfies the canonical execution/visibility boundary defined by the active Signal Engine/Event/Distribution contracts.
 
 A mere internally constructed SignalEvent candidate is insufficient evidence of effective executable emission.
 
@@ -508,7 +508,7 @@ Rotation/compression/aggregation may be added without deleting raw provenance re
 
 ---
 
-## 20. Implementation sequence after promotion
+## 20. Active-canon implementation sequence
 
 1. enforce effective-executable eligibility and stable identity;
 2. persist immutable pre-trade snapshot including full Trade Physics fields;
