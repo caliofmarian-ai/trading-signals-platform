@@ -2,11 +2,11 @@
 
 **Document ID:** HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON  
 **Version:** 1.0.1  
-**Status:** PROPOSED PATCH SUCCESSOR — NOT ACTIVE CANON  
+**Status:** ACTIVE CANONICAL  
 **Domain:** Admin Surface / Human Comprehension / Operational Memory  
 **Primary Surface:** Telegram  
 **Authority Root:** `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md`  
-**Supersession Intent:** `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md`
+**Supersedes:** `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md`
 
 ---
 
@@ -16,7 +16,7 @@ This successor preserves the complete human-comprehension, operational-memory, e
 
 The patch only updates normative canonical references and version/status metadata. It does not add a new UI capability, permission, truth domain, control, or explanation requirement.
 
-Until explicit active promotion, `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.0.md` remains authoritative.
+The executed canonical promotion makes `HUMAN_COMPREHENSION_AND_SELF_EXPLAINING_CONTROL_SURFACE_CANON_v1.0.1.md` authoritative; v1.0.0 remains a historical predecessor.
 
 ---
 
@@ -43,7 +43,7 @@ It does not transfer canonical ownership of strategy, execution, distribution, a
 
 ## 2. Canonical Authority
 
-This document extends the proposed successor control-plane authority defined by:
+This document extends the active canonical control-plane authority defined by:
 
 - `ADMIN_SURFACE_AND_CONTROL_PLANE_CANON_v2.0.1.md`
 - `ADMIN_CONTROL_SPEC_v2.0.1.md`
@@ -544,8 +544,8 @@ It is complete only when an authorized human can correctly understand the meanin
 
 | Version | Date | Description |
 |---|---|---|
-| 1.0.1 | 2026-09-01 | Proposed PATCH successor for canonical reference repair only; human-comprehension semantics unchanged. |
-| 1.0.0 | 2026-08 | Active canonical human-comprehension and operational-memory contract before this proposed patch. |
+| 1.0.1 | 2026-09-01 | Active PATCH successor for canonical reference repair only; human-comprehension semantics unchanged. |
+| 1.0.0 | 2026-08 | Historical active canonical predecessor before supersession by v1.0.1. |
 
 ---
 
