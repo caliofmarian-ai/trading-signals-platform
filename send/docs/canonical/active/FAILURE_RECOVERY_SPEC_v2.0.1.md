@@ -452,7 +452,7 @@ Fail-safe must not mean silent failure. It must remain observable and reviewable
 Implementation may vary, but the recovery model assumes persistence exists for the domains that matter operationally, such as:
 - route state / counters
 - reset reference or equivalent daily/periodic boundary evidence
-- dedup-relevantant state or durable reconstructable evidence
+- dedup-relevant state or durable reconstructable evidence
 - FSM/watchlist state where materially required
 - append-only observability logs for forensic reconstruction
 
