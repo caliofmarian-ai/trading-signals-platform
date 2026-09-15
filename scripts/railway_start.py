@@ -7,6 +7,7 @@ from scripts.railway_common import apply_path_contract, resolve_base_dir
 from core.observability_logger import send_control_notification
 from scripts.railway_healthcheck import readiness_report
 from scripts.railway_init import initialize_for_railway
+from scripts.admin_role_reconcile import reconcile_primary_admin_from_source
 
 
 def main() -> int:
@@ -14,6 +15,7 @@ def main() -> int:
         base_dir = resolve_base_dir(require_explicit=True)
         apply_path_contract(base_dir)
         initialize_for_railway(base_dir=base_dir)
+        reconcile_primary_admin_from_source(base_dir=base_dir)
         readiness_report(base_dir=base_dir)
         os.environ["RAILWAY_READINESS_EVALUATED"] = "1"
         send_control_notification("BOT STARTING", "BinaryBot Railway runtime passed initialization and readiness checks.")
