@@ -504,7 +504,7 @@ The legacy `FAILURE_RECOVERY_SPEC.md` established strong operational truths:
 - severe corruption may justify startup refusal
 
 The v2 model preserved those truths while upgrading the model to:
-- explicit recovery-health states
+- explicit recovery-health states;
 - route-governance terminology
 - stronger degraded-mode governance
 - better admin/control integration
