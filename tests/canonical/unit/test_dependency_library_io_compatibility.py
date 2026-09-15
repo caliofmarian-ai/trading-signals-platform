@@ -47,6 +47,10 @@ def test_telegram_real_requests_preparation(monkeypatch, _forbid_external_networ
         return response
 
     monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", fake_send)
+    # The canonical autouse fixture blocks requests.post before the library runs.
+    # Restore the actual library implementation only after adapter I/O is stubbed;
+    # DNS and socket guards above remain active, even if the stub is bypassed.
+    monkeypatch.setattr(requests, "post", requests.api.post)
     result = publisher.send_message(chat_id=77, text="compatibility")
 
     assert result == {"ok": True, "result": {"message_id": 42}}
@@ -74,6 +78,8 @@ def test_telegram_real_requests_transport_error(
         raise error_type("simulated transport failure")
 
     monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", fail_send)
+    # Exercise real Requests dispatch under the same adapter/socket isolation.
+    monkeypatch.setattr(requests, "post", requests.api.post)
     result = publisher.delete_message(chat_id=77, message_id=42)
 
     assert len(calls) == 1
