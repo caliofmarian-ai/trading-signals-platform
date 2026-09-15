@@ -1,12 +1,12 @@
 # OBSERVABILITY_LOGGING_SPEC_v3.0.0
 
 Version: 3.0.0  
-Status: PROPOSED COMPLETE CONSOLIDATED SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: implementation-level structured logging for strategy, Trade Physics, FSM, signal execution, distribution, telemetry, outcome and governance evidence  
-Supersession Intent: `OBSERVABILITY_LOGGING_SPEC_v2.0.0.md`
+Supersedes: `OBSERVABILITY_LOGGING_SPEC_v2.0.0.md`
 
-Linked proposed/current authorities:
+Linked active authorities:
 - `EVENT_SCHEMA_SPEC_v3.0.0.md`
 - `OBSERVABILITY_SPEC_v3.0.0.md`
 - `ALGO_SPEC_v3.0.0.md`
@@ -22,9 +22,9 @@ Linked proposed/current authorities:
 
 ## 0. Authority and promotion status
 
-This is the complete proposed implementation-level logging contract.
+This is the complete active implementation-level logging contract.
 
-Until explicit promotion, v2 remains active.
+`OBSERVABILITY_LOGGING_SPEC_v3.0.0.md` is active under `CANONICAL_ACTIVATION_RECORD_20260901.md` and `CANONICAL_MASTER_INDEX_v2.0.0.md`; `OBSERVABILITY_LOGGING_SPEC_v2.0.0.md` is superseded and historical only.
 
 It consolidates:
 - explicit `signal_execution_result` logging;
@@ -174,7 +174,7 @@ Required fields:
 - destination state;
 - candidate/payload reference where available;
 - FSM handoff reference;
-- DecisionObject/Trade Physics snapshot reference.
+- DecisionObject/Trade Physics snapshot/reference.
 
 For POST_DISTRIBUTION EMITTED, include linked publication evidence.
 
