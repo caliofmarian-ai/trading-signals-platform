@@ -1,41 +1,40 @@
 # ALGO_SPEC_v3.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/ALGO_SPEC_v3.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/ALGO_SPEC_v3.0.0.md  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Strategic market model, corridor-first decision pipeline, classical scoring, current Trade Physics integration, DecisionObject production contract
 
-Supersession intent: `ALGO_SPEC_v2.0.0.md`
+Supersedes: `ALGO_SPEC_v2.0.0.md`
 
 Governance basis:
-- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.0.md`
+- `GOVERNANCE_AND_CHANGE_CONTROL_v2.0.1.md`
 - Owner decision 2026-09-01: complete Trade Physics integration is current-scope
 - Change ID `20260901-TRADE-PHYSICS-01`
 - merged governance PR #78
 
-Linked proposed/current documents:
-- `canonical/active/CANONICAL_STRATEGY_STACK_v1.0.0.md` until successor promotion
-- `canonical/active/TIME_MODEL_UNIFIED_CANON_v2.0.0.md`
-- `canonical/active/SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`
-- `canonical/proposed/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md` until successor promotion
-- `canonical/active/FSM_DECISION_ENGINE_SPEC_v1.0.0.md`
-- `canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v2.0.0.md`
-- `canonical/active/OBSERVABILITY_SPEC_v2.0.0.md`
+Linked active/current documents:
+- `canonical/active/CANONICAL_STRATEGY_STACK_v2.0.0.md`
+- `canonical/active/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`
+- `canonical/active/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
+- `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
+- `canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`
+- `canonical/active/FSM_DECISION_ENGINE_SPEC_v2.0.0.md`
+- `canonical/active/SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md`
+- `canonical/active/OBSERVABILITY_SPEC_v3.0.0.md`
 
 ---
 
 ## 0. PROMOTION STATUS
 
-This document is a complete proposed successor, not an amendment to the active file.
+This document is the active canonical ALGO authority. The executed promotion supersedes `ALGO_SPEC_v2.0.0.md`.
 
-Until explicit promotion:
+Canonical activation:
 
-- `ALGO_SPEC_v2.0.0.md` remains authoritative;
-- this document does not authorize runtime changes;
-- `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md` remains proposed;
-- PR #73 remains on canonical hold.
+- does not by itself authorize runtime changes;
+- makes `TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md` part of the active authority graph;
+- does not by itself release implementation work from its independent governance, testing, deployment or acceptance gates.
 
 ---
 
@@ -58,7 +57,7 @@ Detailed Time Model mathematics remain owned by `TIME_MODEL_UNIFIED_CANON`.
 
 Detailed SR/Corridor semantics remain owned by `SR_CORRIDOR_ENGINE_SPEC`.
 
-Detailed Trade Physics mathematics are delegated to `TRADE_PHYSICS_MODEL_SPEC_v1.0.0` once promoted.
+Detailed Trade Physics mathematics are delegated to the active `TRADE_PHYSICS_MODEL_SPEC_v1.0.0`.
 
 ---
 
@@ -281,7 +280,7 @@ Trade Physics does not erase classical score provenance.
 
 ## 12. TRADE PHYSICS SUBMODEL
 
-Trade Physics is current-scope and mandatory once this successor set is promoted and implemented.
+Trade Physics is current-scope in the active canonical strategy graph and is mandatory in aligned implementation.
 
 Detailed formulas are governed by `TRADE_PHYSICS_MODEL_SPEC_v1.0.0`.
 
@@ -344,7 +343,7 @@ A high TPS arithmetic result can never override a hard blocker that should have 
 
 The strategy must carry a recognized Trade Physics readiness state.
 
-Proposed readiness families include:
+Recognized readiness families include:
 
 - READY;
 - unavailable due to structure;
@@ -354,7 +353,7 @@ Proposed readiness families include:
 - blocked by unstable market;
 - invalid evidence.
 
-The exact enum belongs to the Trade Physics/DecisionObject contract successor set.
+The exact enum belongs to the Trade Physics/DecisionObject contract authority set.
 
 When readiness is not READY:
 
@@ -390,7 +389,7 @@ Before `DecisionObject`, the strategy must apply explicit gating for conditions 
 - insufficient directional structural space;
 - severe temporal infeasibility;
 - unstable/noisy market state where canonically blocked;
-- incomplete mandatory Trade Physics evidence after promotion;
+- incomplete mandatory Trade Physics evidence under active v3;
 - contradictions among context, structure, time and physical feasibility.
 
 Reject/degrade semantics must remain explicit.
@@ -458,7 +457,7 @@ FSM does not own:
 - structural-space derivation;
 - learned probability training.
 
-FSM may use strategic blockers/readiness as standardized inputs once their mapping is defined by the FSM/DecisionObject successor contracts.
+FSM may use strategic blockers/readiness as standardized inputs once their mapping is defined by the FSM/DecisionObject contracts.
 
 ---
 
@@ -479,7 +478,7 @@ It MUST NOT:
 - repair missing strategy evidence ad hoc;
 - overwrite DecisionObject Trade Physics truth.
 
-The current runtime TPS calculation inside Signal Engine is implementation drift to be corrected after canonical promotion.
+Any runtime TPS calculation inside Signal Engine that acts as primary strategic authority is implementation drift to be corrected through governed implementation work.
 
 ---
 
@@ -554,7 +553,7 @@ Analytics findings may recommend policy changes but may not silently alter strat
 
 Trade Physics mathematical constants are not automatically ordinary runtime parameters.
 
-Caps, weights, speed lookback and recency profile become controllable only if a successor `STRATEGY_PARAMETER_CONTROL_SPEC` explicitly authorizes:
+Caps, weights, speed lookback and recency profile become controllable only if the active `STRATEGY_PARAMETER_CONTROL_SPEC_v3.0.0.md` explicitly authorizes:
 
 - allowed ranges;
 - actor permissions;
@@ -563,7 +562,7 @@ Caps, weights, speed lookback and recency profile become controllable only if a 
 - rollback;
 - evidence requirements.
 
-Until then, the promoted Trade Physics contract defines them structurally.
+Otherwise, the active Trade Physics contract defines them structurally.
 
 ---
 
@@ -585,7 +584,7 @@ Forbidden as active canonical behavior:
 
 ## 28. CODE ALIGNMENT RULE
 
-After promotion, every implementation patch must prove:
+Under active v3, every implementation patch must prove:
 
 - Market Model produces required Trade Physics speed evidence;
 - Corridor produces exact directional available-space evidence;
@@ -599,9 +598,9 @@ After promotion, every implementation patch must prove:
 
 ---
 
-## 29. PATCH PRIORITIES DERIVED FROM THIS SUCCESSOR
+## 29. IMPLEMENTATION PRIORITIES DERIVED FROM ACTIVE V3
 
-If this successor is promoted, implementation order should be:
+Implementation order should be:
 
 1. Market Model directional/gross speed evidence;
 2. Corridor available-space contract;
