@@ -2,19 +2,13 @@
   "owner": [
     7553887987
   ],
-
   "primary_admin": [
-6766367444
-],
-
+    6766369444
+  ],
   "strategy_admin": [],
-
   "research_admin": [],
-
   "analyst": [],
-
   "moderator": [],
-
   "affiliate_admin": {
     "AFF001": {
       "telegram_id": 0,
