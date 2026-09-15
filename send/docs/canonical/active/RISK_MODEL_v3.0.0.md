@@ -2,12 +2,12 @@
 
 Canonical Name: RISK_MODEL  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
-Supersession Intent: `RISK_MODEL_v2.0.0.md`  
+Supersedes: `RISK_MODEL_v2.0.0.md`  
 Scope: strategy risk filtering, physical-feasibility protection, instability defense, lifecycle risk constraints and capital-protection discipline
 
-Linked proposed/current authorities:
+Linked active/current authorities:
 - `CANONICAL_STRATEGY_STACK_v2.0.0.md`
 - `ALGO_SPEC_v3.0.0.md`
 - `SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md`
@@ -18,21 +18,21 @@ Linked proposed/current authorities:
 - `SIGNAL_ENGINE_EXECUTION_SPEC_v3.0.0.md`
 - `SYSTEM_INVARIANTS_v3.0.0.md`
 - `OBSERVABILITY_SPEC_v3.0.0.md`
-- `FAILURE_RECOVERY_SPEC_v2.0.0.md`
-- `SECURITY_MODEL_v2.0.0.md`
-- `TELEGRAM_UX_v2.0.0.md`
+- `FAILURE_RECOVERY_SPEC_v2.0.1.md`
+- `SECURITY_MODEL_v2.0.1.md`
+- `TELEGRAM_UX_v2.0.1.md`
 
 ---
 
 ## 0. Authority and promotion status
 
-Until explicit atomic canonical promotion, `RISK_MODEL_v2.0.0.md` remains active.
+The executed canonical promotion makes `RISK_MODEL_v3.0.0.md` authoritative and supersedes `RISK_MODEL_v2.0.0.md`.
 
-This v3 successor exists because the active v2 document contains legacy parallel strategy mathematics (`buffer_price` and its own `t_needed` formula) that would conflict with the approved Time Model and Trade Physics successor graph.
+This v3 successor exists because the v2 document contains legacy parallel strategy mathematics (`buffer_price` and its own `t_needed` formula) that would conflict with the approved Time Model and Trade Physics authority graph.
 
 Risk v3 therefore consumes strategy truth from its canonical owners rather than redefining it.
 
-No runtime code change is authorized by this proposal alone.
+Canonical activation alone does not authorize runtime code change.
 
 ---
 
@@ -455,7 +455,7 @@ No random production risk decision is allowed.
 
 ## 25. Code alignment rule
 
-Post-promotion implementation must answer:
+Active-canon implementation alignment must answer:
 - where structural risk consumes `available_space` and `required_space`;
 - where time risk consumes canonical Time Model output instead of rederiving `t_needed`;
 - where Trade Physics readiness/TPS enter pre-DecisionObject risk evaluation;
@@ -464,21 +464,21 @@ Post-promotion implementation must answer:
 - how learned probability is blocked when not authorized/ready;
 - how cooldown/focus/dedup risk remains downstream-owned and auditable.
 
-Any parallel legacy formula inside Risk/Signal Engine that contradicts promoted canon is implementation drift to remediate after canonical promotion.
+Any parallel legacy formula inside Risk/Signal Engine that contradicts active canon is implementation drift to remediate through governed implementation work.
 
 ---
 
 ## 26. Migration from v2
 
-When this successor is promoted:
-- `RISK_MODEL_v2.0.0.md` becomes Superseded;
-- `buffer_price` risk wording is replaced by `buffer_distance` primary vocabulary;
-- the local legacy `t_needed = buffer / (ATR * momentum_factor) * trend_time_adjust` formula is retired as Risk authority;
-- Time Model becomes the only time-mathematics authority;
-- Trade Physics physical-feasibility evidence becomes current mandatory strategy evidence;
-- Risk remains defensive and does not become a second scoring engine.
+The executed canonical promotion:
+- supersedes `RISK_MODEL_v2.0.0.md`;
+- replaces `buffer_price` risk wording with `buffer_distance` primary vocabulary;
+- retires the local legacy `t_needed = buffer / (ATR * momentum_factor) * trend_time_adjust` formula as Risk authority;
+- makes Time Model the only time-mathematics authority;
+- makes Trade Physics physical-feasibility evidence current mandatory strategy evidence;
+- preserves Risk as defensive and not a second scoring engine.
 
-Runtime changes remain a separate post-promotion implementation program.
+Runtime changes remain a separate governed implementation program.
 
 ---
 
@@ -486,8 +486,8 @@ Runtime changes remain a separate post-promotion implementation program.
 
 | Version | Date | Description |
 |---|---|---|
-| 3.0.0 | 2026-09-01 | Proposed structural successor aligned with current-scope Trade Physics, directional Time Model and staged execution. Removes parallel legacy time formula and legacy primary buffer vocabulary. |
-| 2.0.0 | 2026-07-12 | Active canonical version produced through canonical reconciliation. |
+| 3.0.0 | 2026-09-01 | Active structural successor aligned with current-scope Trade Physics, directional Time Model and staged execution. Removes parallel legacy time formula and legacy primary buffer vocabulary. |
+| 2.0.0 | 2026-07-12 | Historical canonical predecessor produced through canonical reconciliation before supersession by v3. |
 
 ---
 
