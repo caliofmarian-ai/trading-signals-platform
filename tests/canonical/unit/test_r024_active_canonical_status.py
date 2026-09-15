@@ -18,7 +18,10 @@ _BAD_STATUS = re.compile(
     r"\b(?:PROPOSED|DRAFT|NOT[ _-]+ACTIVE|INACTIVE|SUPERSEDED|DEPRECATED|PENDING)\b",
     re.IGNORECASE,
 )
-_FIELD = re.compile(r"^(Version|Status|Path|Supersedes(?: upon promotion)?):\s*(.*)$", re.I)
+_FIELD = re.compile(
+    r"^(Version|Status|(?:Canonical )?Path|Canonical Name|Document ID|"
+    r"Supersedes(?: upon promotion)?|Supersession Intent):\s*(.*)$", re.I,
+)
 _SELF = r"(?:this (?:document|file|specification|spec|version)|this)"
 
 
@@ -63,7 +66,8 @@ def _status_issues(text: str, filename: str, version: str,
     for number, line in header:
         match = _FIELD.fullmatch(line)
         if match:
-            fields.setdefault(match[1].lower(), []).append((number, match[2]))
+            key = match[1].lower()
+            fields.setdefault("path" if key == "canonical path" else key, []).append((number, match[2]))
     issues = []
     for name in ("version", "status"):
         if len(fields.get(name, [])) != 1:
@@ -74,15 +78,24 @@ def _status_issues(text: str, filename: str, version: str,
     for number, value in fields.get("status", []):
         if _BAD_STATUS.search(value) or not re.search(r"\bACTIVE\s+CANON(?:ICAL)?\b", value, re.I):
             issues.append(f"L{number}: contradictory/non-active document status: {value}")
+    domain = filename.rsplit("_v", 1)[0]
+    identifiers = fields.get("document id", []) + fields.get("canonical name", [])
+    if identifiers and (len(identifiers) != 1 or identifiers[0][1] != domain):
+        issues.append("header: document identifier disagrees with Master Index domain")
     titles = [line.removeprefix("# ").removesuffix(".md") for _, line in header if line.startswith("# ")]
-    if titles != [filename.removesuffix(".md")]:
-        issues.append("header: canonical title identity disagrees with Master Index filename")
+    if len(titles) != 1 or (not identifiers and titles != [filename.removesuffix(".md")]):
+        issues.append("header: missing or mismatched canonical document identity")
+    for title in titles:
+        for title_domain, title_version in _REF.findall(title):
+            if (title_domain, title_version) != (domain, version):
+                issues.append("header: versioned title disagrees with Master Index")
     for number, value in fields.get("path", []):
         if "/canonical/active/" not in value or not value.endswith("/" + filename):
             issues.append(f"L{number}: non-active/mismatched current document path: {value}")
     for number, value in fields.get("supersedes upon promotion", []):
         issues.append(f"L{number}: supersession still conditional on promotion: {value}")
-    domain = filename.rsplit("_v", 1)[0]
+    for number, value in fields.get("supersession intent", []):
+        issues.append(f"L{number}: supersession still expressed as intent: {value}")
     for number, value in fields.get("supersedes", []):
         if re.search(r"\b(?:upon|after|if|until)\b.*\bpromotion\b", value, re.I):
             issues.append(f"L{number}: conditional supersession: {value}")
@@ -93,21 +106,23 @@ def _status_issues(text: str, filename: str, version: str,
     # fields do not. Historical body references are not globally replaced.
     provenance = False
     for number, line in header:
-        if line.lower().startswith(("source provenance:", "historical references:")):
+        if line.lower().startswith(("source provenance:", "historical references:", "predecessor / superseded documents:", "superseded documents:")):
             provenance = True
         elif line.endswith(":") and not line.startswith("-"):
             provenance = False
-        if provenance or line.lower().startswith("supersedes"):
+        if provenance or line.lower().startswith(("supersedes", "supersession intent:")):
             continue
         for referenced_domain, referenced_version in _REF.findall(line):
             current = active_versions.get(referenced_domain)
+            if current and "canonical/proposed/" in line:
+                issues.append(f"L{number}: active authority referenced under proposed path: {line}")
             if current and referenced_version != current:
                 issues.append(f"L{number}: stale current header reference: {referenced_domain}_v{referenced_version}; active v{current}")
     self_identity = re.escape(filename.removesuffix(".md")) + r"(?:\.md)?"
     subject = rf"(?:{_SELF}|{self_identity})"
     denied = re.compile(
         rf"\b{subject}\s+(?:is|remains)\s+(?:(?:a|the)\s+)?"
-        r"(?:proposed\b|not\s+(?:yet\s+)?active\b|draft\b|non-authoritative\b)", re.I,
+        r"(?:(?:complete|consolidated|patch)\s+)*(?:proposed\b|not\s+(?:yet\s+)?active\b|draft\b|non-authoritative\b)", re.I,
     )
     conditional = re.compile(
         rf"\b{subject}\b.*\b(?:not authoritative|not active|must not be treated as active)\b.*\b(?:until|before)\b", re.I,
@@ -116,6 +131,12 @@ def _status_issues(text: str, filename: str, version: str,
     for number, line in lines:
         if denied.search(line) or conditional.search(line):
             issues.append(f"L{number}: stale document self-authority claim: {line}")
+        for referenced_domain, referenced_version in _REF.findall(line):
+            if active_versions.get(referenced_domain) != referenced_version:
+                continue
+            identity = re.escape(f"{referenced_domain}_v{referenced_version}")
+            if re.search(identity + r"(?:\.md)?\s+(?:is|remains)\s+(?:proposed|not active)\b", line, re.I):
+                issues.append(f"L{number}: active peer authority denied: {line}")
         if old_active.search(line):
             for referenced_domain, referenced_version in _REF.findall(line):
                 if referenced_domain == domain and referenced_version != version:
@@ -200,4 +221,28 @@ def test_contradictory_document_status_is_rejected(status):
     _SAMPLE + "```markdown\nUnclosed history\n",
 ])
 def test_identity_promotion_and_reference_contradictions_are_rejected(text):
+    assert _check(text)
+
+
+@pytest.mark.parametrize("text", [
+    _SAMPLE.replace("# EXAMPLE_SPEC_v2.0.0", "# Readable title\n\n**Document ID:** EXAMPLE_SPEC"),
+    _SAMPLE.replace("# EXAMPLE_SPEC_v2.0.0", "# Readable title\n\nCanonical Name: EXAMPLE_SPEC"),
+    _SAMPLE.replace("\n\n## 1.", "\nCanonical Path: send/docs/canonical/active/EXAMPLE_SPEC_v2.0.0.md\n\n## 1."),
+    _SAMPLE.replace("\n\n## 1.", "\nPredecessor / Superseded Documents:\n- canonical/superseded/EXAMPLE_SPEC_v1.0.0.md — historical only\n\n## 1."),
+    _SAMPLE.replace("\n\n## 1.", "\nSource provenance:\n- OTHER_SPEC_v1.0.0.md\n\n## 1."),
+])
+def test_explicit_identity_and_historical_metadata_are_supported(text):
+    assert not _check(text)
+
+
+@pytest.mark.parametrize("text", [
+    _SAMPLE.replace("# EXAMPLE_SPEC_v2.0.0", "# Readable title\n\nDocument ID: WRONG_SPEC"),
+    _SAMPLE.replace("# EXAMPLE_SPEC_v2.0.0", "# EXAMPLE_SPEC_v1.0.0\n\nDocument ID: EXAMPLE_SPEC"),
+    _SAMPLE.replace("Supersedes:", "Supersession Intent:"),
+    _SAMPLE.replace("\n\n## 1.", "\nCanonical Path: send/docs/canonical/proposed/EXAMPLE_SPEC_v2.0.0.md\n\n## 1."),
+    _SAMPLE.replace("\n\n## 1.", "\nLinked Documents:\n- canonical/proposed/OTHER_SPEC_v3.0.0.md\n\n## 1."),
+    _SAMPLE + "This document is a complete proposed successor.\n",
+    _SAMPLE + "OTHER_SPEC_v3.0.0.md remains proposed.\n",
+])
+def test_alias_metadata_and_active_peer_denials_are_rejected(text):
     assert _check(text)
