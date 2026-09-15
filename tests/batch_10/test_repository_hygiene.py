@@ -6,12 +6,34 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+EXPLICIT_HISTORY_PREFIXES = (
+    "send/_archive/",
+    "send/docs/_deprecated/",
+    "send/docs/canonical/deprecated/",
+)
+
 
 def _tracked_files() -> list[str]:
     return subprocess.check_output(
         ["git", "-C", str(REPO_ROOT), "ls-files"],
         text=True,
     ).splitlines()
+
+
+def _is_live_adjacent_backup_or_temp(path: str) -> bool:
+    if not path.startswith("send/"):
+        return False
+    if path.startswith(EXPLICIT_HISTORY_PREFIXES):
+        return False
+
+    name = path.rsplit("/", 1)[-1].lower()
+    return (
+        name.endswith(".bak")
+        or ".bak_" in name
+        or ".bak." in name
+        or name.endswith((".orig", ".rej", ".tmp", ".temp", ".swp", ".swo", "~"))
+        or " - copy." in name
+    )
 
 
 def test_gitignore_covers_repository_hygiene_contract():
@@ -37,6 +59,14 @@ def test_gitignore_covers_repository_hygiene_contract():
         ".vscode/",
         ".DS_Store",
         "Thumbs.db",
+        "send/**/*.bak",
+        "send/**/*.bak_*",
+        "send/**/*.bak.*",
+        "send/**/*.orig",
+        "send/**/*.rej",
+        "!send/_archive/**",
+        "!send/docs/_deprecated/**",
+        "!send/docs/canonical/deprecated/**",
     ):
         assert needle in content
 
@@ -64,4 +94,9 @@ def test_no_tracked_generated_runtime_artifacts():
             matches.append(path)
         elif path.startswith("send/config/") and ".bak." in path:
             matches.append(path)
+    assert matches == []
+
+
+def test_no_live_adjacent_backup_duplicate_or_temp_artifacts():
+    matches = [path for path in _tracked_files() if _is_live_adjacent_backup_or_temp(path)]
     assert matches == []
