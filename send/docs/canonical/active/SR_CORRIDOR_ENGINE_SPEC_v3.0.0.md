@@ -1,26 +1,26 @@
 # SR_CORRIDOR_ENGINE_SPEC_v3.0.0
 
-Path: /opt/binarybot/docs/canonical/proposed/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md  
+Path: /opt/binarybot/docs/canonical/active/SR_CORRIDOR_ENGINE_SPEC_v3.0.0.md  
 Version: 3.0.0  
-Status: PROPOSED COMPLETE SUCCESSOR — NOT ACTIVE CANONICAL  
+Status: ACTIVE CANONICAL  
 Owner: BinaryBot / DROPi Signals  
 Scope: Support/resistance, corridor interpretation, directional structural-space truth, Trade Physics structural handoff, pre-Time-Model feasibility
 
-Supersession intent: `SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`
+Supersedes: `SR_CORRIDOR_ENGINE_SPEC_v2.0.0.md`
 Governance basis: Change ID `20260901-TRADE-PHYSICS-01`; merged PR #78
 
 Linked documents:
-- `canonical/proposed/ALGO_SPEC_v3.0.0.md`
-- `canonical/proposed/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
-- `canonical/active/TIME_MODEL_UNIFIED_CANON_v2.0.0.md` until successor promotion
-- `canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v1.0.0.md` until successor promotion
-- `canonical/active/OBSERVABILITY_SPEC_v2.0.0.md` until successor promotion
+- `canonical/active/ALGO_SPEC_v3.0.0.md`
+- `canonical/active/TRADE_PHYSICS_MODEL_SPEC_v1.0.0.md`
+- `canonical/active/TIME_MODEL_UNIFIED_CANON_v3.0.0.md`
+- `canonical/active/DECISION_OBJECT_CANONICAL_SPEC_v2.0.0.md`
+- `canonical/active/OBSERVABILITY_SPEC_v3.0.0.md`
 
 ---
 
 ## 0. PROMOTION STATUS
 
-This is a complete proposed successor. Until explicit canonical promotion, v2.0.0 remains authoritative and no runtime change is authorized by this file.
+This is the active canonical SR/Corridor authority. The executed canonical promotion supersedes v2.0.0; canonical activation alone does not authorize runtime change.
 
 ---
 
@@ -436,7 +436,7 @@ Forbidden:
 
 ## 24. CODE ALIGNMENT RULE
 
-After promotion, code must answer clearly:
+Under active v3, code must answer clearly:
 
 - where the active corridor is derived;
 - how the directional barrier is selected;
