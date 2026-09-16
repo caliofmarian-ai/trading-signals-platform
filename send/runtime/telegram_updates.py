@@ -38,9 +38,8 @@ _POLLER_STARTED = False
 # Heartbeat: timestamp of the last successful getUpdates call (or 0 if never).
 # Updated atomically by the poller thread; read by liveness checks.
 _POLLER_LAST_HEARTBEAT: float = 0.0
-_POLLER_HEARTBEAT_LOCK = threading.Lock()
-# If no heartbeat is recorded within this window the poller is considered stalled.
 POLLER_HEARTBEAT_TIMEOUT_SEC: float = 120.0
+_POLLER_HEARTBEAT_LOCK = threading.Lock()
 
 
 def _update_poller_heartbeat() -> None:
@@ -216,6 +215,66 @@ def _ack_callback(callback_id: Any, text: str = "") -> None:
         )
 
 
+def _try_private_support_proof(update: Dict[str, Any]) -> bool:
+    message = update.get("message")
+    if not isinstance(message, dict):
+        return False
+    if not message.get("document") and not message.get("photo"):
+        return False
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    try:
+        result = support_runtime.handle_private_proof_message(
+            message,
+            now_ts=int(time.time()),
+        )
+    except Exception as exc:
+        observability_logger.log_error(
+            {
+                "event_type": "error",
+                "module": "telegram_updates",
+                "function": "support_private_proof",
+                "error": telegram_publisher._sanitize(str(exc)),
+            }
+        )
+        if chat_id is not None:
+            try:
+                telegram_publisher.send_message(
+                    chat_id=int(chat_id),
+                    text=(
+                        "Payment proof could not be recorded. "
+                        "Please retry the attachment or contact support."
+                    ),
+                )
+            except Exception:
+                pass
+        # A proof-shaped message is consumed when ingestion fails so it cannot
+        # fall through to an unrelated command/navigation handler.
+        return True
+    if not result.get("handled"):
+        return False
+    if chat_id is not None:
+        try:
+            telegram_publisher.send_message(
+                chat_id=int(chat_id),
+                text=(
+                    f"Support case {result.get('case_id')}: payment proof recorded. "
+                    "The file is restricted to the audited support workflow."
+                ),
+            )
+        except Exception as exc:
+            observability_logger.log_warning(
+                warn_type="support_proof_client_ack_failed",
+                message="Payment proof was recorded but client acknowledgement failed",
+                context={
+                    "case_id": result.get("case_id"),
+                    "error": telegram_publisher._sanitize(str(exc)),
+                },
+                source={"module": "telegram_updates", "function": "_try_private_support_proof"},
+            )
+    return True
+
+
 def _try_private_support_message(update: Dict[str, Any]) -> bool:
     message = update.get("message")
     if not isinstance(message, dict):
@@ -284,10 +343,11 @@ def _maybe_open_support_case(client_intent_id: Any) -> Optional[Dict[str, Any]]:
 
 def process_update(update: Dict[str, Any]):
 
-    # private support message — only intercepts a non-command text when the
-    # Telegram identity maps uniquely to a subscriber with exactly one active
-    # support case. All other messages continue through the existing bot path.
+    # Payment-proof attachments are intercepted before text routing. A support
+    # proof never falls through to unrelated command/navigation behavior.
     if "message" in update:
+        if _try_private_support_proof(update):
+            return
         if _try_private_support_message(update):
             return
         bot_service.process_update(update)
