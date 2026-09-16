@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional
 
 from billing import payment_ledger, subscription_registry
-from billing.contracts import BillingContractError, get_plan, get_strategy_product, load_billing_contract
+from billing.contracts import (
+    BillingContractError,
+    get_plan,
+    get_strategy_product,
+    load_billing_contract,
+)
 from core import storage, telegram_publisher
 
 NOTIFICATION_POINTS = (
@@ -80,7 +85,7 @@ def _opaque_id() -> str:
     return str(uuid.uuid4())
 
 
-def _stable_token(value: str, *, length: int = 16) -> str:
+def _stable_token(value: str, *, length: int = 24) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:length]
 
 
@@ -123,7 +128,9 @@ def _read_events_unlocked(path: str) -> list[Dict[str, Any]]:
     try:
         lines = target.read_text(encoding="utf-8").splitlines()
     except Exception as exc:
-        raise BillingNotificationError(f"Unable to read notification event log: {target}") from exc
+        raise BillingNotificationError(
+            f"Unable to read notification event log: {target}"
+        ) from exc
 
     records: list[Dict[str, Any]] = []
     ids: set[str] = set()
@@ -141,13 +148,20 @@ def _read_events_unlocked(path: str) -> list[Dict[str, Any]]:
             raise BillingNotificationError(
                 f"Notification event at line {line_number} is not an object"
             )
-        event_id = _nonempty(record.get("billing_notification_event_id"), label="billing_notification_event_id")
+        event_id = _nonempty(
+            record.get("billing_notification_event_id"),
+            label="billing_notification_event_id",
+        )
         if event_id in ids:
-            raise BillingNotificationError(f"Duplicate billing_notification_event_id: {event_id}")
+            raise BillingNotificationError(
+                f"Duplicate billing_notification_event_id: {event_id}"
+            )
         ids.add(event_id)
         seq = record.get("billing_notification_seq")
         if isinstance(seq, bool) or not isinstance(seq, int) or seq <= 0:
-            raise BillingNotificationError(f"Invalid billing_notification_seq at line {line_number}")
+            raise BillingNotificationError(
+                f"Invalid billing_notification_seq at line {line_number}"
+            )
         if seq in seqs:
             raise BillingNotificationError(f"Duplicate billing_notification_seq: {seq}")
         seqs.add(seq)
@@ -158,7 +172,8 @@ def _read_events_unlocked(path: str) -> list[Dict[str, Any]]:
         expected = list(range(1, len(records) + 1))
         if actual != expected:
             raise BillingNotificationError(
-                f"Notification event sequence is non-contiguous: expected={expected} actual={actual}"
+                "Notification event sequence is non-contiguous: "
+                f"expected={expected} actual={actual}"
             )
     return records
 
@@ -167,15 +182,23 @@ def load_events(path: str | None = None) -> list[Dict[str, Any]]:
     return _read_events_unlocked(path or events_path())
 
 
-def _append_unlocked(path: str, records: list[Dict[str, Any]], payload: Mapping[str, Any]) -> Dict[str, Any]:
+def _append_unlocked(
+    path: str,
+    records: list[Dict[str, Any]],
+    payload: Mapping[str, Any],
+) -> Dict[str, Any]:
     record = dict(payload)
+    record.pop("billing_notification_event_id", None)
+    record.pop("billing_notification_seq", None)
     record["billing_notification_event_id"] = _opaque_id()
     record["billing_notification_seq"] = len(records) + 1
     storage.append_jsonl(path, record)
     return record
 
 
-def _find_idempotency(records: Iterable[Mapping[str, Any]], key: str) -> Optional[Mapping[str, Any]]:
+def _find_idempotency(
+    records: Iterable[Mapping[str, Any]], key: str
+) -> Optional[Mapping[str, Any]]:
     for record in records:
         if record.get("idempotency_key") == key:
             return record
@@ -192,11 +215,7 @@ def bind_private_delivery_target(
     now_ts: float | int | None = None,
     path: str | None = None,
 ) -> Dict[str, Any]:
-    """Bind an explicit private-DM delivery address to a billing subscriber.
-
-    The commercial identity remains ``subscriber_ref``. Telegram IDs are only a
-    delivery address and are never inferred from subscriber_ref.
-    """
+    """Bind an explicit private-DM address to a commercial subscriber identity."""
 
     subscriber = _nonempty(subscriber_ref, label="subscriber_ref")
     product = _nonempty(strategy_product_id, label="strategy_product_id")
@@ -205,7 +224,8 @@ def bind_private_delivery_target(
     chat_id = _positive_int(telegram_chat_id, label="telegram_chat_id")
     if user_id != chat_id:
         raise BillingNotificationError(
-            "Billing notifications require an explicit private Telegram chat where chat_id == user_id"
+            "Billing notifications require an explicit private Telegram chat "
+            "where chat_id == user_id"
         )
     now = _now(now_ts)
     target = path or events_path()
@@ -215,7 +235,11 @@ def bind_private_delivery_target(
         records = _read_events_unlocked(target)
         existing = _find_idempotency(records, idem)
         if existing is not None:
-            return {"status": "DUPLICATE", "appended": False, "record": dict(existing)}
+            return {
+                "status": "DUPLICATE",
+                "appended": False,
+                "record": dict(existing),
+            }
         record = _append_unlocked(
             target,
             records,
@@ -259,11 +283,24 @@ def _callback_token(notification_key: str) -> str:
     return _stable_token(f"billing-intent:{notification_key}")
 
 
-def _latest_subscription_rows(subscription_path: str | None = None) -> list[Dict[str, Any]]:
+def _client_intent_id(subscription: Mapping[str, Any]) -> str:
+    seed = (
+        f"billing-client-intent:{subscription['subscription_id']}:"
+        f"{subscription.get('expires_at_epoch')}"
+    )
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, seed))
+
+
+def _latest_subscription_rows(
+    subscription_path: str | None = None,
+) -> list[Dict[str, Any]]:
     events = subscription_registry.load_subscription_events(subscription_path)
     latest: Dict[tuple[str, str], Dict[str, Any]] = {}
     for record in events:
-        key = (str(record.get("subscriber_ref")), str(record.get("strategy_product_id")))
+        key = (
+            str(record.get("subscriber_ref")),
+            str(record.get("strategy_product_id")),
+        )
         latest[key] = dict(record)
     return list(latest.values())
 
@@ -291,7 +328,12 @@ def _plan_choices(subscription: Mapping[str, Any]) -> tuple[list[str], list[str]
     return upgrades, downgrades
 
 
-def _callback_data(token: str, action: str, plan_id: str | None = None) -> str:
+def _callback_data(
+    token: str,
+    action: str,
+    strategy_product_id: str,
+    plan_id: str | None = None,
+) -> str:
     action_codes = {
         "KEEP_CURRENT_PLAN": "K",
         "UPGRADE": "U",
@@ -303,17 +345,24 @@ def _callback_data(token: str, action: str, plan_id: str | None = None) -> str:
     code = action_codes[action]
     suffix = ""
     if plan_id is not None:
-        tier = str(_plan("BINARY_TRADING", plan_id).get("tier") or "")
+        tier = str(_plan(strategy_product_id, plan_id).get("tier") or "")
         if tier not in _TIER_RANK:
-            raise BillingNotificationError(f"Unsupported callback target tier: {tier}")
+            raise BillingNotificationError(
+                f"Unsupported callback target tier: {tier}"
+            )
         suffix = f":{tier}"
     callback = f"{CALLBACK_PREFIX}{token}:{code}{suffix}"
     if len(callback.encode("utf-8")) > 64:
-        raise BillingNotificationError("Billing callback_data exceeds Telegram 64-byte limit")
+        raise BillingNotificationError(
+            "Billing callback_data exceeds Telegram 64-byte limit"
+        )
     return callback
 
 
-def _render_notification(subscription: Mapping[str, Any], point: str, token: str) -> tuple[str, Dict[str, Any]]:
+def _render_notification(
+    subscription: Mapping[str, Any], point: str, token: str
+) -> tuple[str, Dict[str, Any]]:
+    product_id = str(subscription["strategy_product_id"])
     tier = str(subscription["tier"])
     expires = int(subscription["expires_at_epoch"])
     point_label = {
@@ -335,36 +384,68 @@ def _render_notification(subscription: Mapping[str, Any], point: str, token: str
         [
             {
                 "text": "Keep current plan",
-                "callback_data": _callback_data(token, "KEEP_CURRENT_PLAN"),
+                "callback_data": _callback_data(
+                    token, "KEEP_CURRENT_PLAN", product_id
+                ),
             }
         ]
     ]
     for plan_id in upgrades:
-        tier_name = str(_plan(str(subscription["strategy_product_id"]), plan_id)["tier"])
+        tier_name = str(_plan(product_id, plan_id)["tier"])
         rows.append(
-            [{"text": f"Upgrade to {tier_name}", "callback_data": _callback_data(token, "UPGRADE", plan_id)}]
+            [
+                {
+                    "text": f"Upgrade to {tier_name}",
+                    "callback_data": _callback_data(
+                        token, "UPGRADE", product_id, plan_id
+                    ),
+                }
+            ]
         )
     for plan_id in downgrades:
-        tier_name = str(_plan(str(subscription["strategy_product_id"]), plan_id)["tier"])
+        tier_name = str(_plan(product_id, plan_id)["tier"])
         rows.append(
-            [{"text": f"Downgrade to {tier_name}", "callback_data": _callback_data(token, "DOWNGRADE", plan_id)}]
+            [
+                {
+                    "text": f"Downgrade to {tier_name}",
+                    "callback_data": _callback_data(
+                        token, "DOWNGRADE", product_id, plan_id
+                    ),
+                }
+            ]
         )
     rows.extend(
         [
-            [{"text": "Cancel at period end", "callback_data": _callback_data(token, "CANCEL")}],
+            [
+                {
+                    "text": "Cancel at period end",
+                    "callback_data": _callback_data(
+                        token, "CANCEL", product_id
+                    ),
+                }
+            ],
             [
                 {
                     "text": "Payment not detected",
-                    "callback_data": _callback_data(token, "PAYMENT_NOT_DETECTED"),
+                    "callback_data": _callback_data(
+                        token, "PAYMENT_NOT_DETECTED", product_id
+                    ),
                 },
-                {"text": "Support", "callback_data": _callback_data(token, "SUPPORT")},
+                {
+                    "text": "Support",
+                    "callback_data": _callback_data(
+                        token, "SUPPORT", product_id
+                    ),
+                },
             ],
         ]
     )
     return text, {"inline_keyboard": rows}
 
 
-def _delivery_attempts(records: Iterable[Mapping[str, Any]], notification_key: str) -> list[Dict[str, Any]]:
+def _delivery_attempts(
+    records: Iterable[Mapping[str, Any]], notification_key: str
+) -> list[Dict[str, Any]]:
     return [
         dict(record)
         for record in records
@@ -377,22 +458,20 @@ def _retry_due(attempts: list[Mapping[str, Any]], now: int) -> bool:
     if not attempts:
         return True
     latest = attempts[-1]
-    if latest.get("delivery_result") == "SENT":
-        return False
-    if latest.get("delivery_result") == "FAILED_TERMINAL":
+    if latest.get("delivery_result") in {"SENT", "FAILED_TERMINAL"}:
         return False
     next_retry = latest.get("next_retry_at_epoch")
     return next_retry is not None and now >= int(next_retry)
 
 
-def _notification_due(subscription: Mapping[str, Any], point_offset: int, now: int) -> bool:
+def _notification_due(
+    subscription: Mapping[str, Any], point_offset: int, now: int
+) -> bool:
     expires = subscription.get("expires_at_epoch")
     if expires is None:
         return False
     starts = subscription.get("starts_at_epoch")
     due_at = int(expires) + point_offset
-    # If a period was created after a reminder point, it was never a valid
-    # scheduling opportunity. Such a point is excluded from required evidence.
     if starts is not None and due_at < int(starts):
         return False
     return now >= due_at
@@ -415,10 +494,14 @@ def _append_delivery_result(
     occurred_at: int,
 ) -> Dict[str, Any]:
     if delivery_result not in DELIVERY_RESULTS:
-        raise BillingNotificationError(f"Unsupported delivery_result: {delivery_result}")
+        raise BillingNotificationError(
+            f"Unsupported delivery_result: {delivery_result}"
+        )
     next_retry: int | None = None
     if delivery_result == "FAILED" and attempt_number < MAX_DELIVERY_ATTEMPTS:
-        delay_index = min(attempt_number - 1, len(RETRY_DELAYS_SECONDS) - 1)
+        delay_index = min(
+            attempt_number - 1, len(RETRY_DELAYS_SECONDS) - 1
+        )
         next_retry = occurred_at + RETRY_DELAYS_SECONDS[delay_index]
     idem = f"delivery:{notification_key}:attempt:{attempt_number}"
     existing = _find_idempotency(records, idem)
@@ -432,7 +515,9 @@ def _append_delivery_result(
             "subscriber_ref": subscription["subscriber_ref"],
             "strategy_product_id": subscription["strategy_product_id"],
             "subscription_id": subscription["subscription_id"],
-            "source_subscription_event_id": subscription["subscription_event_id"],
+            "source_subscription_event_id": subscription[
+                "subscription_event_id"
+            ],
             "entitlement_version": subscription["entitlement_version"],
             "plan_id": subscription["plan_id"],
             "tier": subscription["tier"],
@@ -508,7 +593,11 @@ def _send_one_notification(
             occurred_at=now,
         )
     except Exception as exc:
-        result_name = "FAILED_TERMINAL" if attempt_number >= MAX_DELIVERY_ATTEMPTS else "FAILED"
+        result_name = (
+            "FAILED_TERMINAL"
+            if attempt_number >= MAX_DELIVERY_ATTEMPTS
+            else "FAILED"
+        )
         return _append_delivery_result(
             path=path,
             records=records,
@@ -526,7 +615,9 @@ def _send_one_notification(
         )
 
 
-def _required_notification_keys(subscription: Mapping[str, Any]) -> list[str]:
+def _required_notification_keys(
+    subscription: Mapping[str, Any]
+) -> list[str]:
     expires = subscription.get("expires_at_epoch")
     starts = subscription.get("starts_at_epoch")
     if expires is None:
@@ -540,7 +631,9 @@ def _required_notification_keys(subscription: Mapping[str, Any]) -> list[str]:
     return required
 
 
-def _sent_delivery_for_key(records: Iterable[Mapping[str, Any]], key: str) -> Optional[Dict[str, Any]]:
+def _sent_delivery_for_key(
+    records: Iterable[Mapping[str, Any]], key: str
+) -> Optional[Dict[str, Any]]:
     matches = [
         dict(record)
         for record in records
@@ -551,7 +644,9 @@ def _sent_delivery_for_key(records: Iterable[Mapping[str, Any]], key: str) -> Op
     return matches[-1] if matches else None
 
 
-def _latest_intent_events(records: Iterable[Mapping[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def _latest_intent_events(
+    records: Iterable[Mapping[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
     latest: Dict[str, Dict[str, Any]] = {}
     for record in records:
         intent_id = record.get("client_intent_id")
@@ -561,32 +656,66 @@ def _latest_intent_events(records: Iterable[Mapping[str, Any]]) -> Dict[str, Dic
 
 
 def _active_client_intents_for_subscription(
-    records: Iterable[Mapping[str, Any]], subscription: Mapping[str, Any]
+    records: Iterable[Mapping[str, Any]],
+    subscription: Mapping[str, Any],
 ) -> list[Dict[str, Any]]:
     latest = _latest_intent_events(records)
     active: list[Dict[str, Any]] = []
     for record in latest.values():
         if record.get("subscription_id") != subscription.get("subscription_id"):
             continue
-        if record.get("period_expires_at_epoch") != subscription.get("expires_at_epoch"):
+        if record.get("period_expires_at_epoch") != subscription.get(
+            "expires_at_epoch"
+        ):
             continue
-        if record.get("client_intent_status") in {"RECORDED", "PAYMENT_PENDING", "SUPPORT_REQUIRED"}:
+        if record.get("client_intent_status") in {
+            "RECORDED",
+            "PAYMENT_PENDING",
+            "SUPPORT_REQUIRED",
+        }:
             active.append(record)
     return active
 
 
+def _consumed_settlement_ids(
+    subscription: Mapping[str, Any],
+    subscription_path: str | None,
+) -> set[str]:
+    consumed: set[str] = set()
+    for record in subscription_registry.load_subscription_events(
+        subscription_path
+    ):
+        if record.get("subscriber_ref") != subscription.get("subscriber_ref"):
+            continue
+        if record.get("strategy_product_id") != subscription.get(
+            "strategy_product_id"
+        ):
+            continue
+        ledger_id = record.get("last_payment_ledger_event_id")
+        if isinstance(ledger_id, str) and ledger_id:
+            consumed.add(ledger_id)
+    return consumed
+
+
 def _unconsumed_settled_payment_exists(
-    subscription: Mapping[str, Any], payment_path: str | None
+    subscription: Mapping[str, Any],
+    payment_path: str | None,
+    subscription_path: str | None,
 ) -> bool:
-    last_consumed = subscription.get("last_payment_ledger_event_id")
+    consumed = _consumed_settlement_ids(subscription, subscription_path)
     for record in payment_ledger.load_ledger(payment_path):
         if record.get("subscriber_ref") != subscription.get("subscriber_ref"):
             continue
-        if record.get("strategy_product_id") != subscription.get("strategy_product_id"):
+        if record.get("strategy_product_id") != subscription.get(
+            "strategy_product_id"
+        ):
             continue
-        if record.get("payment_state") != "SETTLED" or record.get("reconciliation_result") != "MATCHED":
+        if (
+            record.get("payment_state") != "SETTLED"
+            or record.get("reconciliation_result") != "MATCHED"
+        ):
             continue
-        if record.get("ledger_event_id") != last_consumed:
+        if record.get("ledger_event_id") not in consumed:
             return True
     return False
 
@@ -597,6 +726,7 @@ def build_auto_downgrade_evidence(
     now_ts: float | int | None = None,
     path: str | None = None,
     payment_path: str | None = None,
+    subscription_path: str | None = None,
 ) -> Dict[str, Any]:
     """Build the #163 proof required by #162 before +72h FREE downgrade."""
 
@@ -624,44 +754,81 @@ def build_auto_downgrade_evidence(
                 "reason": "REQUIRED_DELIVERY_EVIDENCE_MISSING",
                 "missing_notification_keys": missing,
             }
-        active_intents = _active_client_intents_for_subscription(records, subscription)
+        active_intents = _active_client_intents_for_subscription(
+            records, subscription
+        )
         if active_intents:
             return {
                 "ready": False,
                 "reason": "RECORDED_CLIENT_INTENT_ACTIVE",
-                "client_intent_ids": [row["client_intent_id"] for row in active_intents],
+                "client_intent_ids": [
+                    row["client_intent_id"] for row in active_intents
+                ],
             }
-        if _unconsumed_settled_payment_exists(subscription, payment_path):
-            return {"ready": False, "reason": "UNCONSUMED_SETTLED_PAYMENT_EXISTS"}
+        if _unconsumed_settled_payment_exists(
+            subscription, payment_path, subscription_path
+        ):
+            return {
+                "ready": False,
+                "reason": "UNCONSUMED_SETTLED_PAYMENT_EXISTS",
+            }
 
         digest_source = "|".join(
-            [str(subscription["subscription_id"]), str(subscription["expires_at_epoch"])]
-            + [str(row["billing_notification_event_id"]) for row in deliveries]
+            [
+                str(subscription["subscription_id"]),
+                str(subscription["expires_at_epoch"]),
+            ]
+            + [
+                str(row["billing_notification_event_id"])
+                for row in deliveries
+            ]
         )
-        evidence_id = f"notif-{hashlib.sha256(digest_source.encode('utf-8')).hexdigest()[:24]}"
+        evidence_id = (
+            "notif-"
+            + hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:24]
+        )
         idem = f"auto-downgrade-evidence:{evidence_id}"
         existing = _find_idempotency(records, idem)
         if existing is not None:
-            return {"ready": True, "reason": "READY", "downgrade_evidence_id": evidence_id, "record": dict(existing)}
+            return {
+                "ready": True,
+                "reason": "READY",
+                "downgrade_evidence_id": evidence_id,
+                "record": dict(existing),
+            }
         record = _append_unlocked(
             target,
             records,
             {
                 "event_type": EVENT_DOWNGRADE_EVIDENCE,
                 "subscriber_ref": subscription["subscriber_ref"],
-                "strategy_product_id": subscription["strategy_product_id"],
+                "strategy_product_id": subscription[
+                    "strategy_product_id"
+                ],
                 "subscription_id": subscription["subscription_id"],
-                "source_subscription_event_id": subscription["subscription_event_id"],
-                "period_expires_at_epoch": subscription["expires_at_epoch"],
+                "source_subscription_event_id": subscription[
+                    "subscription_event_id"
+                ],
+                "period_expires_at_epoch": subscription[
+                    "expires_at_epoch"
+                ],
                 "required_notification_keys": required_keys,
-                "delivery_event_ids": [row["billing_notification_event_id"] for row in deliveries],
+                "delivery_event_ids": [
+                    row["billing_notification_event_id"]
+                    for row in deliveries
+                ],
                 "downgrade_evidence_id": evidence_id,
                 "occurred_at_epoch": now,
                 "idempotency_key": idem,
                 "audit_correlation_id": _opaque_id(),
             },
         )
-        return {"ready": True, "reason": "READY", "downgrade_evidence_id": evidence_id, "record": record}
+        return {
+            "ready": True,
+            "reason": "READY",
+            "downgrade_evidence_id": evidence_id,
+            "record": record,
+        }
 
 
 def run_notification_cycle(
@@ -678,12 +845,14 @@ def run_notification_cycle(
     deadline_results: list[Dict[str, Any]] = []
 
     for subscription in _latest_subscription_rows(subscription_path):
-        if subscription.get("tier") == "FREE" or subscription.get("expires_at_epoch") is None:
+        if (
+            subscription.get("tier") == "FREE"
+            or subscription.get("expires_at_epoch") is None
+        ):
             continue
         subscriber = str(subscription["subscriber_ref"])
         product = str(subscription["strategy_product_id"])
 
-        # First persist time-based lifecycle boundaries without +72 evidence.
         deadline = subscription_registry.evaluate_deadlines(
             subscriber_ref=subscriber,
             strategy_product_id=product,
@@ -694,6 +863,7 @@ def run_notification_cycle(
             subscription = dict(deadline["record"])
         deadline_results.append(deadline)
 
+        appended_for_subscription: list[Dict[str, Any]] = []
         with storage.with_lock(_LOCK_NAME):
             records = _read_events_unlocked(target_path)
             delivery_target = _latest_target(records, subscriber, product)
@@ -706,17 +876,18 @@ def run_notification_cycle(
                         target=delivery_target,
                         point=point,
                         point_offset=offset,
-                        records=records + deliveries,
+                        records=records + appended_for_subscription,
                         path=target_path,
                         now=now,
                         send_fn=send_fn,
                     )
                     if result is not None:
+                        appended_for_subscription.append(result)
                         deliveries.append(result)
 
-        # Re-read the latest subscription after deadline events and attempt the
-        # +72 proof only when policy prerequisites are fully satisfied.
-        latest = subscription_registry.current_subscription(subscriber, product, subscription_path)
+        latest = subscription_registry.current_subscription(
+            subscriber, product, subscription_path
+        )
         if latest is None:
             continue
         evidence = build_auto_downgrade_evidence(
@@ -724,6 +895,7 @@ def run_notification_cycle(
             now_ts=now,
             path=target_path,
             payment_path=payment_path,
+            subscription_path=subscription_path,
         )
         if evidence.get("ready"):
             deadline_results.append(
@@ -731,7 +903,9 @@ def run_notification_cycle(
                     subscriber_ref=subscriber,
                     strategy_product_id=product,
                     now_ts=now,
-                    downgrade_evidence_id=str(evidence["downgrade_evidence_id"]),
+                    downgrade_evidence_id=str(
+                        evidence["downgrade_evidence_id"]
+                    ),
                     path=subscription_path,
                 )
             )
@@ -747,13 +921,19 @@ def run_notification_cycle(
 def maybe_run_notification_cycle() -> Optional[Dict[str, Any]]:
     global _LAST_SCAN_MONOTONIC
     current = time.monotonic()
-    if _LAST_SCAN_MONOTONIC and current - _LAST_SCAN_MONOTONIC < SCHEDULER_SCAN_INTERVAL_SECONDS:
+    if (
+        _LAST_SCAN_MONOTONIC
+        and current - _LAST_SCAN_MONOTONIC
+        < SCHEDULER_SCAN_INTERVAL_SECONDS
+    ):
         return None
     _LAST_SCAN_MONOTONIC = current
     return run_notification_cycle()
 
 
-def _notification_by_token(records: Iterable[Mapping[str, Any]], token: str) -> Optional[Dict[str, Any]]:
+def _notification_by_token(
+    records: Iterable[Mapping[str, Any]], token: str
+) -> Optional[Dict[str, Any]]:
     matches = [
         dict(record)
         for record in records
@@ -798,9 +978,13 @@ def parse_callback(data: str) -> tuple[str, str, Optional[str]]:
         raise BillingNotificationError("Unknown billing callback action")
     tier = parts[4] if len(parts) == 5 else None
     if action in {"UPGRADE", "DOWNGRADE"} and tier is None:
-        raise BillingNotificationError("Plan-changing billing callback is missing target tier")
+        raise BillingNotificationError(
+            "Plan-changing billing callback is missing target tier"
+        )
     if action not in {"UPGRADE", "DOWNGRADE"} and tier is not None:
-        raise BillingNotificationError("Unexpected target tier in billing callback")
+        raise BillingNotificationError(
+            "Unexpected target tier in billing callback"
+        )
     return token, action, tier
 
 
@@ -823,38 +1007,103 @@ def handle_telegram_callback(
         records = _read_events_unlocked(target_path)
         notification = _notification_by_token(records, token)
         if notification is None:
-            return {"accepted": False, "reason": "UNKNOWN_OR_STALE_NOTIFICATION", "ack_text": "This billing action is no longer available."}
-        if int(notification.get("telegram_user_id") or 0) != user_id or int(notification.get("telegram_chat_id") or 0) != chat_id:
-            return {"accepted": False, "reason": "CALLBACK_IDENTITY_MISMATCH", "ack_text": "Billing action denied."}
-
+            return {
+                "accepted": False,
+                "reason": "UNKNOWN_OR_STALE_NOTIFICATION",
+                "ack_text": "This billing action is no longer available.",
+            }
         subscriber = str(notification["subscriber_ref"])
         product = str(notification["strategy_product_id"])
-        current = subscription_registry.current_subscription(subscriber, product, subscription_path)
+        current_target = _latest_target(records, subscriber, product)
+        if current_target is None:
+            return {
+                "accepted": False,
+                "reason": "DELIVERY_TARGET_NOT_BOUND",
+                "ack_text": "Billing action denied.",
+            }
+        expected_user = int(current_target.get("telegram_user_id") or 0)
+        expected_chat = int(current_target.get("telegram_chat_id") or 0)
+        if (
+            expected_user != user_id
+            or expected_chat != chat_id
+            or int(notification.get("telegram_user_id") or 0) != user_id
+            or int(notification.get("telegram_chat_id") or 0) != chat_id
+        ):
+            return {
+                "accepted": False,
+                "reason": "CALLBACK_IDENTITY_MISMATCH",
+                "ack_text": "Billing action denied.",
+            }
+
+        current = subscription_registry.current_subscription(
+            subscriber, product, subscription_path
+        )
         if current is None:
-            return {"accepted": False, "reason": "SUBSCRIPTION_NOT_FOUND", "ack_text": "Subscription context is unavailable."}
-        if current.get("subscription_id") != notification.get("subscription_id") or current.get("expires_at_epoch") != notification.get("period_expires_at_epoch"):
-            return {"accepted": False, "reason": "STALE_SUBSCRIPTION_CONTEXT", "ack_text": "Subscription changed. Open the latest billing message."}
+            return {
+                "accepted": False,
+                "reason": "SUBSCRIPTION_NOT_FOUND",
+                "ack_text": "Subscription context is unavailable.",
+            }
+        if (
+            current.get("subscription_id")
+            != notification.get("subscription_id")
+            or current.get("expires_at_epoch")
+            != notification.get("period_expires_at_epoch")
+        ):
+            return {
+                "accepted": False,
+                "reason": "STALE_SUBSCRIPTION_CONTEXT",
+                "ack_text": (
+                    "Subscription changed. Open the latest billing message."
+                ),
+            }
 
         requested_plan_id: str | None = None
         if target_tier is not None:
             if target_tier not in _TIER_RANK:
-                return {"accepted": False, "reason": "UNKNOWN_TARGET_TIER", "ack_text": "Unknown billing plan."}
+                return {
+                    "accepted": False,
+                    "reason": "UNKNOWN_TARGET_TIER",
+                    "ack_text": "Unknown billing plan.",
+                }
             requested_plan_id = _plan_id_for_tier(product, target_tier)
             current_rank = _TIER_RANK[str(current["tier"])]
             target_rank = _TIER_RANK[target_tier]
             if action == "UPGRADE" and target_rank <= current_rank:
-                return {"accepted": False, "reason": "INVALID_UPGRADE_TARGET", "ack_text": "That is not an upgrade from your current plan."}
-            if action == "DOWNGRADE" and (target_rank >= current_rank or target_tier == "FREE"):
-                return {"accepted": False, "reason": "INVALID_DOWNGRADE_TARGET", "ack_text": "That paid plan is not a valid downgrade target."}
+                return {
+                    "accepted": False,
+                    "reason": "INVALID_UPGRADE_TARGET",
+                    "ack_text": (
+                        "That is not an upgrade from your current plan."
+                    ),
+                }
+            if action == "DOWNGRADE" and (
+                target_rank >= current_rank or target_tier == "FREE"
+            ):
+                return {
+                    "accepted": False,
+                    "reason": "INVALID_DOWNGRADE_TARGET",
+                    "ack_text": (
+                        "That paid plan is not a valid downgrade target."
+                    ),
+                }
         elif action == "KEEP_CURRENT_PLAN":
             requested_plan_id = str(current["plan_id"])
 
-        idem = f"client-intent:{token}:{action}:{requested_plan_id or 'none'}"
+        client_intent_id = _client_intent_id(current)
+        idem = (
+            f"client-intent:{client_intent_id}:{action}:"
+            f"{requested_plan_id or 'none'}"
+        )
         existing = _find_idempotency(records, idem)
         if existing is not None:
-            return {"accepted": True, "reason": "ALREADY_RECORDED", "ack_text": "Your billing choice was already recorded.", "client_intent_id": existing.get("client_intent_id")}
+            return {
+                "accepted": True,
+                "reason": "ALREADY_RECORDED",
+                "ack_text": "Your billing choice was already recorded.",
+                "client_intent_id": existing.get("client_intent_id"),
+            }
 
-        client_intent_id = _opaque_id()
         status = "RECORDED"
         if action in {"PAYMENT_NOT_DETECTED", "SUPPORT"}:
             status = "SUPPORT_REQUIRED"
@@ -869,14 +1118,20 @@ def handle_telegram_callback(
                 "subscriber_ref": subscriber,
                 "strategy_product_id": product,
                 "subscription_id": current["subscription_id"],
-                "source_subscription_event_id": current["subscription_event_id"],
+                "source_subscription_event_id": current[
+                    "subscription_event_id"
+                ],
                 "entitlement_version": current["entitlement_version"],
                 "current_plan_id": current["plan_id"],
                 "current_tier": current["tier"],
                 "requested_plan_id": requested_plan_id,
-                "period_expires_at_epoch": current.get("expires_at_epoch"),
+                "period_expires_at_epoch": current.get(
+                    "expires_at_epoch"
+                ),
                 "notification_key": notification["notification_key"],
-                "source_delivery_event_id": notification["billing_notification_event_id"],
+                "source_delivery_event_id": notification[
+                    "billing_notification_event_id"
+                ],
                 "telegram_user_id": user_id,
                 "telegram_chat_id": chat_id,
                 "occurred_at_epoch": now,
@@ -885,8 +1140,6 @@ def handle_telegram_callback(
             },
         )
 
-    # Subscription operations use their own locks and therefore must execute
-    # outside the notification lock to avoid cross-domain deadlocks.
     transition: Dict[str, Any] | None = None
     try:
         if action == "CANCEL":
@@ -910,17 +1163,27 @@ def handle_telegram_callback(
         return {
             "accepted": True,
             "reason": "INTENT_RECORDED_TRANSITION_REQUIRES_FOLLOW_UP",
-            "ack_text": "Your choice was recorded; billing follow-up is required.",
+            "ack_text": (
+                "Your choice was recorded; billing follow-up is required."
+            ),
             "client_intent_id": client_intent_id,
             "transition_error": str(exc),
         }
 
     ack = {
-        "KEEP_CURRENT_PLAN": "Keep-current-plan intent recorded. Payment is not yet verified.",
-        "UPGRADE": "Upgrade intent recorded. Payment is required before access changes.",
-        "DOWNGRADE": "Downgrade intent recorded for the governed next-period flow.",
+        "KEEP_CURRENT_PLAN": (
+            "Keep-current-plan intent recorded. Payment is not yet verified."
+        ),
+        "UPGRADE": (
+            "Upgrade intent recorded. Payment is required before access changes."
+        ),
+        "DOWNGRADE": (
+            "Downgrade intent recorded for the governed next-period flow."
+        ),
         "CANCEL": "Cancellation intent recorded for period end.",
-        "PAYMENT_NOT_DETECTED": "Payment-not-detected report recorded for support.",
+        "PAYMENT_NOT_DETECTED": (
+            "Payment-not-detected report recorded for support."
+        ),
         "SUPPORT": "Support request recorded.",
     }[action]
     return {
@@ -930,6 +1193,27 @@ def handle_telegram_callback(
         "client_intent_id": client_intent_id,
         "subscription_transition": transition,
     }
+
+
+def _payment_intent_creation(
+    payment_intent_id: str, payment_path: str | None
+) -> Dict[str, Any]:
+    try:
+        history = payment_ledger.payment_history(
+            payment_intent_id, payment_path
+        )
+    except payment_ledger.PaymentLedgerError as exc:
+        raise BillingNotificationError(str(exc)) from exc
+    matches = [
+        row
+        for row in history
+        if row.get("event_type") == payment_ledger.EVENT_INTENT_CREATED
+    ]
+    if len(matches) != 1:
+        raise BillingNotificationError(
+            "Payment intent must have exactly one creation record"
+        )
+    return dict(matches[0])
 
 
 def handoff_payment_intent(
@@ -950,18 +1234,60 @@ def handoff_payment_intent(
         records = _read_events_unlocked(target)
         latest = _latest_intent_events(records).get(intent_id)
         if latest is None:
-            raise BillingNotificationError(f"Unknown client_intent_id: {intent_id}")
-        if latest.get("client_action") not in {"KEEP_CURRENT_PLAN", "UPGRADE", "DOWNGRADE"}:
-            raise BillingNotificationError("Client intent does not own a paid-plan payment handoff")
+            raise BillingNotificationError(
+                f"Unknown client_intent_id: {intent_id}"
+            )
+        if latest.get("client_action") not in {
+            "KEEP_CURRENT_PLAN",
+            "UPGRADE",
+            "DOWNGRADE",
+        }:
+            raise BillingNotificationError(
+                "Client intent does not own a paid-plan payment handoff"
+            )
         idem = f"client-intent-payment-handoff:{intent_id}:{payment_id}"
         existing = _find_idempotency(records, idem)
         if existing is not None:
-            return {"status": "DUPLICATE", "appended": False, "record": dict(existing)}
+            return {
+                "status": "DUPLICATE",
+                "appended": False,
+                "record": dict(existing),
+            }
+
+    current = subscription_registry.current_subscription(
+        str(latest["subscriber_ref"]),
+        str(latest["strategy_product_id"]),
+        subscription_path,
+    )
+    if current is None:
+        raise BillingNotificationError("Subscription context disappeared")
+    if (
+        current.get("subscription_id") != latest.get("subscription_id")
+        or current.get("expires_at_epoch")
+        != latest.get("period_expires_at_epoch")
+    ):
+        raise BillingNotificationError(
+            "Client intent belongs to a stale subscription period"
+        )
+
+    creation = _payment_intent_creation(payment_id, payment_path)
+    expected_plan = latest.get("requested_plan_id")
+    if (
+        creation.get("subscriber_ref") != latest.get("subscriber_ref")
+        or creation.get("strategy_product_id")
+        != latest.get("strategy_product_id")
+        or creation.get("plan_id") != expected_plan
+    ):
+        raise BillingNotificationError(
+            "Payment intent does not match recorded client intent"
+        )
 
     pending = subscription_registry.record_payment_intent_pending(
         payment_intent_id=payment_id,
         now_ts=now,
-        audit_correlation_id=str(latest.get("audit_correlation_id") or _opaque_id()),
+        audit_correlation_id=str(
+            latest.get("audit_correlation_id") or _opaque_id()
+        ),
         path=subscription_path,
         payment_path=payment_path,
     )
@@ -970,7 +1296,12 @@ def handoff_payment_intent(
         records = _read_events_unlocked(target)
         existing = _find_idempotency(records, idem)
         if existing is not None:
-            return {"status": "DUPLICATE", "appended": False, "record": dict(existing), "subscription_transition": pending}
+            return {
+                "status": "DUPLICATE",
+                "appended": False,
+                "record": dict(existing),
+                "subscription_transition": pending,
+            }
         record = _append_unlocked(
             target,
             records,
@@ -981,9 +1312,14 @@ def handoff_payment_intent(
                 "payment_intent_id": payment_id,
                 "occurred_at_epoch": now,
                 "idempotency_key": idem,
-                "audit_correlation_id": latest.get("audit_correlation_id") or _opaque_id(),
+                "audit_correlation_id": (
+                    latest.get("audit_correlation_id") or _opaque_id()
+                ),
             },
         )
-        # Remove nested event-chain identity copied from the prior event; the
-        # append helper owns only the notification-event identity/sequence.
-        return {"status": "PAYMENT_PENDING", "appended": True, "record": record, "subscription_transition": pending}
+        return {
+            "status": "PAYMENT_PENDING",
+            "appended": True,
+            "record": record,
+            "subscription_transition": pending,
+        }
