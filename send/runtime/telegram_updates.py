@@ -11,7 +11,7 @@ import time
 import requests
 from typing import Dict, Any, Optional
 
-from billing import notification_scheduler
+from billing import notification_scheduler, support_runtime
 from core import bot_service
 from core import outcome_service
 from core import observability_logger
@@ -216,10 +216,80 @@ def _ack_callback(callback_id: Any, text: str = "") -> None:
         )
 
 
+def _try_private_support_message(update: Dict[str, Any]) -> bool:
+    message = update.get("message")
+    if not isinstance(message, dict):
+        return False
+    try:
+        result = support_runtime.handle_private_text_message(
+            message,
+            now_ts=int(time.time()),
+        )
+    except Exception as exc:
+        observability_logger.log_error(
+            {
+                "event_type": "error",
+                "module": "telegram_updates",
+                "function": "support_private_message",
+                "error": telegram_publisher._sanitize(str(exc)),
+            }
+        )
+        return False
+    if not result.get("handled"):
+        return False
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    if chat_id is not None:
+        try:
+            telegram_publisher.send_message(
+                chat_id=int(chat_id),
+                text=(
+                    f"Support case {result.get('case_id')}: message recorded. "
+                    "The support team can reply through the audited case."
+                ),
+            )
+        except Exception as exc:
+            observability_logger.log_warning(
+                warn_type="support_client_ack_failed",
+                message="Support message was recorded but client acknowledgement failed",
+                context={
+                    "case_id": result.get("case_id"),
+                    "error": telegram_publisher._sanitize(str(exc)),
+                },
+                source={"module": "telegram_updates", "function": "_try_private_support_message"},
+            )
+    return True
+
+
+def _maybe_open_support_case(client_intent_id: Any) -> Optional[Dict[str, Any]]:
+    if not client_intent_id:
+        return None
+    try:
+        result = support_runtime.open_case_for_client_intent_if_needed(
+            str(client_intent_id),
+            now_ts=int(time.time()),
+        )
+        return result
+    except Exception as exc:
+        observability_logger.log_error(
+            {
+                "event_type": "error",
+                "module": "telegram_updates",
+                "function": "support_case_open",
+                "error": telegram_publisher._sanitize(str(exc)),
+            }
+        )
+        return None
+
+
 def process_update(update: Dict[str, Any]):
 
-    # message
+    # private support message — only intercepts a non-command text when the
+    # Telegram identity maps uniquely to a subscriber with exactly one active
+    # support case. All other messages continue through the existing bot path.
     if "message" in update:
+        if _try_private_support_message(update):
+            return
         bot_service.process_update(update)
         return
 
@@ -247,7 +317,17 @@ def process_update(update: Dict[str, Any]):
                     callback_data=str(data),
                     now_ts=int(time.time()),
                 )
-                _ack_callback(callback_id, str(result.get("ack_text") or ""))
+                ack_text = str(result.get("ack_text") or "")
+                if result.get("accepted") and result.get("client_intent_id"):
+                    case_result = _maybe_open_support_case(result.get("client_intent_id"))
+                    if case_result and case_result.get("record"):
+                        case_id = str(case_result["record"].get("case_id") or "")
+                        if case_result.get("status") in {"OPENED", "EXISTS"} and case_id:
+                            ack_text = (
+                                f"{ack_text} Support case {case_id} is open; "
+                                "send your next private message to add it to the case."
+                            ).strip()
+                _ack_callback(callback_id, ack_text)
             except Exception as exc:
                 observability_logger.log_error(
                     {
