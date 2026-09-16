@@ -37,8 +37,22 @@ EVENT_INTENT_CREATED = "PAYMENT_INTENT_CREATED"
 EVENT_PROVIDER = "PROVIDER_PAYMENT_EVENT"
 EVENT_RECONCILIATION = "PAYMENT_RECONCILIATION_EVIDENCE"
 EVENT_REVERSAL = "PAYMENT_REVERSAL_EVENT"
+_PROVIDER_LEDGER_EVENTS = frozenset({EVENT_PROVIDER, EVENT_REVERSAL})
 _LOCK_NAME = "billing_payment_ledger"
 _LEDGER_RELATIVE = ("billing", "payment_ledger.jsonl")
+_PROVIDER_EVIDENCE_FIELDS = (
+    "payment_intent_id",
+    "provider",
+    "payment_state",
+    "provider_state",
+    "amount_minor",
+    "currency",
+    "raw_event_hash",
+    "provider_event_id",
+    "provider_tx_ref",
+    "wallet_tx_id",
+)
+_RECONCILIATION_FINGERPRINT_FIELDS = _PROVIDER_EVIDENCE_FIELDS
 
 
 class PaymentLedgerError(RuntimeError):
@@ -165,7 +179,11 @@ def load_ledger(path: str | None = None) -> list[Dict[str, Any]]:
     return _read_ledger_unlocked(path or ledger_path())
 
 
-def _append_record_unlocked(path: str, records: list[Dict[str, Any]], record: Dict[str, Any]) -> Dict[str, Any]:
+def _append_record_unlocked(
+    path: str,
+    records: list[Dict[str, Any]],
+    record: Dict[str, Any],
+) -> Dict[str, Any]:
     payload = dict(record)
     payload["ledger_event_id"] = _opaque_id()
     payload["ledger_seq"] = len(records) + 1
@@ -173,18 +191,70 @@ def _append_record_unlocked(path: str, records: list[Dict[str, Any]], record: Di
     return payload
 
 
-def _same_fields(record: Mapping[str, Any], expected: Mapping[str, Any], fields: Iterable[str]) -> bool:
+def _same_fields(
+    record: Mapping[str, Any],
+    expected: Mapping[str, Any],
+    fields: Iterable[str],
+) -> bool:
     return all(record.get(field) == expected.get(field) for field in fields)
 
 
-def _find_by_idempotency(records: Iterable[Mapping[str, Any]], idempotency_key: str) -> Optional[Mapping[str, Any]]:
+def _find_by_idempotency(
+    records: Iterable[Mapping[str, Any]],
+    idempotency_key: str,
+) -> Optional[Mapping[str, Any]]:
     for record in records:
         if record.get("idempotency_key") == idempotency_key:
             return record
     return None
 
 
-def _intent_record(records: Iterable[Mapping[str, Any]], payment_intent_id: str) -> Optional[Mapping[str, Any]]:
+def _provider_records(records: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    return [
+        record
+        for record in records
+        if record.get("event_type") in _PROVIDER_LEDGER_EVENTS
+        and record.get("reconciliation_result") == "MATCHED"
+    ]
+
+
+def _find_exact_provider_evidence(
+    records: Iterable[Mapping[str, Any]],
+    evidence: Mapping[str, Any],
+) -> Optional[Mapping[str, Any]]:
+    matches = [
+        record
+        for record in _provider_records(records)
+        if _same_fields(record, evidence, _PROVIDER_EVIDENCE_FIELDS)
+    ]
+    if len(matches) > 1:
+        raise PaymentLedgerError(
+            "Corrupt ledger: identical matched provider evidence appears more than once"
+        )
+    return matches[0] if matches else None
+
+
+def _find_strong_provider_identity_collision(
+    records: Iterable[Mapping[str, Any]],
+    evidence: Mapping[str, Any],
+) -> tuple[Optional[Mapping[str, Any]], Optional[str]]:
+    provider = evidence.get("provider")
+    event_id = evidence.get("provider_event_id")
+    raw_hash = evidence.get("raw_event_hash")
+    for record in _provider_records(records):
+        if record.get("provider") != provider:
+            continue
+        if event_id is not None and record.get("provider_event_id") == event_id:
+            return record, "provider_event_id"
+        if raw_hash is not None and record.get("raw_event_hash") == raw_hash:
+            return record, "raw_event_hash"
+    return None, None
+
+
+def _intent_record(
+    records: Iterable[Mapping[str, Any]],
+    payment_intent_id: str,
+) -> Optional[Mapping[str, Any]]:
     matches = [
         record
         for record in records
@@ -198,7 +268,10 @@ def _intent_record(records: Iterable[Mapping[str, Any]], payment_intent_id: str)
     return matches[0] if matches else None
 
 
-def payment_history(payment_intent_id: str, path: str | None = None) -> list[Dict[str, Any]]:
+def payment_history(
+    payment_intent_id: str,
+    path: str | None = None,
+) -> list[Dict[str, Any]]:
     intent_id = _nonempty(payment_intent_id, label="payment_intent_id")
     return [
         dict(record)
@@ -207,7 +280,10 @@ def payment_history(payment_intent_id: str, path: str | None = None) -> list[Dic
     ]
 
 
-def settled_payment_record(payment_intent_id: str, path: str | None = None) -> Optional[Dict[str, Any]]:
+def settled_payment_record(
+    payment_intent_id: str,
+    path: str | None = None,
+) -> Optional[Dict[str, Any]]:
     matched = [
         record
         for record in payment_history(payment_intent_id, path)
@@ -294,7 +370,11 @@ def create_payment_intent(
         existing_idem = _find_by_idempotency(records, idem)
         if existing_idem is not None:
             if _same_fields(existing_idem, candidate, identity_fields):
-                return {"status": "DUPLICATE", "appended": False, "record": dict(existing_idem)}
+                return {
+                    "status": "DUPLICATE",
+                    "appended": False,
+                    "record": dict(existing_idem),
+                }
             raise PaymentLedgerError(
                 "idempotency_key was already used with different payment-intent evidence"
             )
@@ -305,8 +385,19 @@ def create_payment_intent(
         return {"status": "CREATED", "appended": True, "record": record}
 
 
-def _conflict_key(source_idempotency_key: str, evidence: Mapping[str, Any]) -> str:
-    return f"reconciliation:{source_idempotency_key}:{_canonical_hash(evidence)[:24]}"
+def _reconciliation_key(
+    evidence: Mapping[str, Any],
+    *,
+    result: str,
+    reason: str,
+) -> str:
+    stable = {
+        field: evidence.get(field)
+        for field in _RECONCILIATION_FINGERPRINT_FIELDS
+    }
+    stable["reconciliation_result"] = result
+    stable["reconciliation_reason"] = reason
+    return f"reconciliation:{_canonical_hash(stable)[:32]}"
 
 
 def _append_reconciliation_unlocked(
@@ -317,7 +408,9 @@ def _append_reconciliation_unlocked(
     result: str,
     reason: str,
 ) -> Dict[str, Any]:
-    conflict_key = _conflict_key(str(evidence["idempotency_key"]), evidence)
+    if result not in {"UNMATCHED", "CONTRADICTORY"}:
+        raise PaymentLedgerError(f"Unsupported reconciliation result: {result}")
+    conflict_key = _reconciliation_key(evidence, result=result, reason=reason)
     existing = _find_by_idempotency(records, conflict_key)
     if existing is not None:
         return dict(existing)
@@ -402,25 +495,17 @@ def ingest_provider_event(
         "audit_correlation_id": correlation_id,
         "reversal_of_ledger_event_id": None,
     }
-    duplicate_fields = (
-        "payment_intent_id",
-        "provider",
-        "payment_state",
-        "provider_state",
-        "amount_minor",
-        "currency",
-        "raw_event_hash",
-        "provider_event_id",
-        "provider_tx_ref",
-        "wallet_tx_id",
-    )
 
     with storage.with_lock(_LOCK_NAME):
         records = _read_ledger_unlocked(target)
         existing_idem = _find_by_idempotency(records, idem)
         if existing_idem is not None:
-            if _same_fields(existing_idem, base_evidence, duplicate_fields):
-                return {"status": "DUPLICATE", "appended": False, "record": dict(existing_idem)}
+            if _same_fields(existing_idem, base_evidence, _PROVIDER_EVIDENCE_FIELDS):
+                return {
+                    "status": "DUPLICATE",
+                    "appended": False,
+                    "record": dict(existing_idem),
+                }
             conflict = _append_reconciliation_unlocked(
                 path=target,
                 records=records,
@@ -428,7 +513,37 @@ def ingest_provider_event(
                 result="CONTRADICTORY",
                 reason="IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_EVIDENCE",
             )
-            return {"status": "CONTRADICTORY", "appended": True, "record": conflict}
+            return {
+                "status": "CONTRADICTORY",
+                "appended": conflict.get("ledger_seq") == len(records) + 1,
+                "record": conflict,
+            }
+
+        exact_provider_event = _find_exact_provider_evidence(records, base_evidence)
+        if exact_provider_event is not None:
+            return {
+                "status": "DUPLICATE_PROVIDER_EVENT",
+                "appended": False,
+                "record": dict(exact_provider_event),
+            }
+
+        strong_collision, collision_field = _find_strong_provider_identity_collision(
+            records,
+            base_evidence,
+        )
+        if strong_collision is not None:
+            conflict = _append_reconciliation_unlocked(
+                path=target,
+                records=records,
+                evidence=base_evidence,
+                result="CONTRADICTORY",
+                reason=f"PROVIDER_EVENT_IDENTITY_COLLISION:{collision_field}",
+            )
+            return {
+                "status": "CONTRADICTORY",
+                "appended": conflict.get("ledger_seq") == len(records) + 1,
+                "record": conflict,
+            }
 
         intent = _intent_record(records, intent_id)
         if intent is None:
@@ -439,7 +554,11 @@ def ingest_provider_event(
                 result="UNMATCHED",
                 reason="PAYMENT_INTENT_NOT_FOUND",
             )
-            return {"status": "UNMATCHED", "appended": True, "record": unmatched}
+            return {
+                "status": "UNMATCHED",
+                "appended": unmatched.get("ledger_seq") == len(records) + 1,
+                "record": unmatched,
+            }
 
         attributed = dict(base_evidence)
         attributed.update(
@@ -465,7 +584,11 @@ def ingest_provider_event(
                 result="CONTRADICTORY",
                 reason="INTENT_EVIDENCE_MISMATCH:" + ",".join(mismatches),
             )
-            return {"status": "CONTRADICTORY", "appended": True, "record": contradiction}
+            return {
+                "status": "CONTRADICTORY",
+                "appended": contradiction.get("ledger_seq") == len(records) + 1,
+                "record": contradiction,
+            }
 
         settled = [
             record
@@ -481,7 +604,11 @@ def ingest_provider_event(
 
         if normalized_state == "SETTLED" and settled:
             existing_settlement = settled[0]
-            if _same_fields(existing_settlement, attributed, duplicate_fields):
+            if _same_fields(
+                existing_settlement,
+                attributed,
+                _PROVIDER_EVIDENCE_FIELDS,
+            ):
                 return {
                     "status": "DUPLICATE_SETTLEMENT",
                     "appended": False,
@@ -494,7 +621,11 @@ def ingest_provider_event(
                 result="CONTRADICTORY",
                 reason="SECOND_SETTLEMENT_ATTEMPT_FOR_INTENT",
             )
-            return {"status": "CONTRADICTORY", "appended": True, "record": contradiction}
+            return {
+                "status": "CONTRADICTORY",
+                "appended": contradiction.get("ledger_seq") == len(records) + 1,
+                "record": contradiction,
+            }
 
         if settled and normalized_state not in {"REFUNDED", "CHARGEBACK"}:
             contradiction = _append_reconciliation_unlocked(
@@ -504,7 +635,11 @@ def ingest_provider_event(
                 result="CONTRADICTORY",
                 reason="NON_REVERSAL_EVENT_AFTER_SETTLEMENT",
             )
-            return {"status": "CONTRADICTORY", "appended": True, "record": contradiction}
+            return {
+                "status": "CONTRADICTORY",
+                "appended": contradiction.get("ledger_seq") == len(records) + 1,
+                "record": contradiction,
+            }
 
         if normalized_state in {"REFUNDED", "CHARGEBACK"}:
             if not settled:
@@ -515,7 +650,35 @@ def ingest_provider_event(
                     result="CONTRADICTORY",
                     reason="REVERSAL_WITHOUT_MATCHED_SETTLEMENT",
                 )
-                return {"status": "CONTRADICTORY", "appended": True, "record": contradiction}
+                return {
+                    "status": "CONTRADICTORY",
+                    "appended": contradiction.get("ledger_seq") == len(records) + 1,
+                    "record": contradiction,
+                }
+            reversals = [
+                record
+                for record in records
+                if record.get("payment_intent_id") == intent_id
+                and record.get("event_type") == EVENT_REVERSAL
+                and record.get("reconciliation_result") == "MATCHED"
+            ]
+            if len(reversals) > 1:
+                raise PaymentLedgerError(
+                    f"Corrupt ledger: multiple matched reversals for {intent_id}"
+                )
+            if reversals:
+                contradiction = _append_reconciliation_unlocked(
+                    path=target,
+                    records=records,
+                    evidence=attributed,
+                    result="CONTRADICTORY",
+                    reason="SECOND_REVERSAL_ATTEMPT_FOR_INTENT",
+                )
+                return {
+                    "status": "CONTRADICTORY",
+                    "appended": contradiction.get("ledger_seq") == len(records) + 1,
+                    "record": contradiction,
+                }
             attributed["event_type"] = EVENT_REVERSAL
             attributed["reversal_of_ledger_event_id"] = settled[0]["ledger_event_id"]
 
