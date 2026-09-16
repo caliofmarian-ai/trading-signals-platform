@@ -33,8 +33,10 @@ EVENT_CLIENT_MESSAGE = "BILLING_SUPPORT_CLIENT_MESSAGE"
 EVENT_ADMIN_MESSAGE = "BILLING_SUPPORT_ADMIN_MESSAGE"
 EVENT_MESSAGE_DELIVERY = "BILLING_SUPPORT_MESSAGE_DELIVERY"
 EVENT_PAYMENT_PROOF = "BILLING_SUPPORT_PAYMENT_PROOF"
+EVENT_PAYMENT_LINKED = "BILLING_SUPPORT_PAYMENT_INTENT_LINKED"
 EVENT_REVIEW = "BILLING_SUPPORT_REVIEW"
 EVENT_CASE_REOPENED = "BILLING_SUPPORT_CASE_REOPENED"
+EVENT_RESTRICTED_ACCESS = "BILLING_SUPPORT_RESTRICTED_ACCESS"
 
 PAYMENT_EVENT_MANUAL_VERIFICATION = "PAYMENT_MANUAL_VERIFICATION_EVIDENCE"
 PAYMENT_EVENT_MANUAL_REVIEW_AUDIT = "PAYMENT_MANUAL_REVIEW_AUDIT"
@@ -91,6 +93,18 @@ def _positive_int(value: Any, *, label: str) -> int:
     return result
 
 
+def _non_negative_int(value: Any, *, label: str) -> int:
+    if isinstance(value, bool):
+        raise BillingSupportError(f"{label} must be a non-negative integer")
+    try:
+        result = int(value)
+    except Exception as exc:
+        raise BillingSupportError(f"{label} must be a non-negative integer") from exc
+    if result < 0:
+        raise BillingSupportError(f"{label} must be a non-negative integer")
+    return result
+
+
 def _reason(value: Any) -> str:
     text = _nonempty(value, label="reason")
     if len(text) < 4:
@@ -105,6 +119,54 @@ def _sha256_hex(value: str) -> str:
     return text
 
 
+def _copy_snapshot(record: Mapping[str, Any]) -> Dict[str, Any]:
+    event_fields = {
+        "case_event_id",
+        "case_seq",
+        "case_version",
+        "previous_case_event_id",
+        "event_type",
+        "case_state",
+        "occurred_at_epoch",
+        "idempotency_key",
+    }
+    transient_fields = {
+        "message_id",
+        "message_actor_type",
+        "message_actor_ref",
+        "message_text",
+        "message_sensitive",
+        "delivery_direction",
+        "delivery_result",
+        "delivery_error",
+        "delivery_message_ref",
+        "proof_id",
+        "proof_sha256",
+        "proof_file_unique_id",
+        "restricted_telegram_file_id",
+        "proof_file_name",
+        "proof_mime_type",
+        "proof_file_size",
+        "proof_declared_amount_minor",
+        "proof_declared_currency",
+        "proof_caption",
+        "proof_restricted",
+        "review_action",
+        "reviewer_user_id",
+        "review_reason",
+        "reviewed_at_epoch",
+        "payment_ledger_event_id",
+        "settlement_ledger_event_id",
+        "access_reason",
+        "accessor_user_id",
+    }
+    return {
+        key: value
+        for key, value in record.items()
+        if key not in event_fields and key not in transient_fields
+    }
+
+
 def _read_events_unlocked(path: str) -> list[Dict[str, Any]]:
     target = Path(path)
     if not target.exists():
@@ -112,7 +174,9 @@ def _read_events_unlocked(path: str) -> list[Dict[str, Any]]:
     try:
         lines = target.read_text(encoding="utf-8").splitlines()
     except Exception as exc:
-        raise BillingSupportError(f"Unable to read support-case event log: {target}") from exc
+        raise BillingSupportError(
+            f"Unable to read support-case event log: {target}"
+        ) from exc
 
     records: list[Dict[str, Any]] = []
     global_seq: set[int] = set()
@@ -239,8 +303,12 @@ def _append_case_event_unlocked(
             "case_event_id": _opaque_id(),
             "case_seq": len(records) + 1,
             "case_id": case_id,
-            "case_version": int(previous.get("case_version") or 0) + 1 if previous else 1,
-            "previous_case_event_id": previous.get("case_event_id") if previous else None,
+            "case_version": (
+                int(previous.get("case_version") or 0) + 1 if previous else 1
+            ),
+            "previous_case_event_id": (
+                previous.get("case_event_id") if previous else None
+            ),
             "event_type": event_type,
             "case_state": case_state,
             "occurred_at_epoch": occurred_at_epoch,
@@ -251,7 +319,9 @@ def _append_case_event_unlocked(
     return record, True
 
 
-def _notification_intent(client_intent_id: str, notification_path: str | None) -> Dict[str, Any]:
+def _notification_intent(
+    client_intent_id: str, notification_path: str | None
+) -> Dict[str, Any]:
     intent_id = _nonempty(client_intent_id, label="client_intent_id")
     matches = [
         row
@@ -278,9 +348,15 @@ def open_case_from_client_intent(
     intent = _notification_intent(client_intent_id, notification_path)
     action = str(intent.get("client_action") or "")
     if action not in {"SUPPORT", "PAYMENT_NOT_DETECTED"}:
-        return {"status": "NOT_SUPPORT_INTENT", "appended": False, "record": None}
+        return {
+            "status": "NOT_SUPPORT_INTENT",
+            "appended": False,
+            "record": None,
+        }
     subscriber = _nonempty(intent.get("subscriber_ref"), label="subscriber_ref")
-    product = _nonempty(intent.get("strategy_product_id"), label="strategy_product_id")
+    product = _nonempty(
+        intent.get("strategy_product_id"), label="strategy_product_id"
+    )
     now = _now(now_ts)
     target = path or cases_path()
     idem = f"case-from-client-intent:{client_intent_id}"
@@ -289,9 +365,17 @@ def open_case_from_client_intent(
         records = _read_events_unlocked(target)
         existing = _find_idempotency(records, idem)
         if existing is not None:
-            return {"status": "EXISTS", "appended": False, "record": dict(existing)}
+            return {
+                "status": "EXISTS",
+                "appended": False,
+                "record": dict(existing),
+            }
         case_id = _opaque_id()
-        state = "WAITING_FOR_CLIENT" if action == "PAYMENT_NOT_DETECTED" else "OPEN"
+        state = (
+            "WAITING_FOR_CLIENT"
+            if action == "PAYMENT_NOT_DETECTED"
+            else "OPEN"
+        )
         record, appended = _append_case_event_unlocked(
             path=target,
             records=records,
@@ -309,7 +393,9 @@ def open_case_from_client_intent(
                 "origin_action": action,
                 "payment_intent_id": intent.get("payment_intent_id"),
                 "reopened_from_case_id": None,
-                "audit_correlation_id": intent.get("audit_correlation_id") or _opaque_id(),
+                "audit_correlation_id": (
+                    intent.get("audit_correlation_id") or _opaque_id()
+                ),
             },
         )
         return {"status": "OPENED", "appended": appended, "record": record}
@@ -331,7 +417,6 @@ def open_case(
     now = _now(now_ts)
     target = path or cases_path()
     case_id = _opaque_id()
-    idem = f"open-case:{case_id}"
     with storage.with_lock(_LOCK_NAME):
         records = _read_events_unlocked(target)
         record, appended = _append_case_event_unlocked(
@@ -341,7 +426,7 @@ def open_case(
             case_id=case_id,
             event_type=EVENT_CASE_OPENED,
             case_state="OPEN",
-            idempotency_key=idem,
+            idempotency_key=f"open-case:{case_id}",
             occurred_at_epoch=now,
             payload={
                 "subscriber_ref": subscriber,
@@ -397,8 +482,12 @@ def _append_case_message(
             raise BillingSupportError(f"Unknown case_id: {case_id}")
         if current.get("case_state") in CLOSED_STATES:
             raise BillingSupportError("Closed support case cannot accept new messages")
-        next_state = "UNDER_REVIEW" if actor_type == "CLIENT" else str(current["case_state"])
-        event_type = EVENT_CLIENT_MESSAGE if actor_type == "CLIENT" else EVENT_ADMIN_MESSAGE
+        next_state = (
+            "UNDER_REVIEW" if actor_type == "CLIENT" else str(current["case_state"])
+        )
+        event_type = (
+            EVENT_CLIENT_MESSAGE if actor_type == "CLIENT" else EVENT_ADMIN_MESSAGE
+        )
         record, appended = _append_case_event_unlocked(
             path=target,
             records=records,
@@ -409,21 +498,7 @@ def _append_case_message(
             idempotency_key=idempotency_key,
             occurred_at_epoch=now,
             payload={
-                **{
-                    key: value
-                    for key, value in current.items()
-                    if key
-                    not in {
-                        "case_event_id",
-                        "case_seq",
-                        "case_version",
-                        "previous_case_event_id",
-                        "event_type",
-                        "case_state",
-                        "occurred_at_epoch",
-                        "idempotency_key",
-                    }
-                },
+                **_copy_snapshot(current),
                 "message_id": _opaque_id(),
                 "message_actor_type": actor_type,
                 "message_actor_ref": actor_ref,
@@ -492,13 +567,17 @@ def record_admin_reply(
     )
 
 
-def _payment_intent_creation(payment_intent_id: str, payment_path: str | None) -> Dict[str, Any]:
+def _payment_intent_creation(
+    payment_intent_id: str, payment_path: str | None
+) -> Dict[str, Any]:
     try:
         history = payment_ledger.payment_history(payment_intent_id, payment_path)
     except payment_ledger.PaymentLedgerError as exc:
         raise BillingSupportError(str(exc)) from exc
     matches = [
-        row for row in history if row.get("event_type") == payment_ledger.EVENT_INTENT_CREATED
+        row
+        for row in history
+        if row.get("event_type") == payment_ledger.EVENT_INTENT_CREATED
     ]
     if len(matches) != 1:
         raise BillingSupportError(
@@ -507,18 +586,29 @@ def _payment_intent_creation(payment_intent_id: str, payment_path: str | None) -
     return dict(matches[0])
 
 
+def _validate_intent_for_case(
+    *, case: Mapping[str, Any], payment_intent_id: str, payment_path: str | None
+) -> Dict[str, Any]:
+    intent = _payment_intent_creation(payment_intent_id, payment_path)
+    if intent.get("subscriber_ref") != case.get("subscriber_ref"):
+        raise BillingSupportError("Payment intent subscriber does not match support case")
+    if intent.get("strategy_product_id") != case.get("strategy_product_id"):
+        raise BillingSupportError("Payment intent product does not match support case")
+    return intent
+
+
 def add_payment_proof(
     *,
     case_id: str,
     subscriber_ref: str,
-    payment_intent_id: str,
     content_bytes: bytes,
     telegram_file_id: str,
     telegram_file_unique_id: str,
-    file_name: str | None,
-    mime_type: str | None,
-    declared_amount_minor: int,
-    declared_currency: str,
+    payment_intent_id: str | None = None,
+    file_name: str | None = None,
+    mime_type: str | None = None,
+    declared_amount_minor: int | None = None,
+    declared_currency: str | None = None,
     file_size: int | None = None,
     caption: str | None = None,
     now_ts: float | int | None = None,
@@ -527,39 +617,76 @@ def add_payment_proof(
 ) -> Dict[str, Any]:
     case_key = _nonempty(case_id, label="case_id")
     subscriber = _nonempty(subscriber_ref, label="subscriber_ref")
-    intent_id = _nonempty(payment_intent_id, label="payment_intent_id")
     if not isinstance(content_bytes, (bytes, bytearray)) or not content_bytes:
-        raise BillingSupportError("Payment proof bytes are required to compute hash evidence")
-    file_id = _nonempty(telegram_file_id, label="telegram_file_id")
-    unique_id = _nonempty(telegram_file_unique_id, label="telegram_file_unique_id")
-    amount = _positive_int(declared_amount_minor, label="declared_amount_minor")
-    currency = _nonempty(declared_currency, label="declared_currency").upper()
-    if len(currency) != 3 or not currency.isalpha():
-        raise BillingSupportError("declared_currency must be a three-letter code")
-    proof_hash = hashlib.sha256(bytes(content_bytes)).hexdigest()
-    intent = _payment_intent_creation(intent_id, payment_path)
-    if intent.get("subscriber_ref") != subscriber:
-        raise BillingSupportError("Payment proof subscriber does not match payment intent")
-    if amount != intent.get("amount_minor") or currency != intent.get("currency"):
         raise BillingSupportError(
-            "Declared payment proof amount/currency does not match payment intent"
+            "Payment proof bytes are required to compute hash evidence"
         )
-
+    file_id = _nonempty(telegram_file_id, label="telegram_file_id")
+    unique_id = _nonempty(
+        telegram_file_unique_id, label="telegram_file_unique_id"
+    )
+    proof_hash = hashlib.sha256(bytes(content_bytes)).hexdigest()
     now = _now(now_ts)
     target = path or cases_path()
     idem = f"payment-proof:{case_key}:{proof_hash}"
+
     with storage.with_lock(_LOCK_NAME):
         records = _read_events_unlocked(target)
         current = _latest_by_case(records).get(case_key)
         if current is None:
             raise BillingSupportError(f"Unknown case_id: {case_key}")
         if current.get("subscriber_ref") != subscriber:
-            raise BillingSupportError("Payment proof subscriber does not match support case")
+            raise BillingSupportError(
+                "Payment proof subscriber does not match support case"
+            )
         if current.get("case_state") in CLOSED_STATES:
-            raise BillingSupportError("Closed support case cannot accept payment proof")
+            raise BillingSupportError(
+                "Closed support case cannot accept payment proof"
+            )
         existing = _find_idempotency(records, idem)
         if existing is not None:
-            return {"status": "DUPLICATE", "appended": False, "record": dict(existing)}
+            return {
+                "status": "DUPLICATE",
+                "appended": False,
+                "record": dict(existing),
+            }
+        effective_intent_id = (
+            _optional_text(payment_intent_id)
+            or _optional_text(current.get("payment_intent_id"))
+        )
+        intent: Dict[str, Any] | None = None
+        if effective_intent_id is not None:
+            intent = _validate_intent_for_case(
+                case=current,
+                payment_intent_id=effective_intent_id,
+                payment_path=payment_path,
+            )
+
+        declared_amount: int | None = None
+        declared_ccy: str | None = None
+        if declared_amount_minor is not None or declared_currency is not None:
+            if declared_amount_minor is None or declared_currency is None:
+                raise BillingSupportError(
+                    "declared amount and currency must be supplied together"
+                )
+            declared_amount = _non_negative_int(
+                declared_amount_minor, label="declared_amount_minor"
+            )
+            declared_ccy = _nonempty(
+                declared_currency, label="declared_currency"
+            ).upper()
+            if len(declared_ccy) != 3 or not declared_ccy.isalpha():
+                raise BillingSupportError(
+                    "declared_currency must be a three-letter code"
+                )
+            if intent is not None and (
+                declared_amount != intent.get("amount_minor")
+                or declared_ccy != intent.get("currency")
+            ):
+                raise BillingSupportError(
+                    "Declared proof amount/currency does not match payment intent"
+                )
+
         record, appended = _append_case_event_unlocked(
             path=target,
             records=records,
@@ -570,60 +697,128 @@ def add_payment_proof(
             idempotency_key=idem,
             occurred_at_epoch=now,
             payload={
-                **{
-                    key: value
-                    for key, value in current.items()
-                    if key
-                    not in {
-                        "case_event_id",
-                        "case_seq",
-                        "case_version",
-                        "previous_case_event_id",
-                        "event_type",
-                        "case_state",
-                        "occurred_at_epoch",
-                        "idempotency_key",
-                    }
-                },
-                "payment_intent_id": intent_id,
+                **_copy_snapshot(current),
+                "payment_intent_id": effective_intent_id,
                 "proof_id": _opaque_id(),
                 "proof_sha256": proof_hash,
                 "proof_file_unique_id": unique_id,
                 "restricted_telegram_file_id": file_id,
                 "proof_file_name": _optional_text(file_name),
                 "proof_mime_type": _optional_text(mime_type),
-                "proof_file_size": int(file_size) if file_size is not None else len(content_bytes),
-                "proof_declared_amount_minor": amount,
-                "proof_declared_currency": currency,
+                "proof_file_size": (
+                    int(file_size) if file_size is not None else len(content_bytes)
+                ),
+                "proof_declared_amount_minor": declared_amount,
+                "proof_declared_currency": declared_ccy,
                 "proof_caption": _optional_text(caption),
                 "proof_restricted": True,
             },
         )
-        return {"status": "PROOF_RECORDED", "appended": appended, "record": record}
+        return {
+            "status": "PROOF_RECORDED",
+            "appended": appended,
+            "record": record,
+        }
 
 
-def _latest_proof(case_id: str, records: Iterable[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+def _latest_proof(
+    case_id: str, records: Iterable[Mapping[str, Any]]
+) -> Optional[Dict[str, Any]]:
     proofs = [
         dict(row)
         for row in records
-        if row.get("case_id") == case_id and row.get("event_type") == EVENT_PAYMENT_PROOF
+        if row.get("case_id") == case_id
+        and row.get("event_type") == EVENT_PAYMENT_PROOF
     ]
     return proofs[-1] if proofs else None
 
 
-def _contradictory_payment_evidence(payment_intent_id: str, payment_path: str | None) -> list[Dict[str, Any]]:
+def link_payment_intent(
+    *,
+    case_id: str,
+    reviewer_user_id: int,
+    payment_intent_id: str,
+    reason: str,
+    now_ts: float | int | None = None,
+    path: str | None = None,
+    payment_path: str | None = None,
+) -> Dict[str, Any]:
+    _require_reviewer(reviewer_user_id)
+    case_key = _nonempty(case_id, label="case_id")
+    intent_id = _nonempty(payment_intent_id, label="payment_intent_id")
+    why = _reason(reason)
+    now = _now(now_ts)
+    target = path or cases_path()
+
+    with storage.with_lock(_LOCK_NAME):
+        records = _read_events_unlocked(target)
+        current = _latest_by_case(records).get(case_key)
+        if current is None:
+            raise BillingSupportError(f"Unknown case_id: {case_key}")
+        if current.get("case_state") in CLOSED_STATES:
+            raise BillingSupportError(
+                "Closed support case cannot change payment correlation"
+            )
+        intent = _validate_intent_for_case(
+            case=current,
+            payment_intent_id=intent_id,
+            payment_path=payment_path,
+        )
+        proof = _latest_proof(case_key, records)
+        if proof is not None:
+            declared_amount = proof.get("proof_declared_amount_minor")
+            declared_currency = proof.get("proof_declared_currency")
+            if declared_amount is not None and declared_amount != intent.get("amount_minor"):
+                raise BillingSupportError(
+                    "Proof amount conflicts with linked payment intent"
+                )
+            if (
+                declared_currency is not None
+                and declared_currency != intent.get("currency")
+            ):
+                raise BillingSupportError(
+                    "Proof currency conflicts with linked payment intent"
+                )
+        idem = f"link-payment-intent:{case_key}:{intent_id}"
+        record, appended = _append_case_event_unlocked(
+            path=target,
+            records=records,
+            previous=current,
+            case_id=case_key,
+            event_type=EVENT_PAYMENT_LINKED,
+            case_state="UNDER_REVIEW",
+            idempotency_key=idem,
+            occurred_at_epoch=now,
+            payload={
+                **_copy_snapshot(current),
+                "payment_intent_id": intent_id,
+                "linked_payment_plan_id": intent.get("plan_id"),
+                "linked_payment_amount_minor": intent.get("amount_minor"),
+                "linked_payment_currency": intent.get("currency"),
+                "payment_link_reason": why,
+                "payment_link_reviewer_user_id": int(reviewer_user_id),
+            },
+        )
+        return {
+            "status": "PAYMENT_INTENT_LINKED",
+            "appended": appended,
+            "record": record,
+        }
+
+
+def _contradictory_payment_evidence_unlocked(
+    payment_intent_id: str, records: Iterable[Mapping[str, Any]]
+) -> list[Dict[str, Any]]:
     return [
         dict(row)
-        for row in payment_ledger.payment_history(payment_intent_id, payment_path)
-        if row.get("reconciliation_result") == "CONTRADICTORY"
+        for row in records
+        if row.get("payment_intent_id") == payment_intent_id
+        and row.get("reconciliation_result") == "CONTRADICTORY"
     ]
 
 
 def _append_payment_record_unlocked(
-    *,
-    path: str,
-    records: list[Dict[str, Any]],
-    payload: Mapping[str, Any],
+    *, path: str, records: list[Dict[str, Any]], payload: Mapping[str, Any]
 ) -> Dict[str, Any]:
     record = dict(payload)
     record["ledger_event_id"] = _opaque_id()
@@ -632,113 +827,180 @@ def _append_payment_record_unlocked(
     return record
 
 
-def _manual_payment_verification_evidence(
+def _manual_payment_verification_evidence_unlocked(
     *,
     case: Mapping[str, Any],
     proof: Mapping[str, Any],
     reviewer_user_id: int,
     review_reason: str,
     now: int,
-    payment_path: str | None,
+    payment_target: str,
+    payment_records: list[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    intent_id = _nonempty(proof.get("payment_intent_id"), label="payment_intent_id")
-    intent = _payment_intent_creation(intent_id, payment_path)
-    target = payment_path or payment_ledger.ledger_path()
-    proof_hash = _sha256_hex(str(proof.get("proof_sha256") or ""))
-    idem = f"manual-verification:{case['case_id']}:{intent_id}:{proof_hash}"
-
-    with storage.with_lock(_PAYMENT_LOCK_NAME):
-        records = payment_ledger.load_ledger(target)
-        existing_idem = next(
-            (row for row in records if row.get("idempotency_key") == idem), None
+    intent_id = _nonempty(case.get("payment_intent_id"), label="payment_intent_id")
+    intent_matches = [
+        row
+        for row in payment_records
+        if row.get("payment_intent_id") == intent_id
+        and row.get("event_type") == payment_ledger.EVENT_INTENT_CREATED
+    ]
+    if len(intent_matches) != 1:
+        raise BillingSupportError(
+            f"Payment intent must have exactly one creation record: {intent_id}"
         )
-        if existing_idem is not None:
-            return {"status": "DUPLICATE", "record": dict(existing_idem)}
+    intent = intent_matches[0]
+    if intent.get("subscriber_ref") != case.get("subscriber_ref"):
+        raise BillingSupportError(
+            "Payment intent subscriber does not match support case"
+        )
+    if intent.get("strategy_product_id") != case.get("strategy_product_id"):
+        raise BillingSupportError(
+            "Payment intent product does not match support case"
+        )
+    proof_hash = _sha256_hex(str(proof.get("proof_sha256") or ""))
+    declared_amount = proof.get("proof_declared_amount_minor")
+    declared_currency = proof.get("proof_declared_currency")
+    if declared_amount is not None and declared_amount != intent.get("amount_minor"):
+        raise BillingSupportError(
+            "Proof amount conflicts with payment intent during review"
+        )
+    if declared_currency is not None and declared_currency != intent.get("currency"):
+        raise BillingSupportError(
+            "Proof currency conflicts with payment intent during review"
+        )
 
-        contradictions = [
-            row
-            for row in records
-            if row.get("payment_intent_id") == intent_id
-            and row.get("reconciliation_result") == "CONTRADICTORY"
-        ]
-        if contradictions:
-            raise BillingSupportError(
-                "Contradictory provider/payment evidence requires HOLD_ESCALATION"
-            )
-
-        matched_settlements = [
-            row
-            for row in records
-            if row.get("payment_intent_id") == intent_id
-            and row.get("payment_state") == "SETTLED"
-            and row.get("reconciliation_result") == "MATCHED"
-        ]
-        if len(matched_settlements) > 1:
-            raise BillingSupportError(
-                "Payment ledger contains multiple matched settlements"
-            )
-
-        common = {
-            "payment_intent_id": intent_id,
-            "provider": intent.get("provider"),
-            "provider_event_id": None,
-            "provider_tx_ref": None,
-            "wallet_tx_id": None,
-            "subscriber_ref": intent.get("subscriber_ref"),
-            "strategy_product_id": intent.get("strategy_product_id"),
-            "plan_id": intent.get("plan_id"),
-            "amount_minor": intent.get("amount_minor"),
-            "currency": intent.get("currency"),
-            "payment_method": intent.get("payment_method"),
-            "provider_state": "MANUAL_SUPPORT_REVIEW",
-            "received_at": _utc_iso(now),
-            "raw_event_hash": proof_hash,
-            "idempotency_key": idem,
-            "audit_correlation_id": case.get("audit_correlation_id") or _opaque_id(),
-            "reversal_of_ledger_event_id": None,
-            "case_id": case["case_id"],
-            "reviewer_user_id": int(reviewer_user_id),
-            "review_reason": review_reason,
-            "evidence_source": "MANUAL_PAYMENT_PROOF_REVIEW",
+    idem = f"manual-verification:{case['case_id']}:{intent_id}:{proof_hash}"
+    existing_idem = next(
+        (row for row in payment_records if row.get("idempotency_key") == idem),
+        None,
+    )
+    if existing_idem is not None:
+        settlement = next(
+            (
+                row
+                for row in payment_records
+                if row.get("payment_intent_id") == intent_id
+                and row.get("payment_state") == "SETTLED"
+                and row.get("reconciliation_result") == "MATCHED"
+            ),
+            existing_idem,
+        )
+        return {
+            "status": "DUPLICATE",
+            "record": dict(existing_idem),
+            "settlement_record": dict(settlement),
         }
 
-        if matched_settlements:
-            existing = matched_settlements[0]
-            record = _append_payment_record_unlocked(
-                path=target,
-                records=records,
-                payload={
-                    **common,
-                    "event_type": PAYMENT_EVENT_MANUAL_REVIEW_AUDIT,
-                    "payment_state": "UNKNOWN",
-                    "settled_at": None,
-                    "reconciliation_result": "DUPLICATE",
-                    "existing_settlement_ledger_event_id": existing["ledger_event_id"],
-                },
-            )
-            return {
-                "status": "ALREADY_SETTLED_REVIEW_AUDITED",
-                "record": record,
-                "settlement_record": dict(existing),
-            }
+    contradictions = _contradictory_payment_evidence_unlocked(
+        intent_id, payment_records
+    )
+    if contradictions:
+        return {
+            "status": "CONTRADICTORY",
+            "contradictions": contradictions,
+        }
 
+    matched_settlements = [
+        row
+        for row in payment_records
+        if row.get("payment_intent_id") == intent_id
+        and row.get("payment_state") == "SETTLED"
+        and row.get("reconciliation_result") == "MATCHED"
+    ]
+    if len(matched_settlements) > 1:
+        raise BillingSupportError(
+            "Payment ledger contains multiple matched settlements"
+        )
+
+    common = {
+        "payment_intent_id": intent_id,
+        "provider": intent.get("provider"),
+        "provider_event_id": None,
+        "provider_tx_ref": None,
+        "wallet_tx_id": None,
+        "subscriber_ref": intent.get("subscriber_ref"),
+        "strategy_product_id": intent.get("strategy_product_id"),
+        "plan_id": intent.get("plan_id"),
+        "amount_minor": intent.get("amount_minor"),
+        "currency": intent.get("currency"),
+        "payment_method": intent.get("payment_method"),
+        "provider_state": "MANUAL_SUPPORT_REVIEW",
+        "received_at": _utc_iso(now),
+        "raw_event_hash": proof_hash,
+        "idempotency_key": idem,
+        "audit_correlation_id": case.get("audit_correlation_id") or _opaque_id(),
+        "reversal_of_ledger_event_id": None,
+        "case_id": case["case_id"],
+        "reviewer_user_id": int(reviewer_user_id),
+        "review_reason": review_reason,
+        "evidence_source": "MANUAL_PAYMENT_PROOF_REVIEW",
+    }
+
+    if matched_settlements:
+        existing = matched_settlements[0]
         record = _append_payment_record_unlocked(
-            path=target,
-            records=records,
+            path=payment_target,
+            records=payment_records,
             payload={
                 **common,
-                "event_type": PAYMENT_EVENT_MANUAL_VERIFICATION,
-                "payment_state": "SETTLED",
-                "settled_at": _utc_iso(now),
-                "reconciliation_result": "MATCHED",
-                "existing_settlement_ledger_event_id": None,
+                "event_type": PAYMENT_EVENT_MANUAL_REVIEW_AUDIT,
+                "payment_state": "UNKNOWN",
+                "settled_at": None,
+                "reconciliation_result": "DUPLICATE",
+                "existing_settlement_ledger_event_id": existing[
+                    "ledger_event_id"
+                ],
             },
         )
         return {
-            "status": "MANUAL_SETTLEMENT_RECORDED",
+            "status": "ALREADY_SETTLED_REVIEW_AUDITED",
             "record": record,
-            "settlement_record": record,
+            "settlement_record": dict(existing),
         }
+
+    record = _append_payment_record_unlocked(
+        path=payment_target,
+        records=payment_records,
+        payload={
+            **common,
+            "event_type": PAYMENT_EVENT_MANUAL_VERIFICATION,
+            "payment_state": "SETTLED",
+            "settled_at": _utc_iso(now),
+            "reconciliation_result": "MATCHED",
+            "existing_settlement_ledger_event_id": None,
+        },
+    )
+    return {
+        "status": "MANUAL_SETTLEMENT_RECORDED",
+        "record": record,
+        "settlement_record": record,
+    }
+
+
+def _assert_review_transition(current_state: str, action: str) -> None:
+    allowed = {
+        "OPEN": {"REQUEST_MORE_INFO", "VERIFY", "REJECT", "ESCALATE"},
+        "WAITING_FOR_CLIENT": {
+            "REQUEST_MORE_INFO",
+            "VERIFY",
+            "REJECT",
+            "ESCALATE",
+        },
+        "UNDER_REVIEW": {
+            "REQUEST_MORE_INFO",
+            "VERIFY",
+            "REJECT",
+            "ESCALATE",
+        },
+        "HOLD_ESCALATION": {"REQUEST_MORE_INFO", "REJECT", "RESOLVE"},
+        "VERIFIED": {"RESOLVE"},
+        "REJECTED": {"RESOLVE"},
+        "RESOLVED": set(),
+    }
+    if action not in allowed.get(current_state, set()):
+        raise BillingSupportError(
+            f"Review action {action} is illegal from case state {current_state}"
+        )
 
 
 def review_case(
@@ -755,127 +1017,135 @@ def review_case(
     case_key = _nonempty(case_id, label="case_id")
     normalized_action = _nonempty(action, label="action").upper()
     if normalized_action not in REVIEW_ACTIONS:
-        raise BillingSupportError(f"Unsupported review action: {normalized_action}")
+        raise BillingSupportError(
+            f"Unsupported review action: {normalized_action}"
+        )
     why = _reason(reason)
     reviewer = _positive_int(reviewer_user_id, label="reviewer_user_id")
     now = _now(now_ts)
-    target = path or cases_path()
+    support_target = path or cases_path()
 
-    with storage.with_lock(_LOCK_NAME):
-        records = _read_events_unlocked(target)
-        current = _latest_by_case(records).get(case_key)
-        if current is None:
-            raise BillingSupportError(f"Unknown case_id: {case_key}")
-        if current.get("case_state") == "RESOLVED":
-            raise BillingSupportError("Resolved support case cannot be reviewed")
-        idem = f"review:{case_key}:{current['case_version']}:{normalized_action}"
-        existing = _find_idempotency(records, idem)
-        if existing is not None:
-            return {"status": "DUPLICATE", "appended": False, "record": dict(existing)}
-        proof = _latest_proof(case_key, records)
+    # VERIFY spans payment truth and support truth. Acquire the payment lock
+    # first and then the support lock in one stable order. This prevents a
+    # client/admin case mutation from racing between manual settlement evidence
+    # and the case review transition. Both writes are idempotent; if the case
+    # append fails after the payment append, replay reuses the payment evidence.
+    if normalized_action == "VERIFY":
+        payment_target = payment_path or payment_ledger.ledger_path()
+        with storage.with_lock(_PAYMENT_LOCK_NAME):
+            payment_records = payment_ledger.load_ledger(payment_target)
+            with storage.with_lock(_LOCK_NAME):
+                records = _read_events_unlocked(support_target)
+                current = _latest_by_case(records).get(case_key)
+                if current is None:
+                    raise BillingSupportError(f"Unknown case_id: {case_key}")
+                _assert_review_transition(str(current["case_state"]), normalized_action)
+                proof = _latest_proof(case_key, records)
+                if proof is None:
+                    raise BillingSupportError(
+                        "VERIFY requires payment proof evidence"
+                    )
+                if not current.get("payment_intent_id"):
+                    raise BillingSupportError(
+                        "VERIFY requires an audited payment-intent correlation"
+                    )
+                ledger_result = _manual_payment_verification_evidence_unlocked(
+                    case=current,
+                    proof=proof,
+                    reviewer_user_id=reviewer,
+                    review_reason=why,
+                    now=now,
+                    payment_target=payment_target,
+                    payment_records=payment_records,
+                )
+                if ledger_result.get("status") == "CONTRADICTORY":
+                    effective_action = "ESCALATE"
+                    target_state = "HOLD_ESCALATION"
+                    effective_reason = (
+                        f"{why}; contradictory provider/payment evidence present"
+                    )
+                    ledger_event_id = None
+                    settlement_event_id = None
+                else:
+                    effective_action = "VERIFY"
+                    target_state = "VERIFIED"
+                    effective_reason = why
+                    ledger_event_id = ledger_result.get("record", {}).get(
+                        "ledger_event_id"
+                    )
+                    settlement_event_id = ledger_result.get(
+                        "settlement_record", {}
+                    ).get("ledger_event_id")
+                idem = (
+                    f"review:{case_key}:{current['case_version']}:"
+                    f"{effective_action}"
+                )
+                record, appended = _append_case_event_unlocked(
+                    path=support_target,
+                    records=records,
+                    previous=current,
+                    case_id=case_key,
+                    event_type=EVENT_REVIEW,
+                    case_state=target_state,
+                    idempotency_key=idem,
+                    occurred_at_epoch=now,
+                    payload={
+                        **_copy_snapshot(current),
+                        "review_action": effective_action,
+                        "reviewer_user_id": reviewer,
+                        "review_reason": effective_reason,
+                        "reviewed_at_epoch": now,
+                        "payment_ledger_event_id": ledger_event_id,
+                        "settlement_ledger_event_id": settlement_event_id,
+                    },
+                )
+                return {
+                    "status": target_state,
+                    "appended": appended,
+                    "record": record,
+                    "payment_ledger_result": ledger_result,
+                }
 
-    ledger_result: Dict[str, Any] | None = None
     state_by_action = {
         "REQUEST_MORE_INFO": "WAITING_FOR_CLIENT",
         "REJECT": "REJECTED",
         "ESCALATE": "HOLD_ESCALATION",
         "RESOLVE": "RESOLVED",
     }
-    target_state = state_by_action.get(normalized_action)
-
-    if normalized_action == "VERIFY":
-        if proof is None:
-            raise BillingSupportError("VERIFY requires payment proof evidence")
-        intent_id = _nonempty(proof.get("payment_intent_id"), label="payment_intent_id")
-        contradictions = _contradictory_payment_evidence(intent_id, payment_path)
-        if contradictions:
-            normalized_action = "ESCALATE"
-            target_state = "HOLD_ESCALATION"
-            why = f"{why}; contradictory provider evidence present"
-        else:
-            try:
-                ledger_result = _manual_payment_verification_evidence(
-                    case=current,
-                    proof=proof,
-                    reviewer_user_id=reviewer,
-                    review_reason=why,
-                    now=now,
-                    payment_path=payment_path,
-                )
-            except BillingSupportError as exc:
-                if "HOLD_ESCALATION" not in str(exc):
-                    raise
-                normalized_action = "ESCALATE"
-                target_state = "HOLD_ESCALATION"
-                why = f"{why}; {exc}"
-            else:
-                target_state = "VERIFIED"
-
-    if normalized_action == "RESOLVE" and current.get("case_state") not in {
-        "VERIFIED",
-        "REJECTED",
-        "HOLD_ESCALATION",
-    }:
-        raise BillingSupportError(
-            "RESOLVE requires a reviewed VERIFIED/REJECTED/HOLD_ESCALATION case"
-        )
-
+    target_state = state_by_action[normalized_action]
     with storage.with_lock(_LOCK_NAME):
-        records = _read_events_unlocked(target)
-        latest = _latest_by_case(records).get(case_key)
-        if latest is None:
+        records = _read_events_unlocked(support_target)
+        current = _latest_by_case(records).get(case_key)
+        if current is None:
             raise BillingSupportError(f"Unknown case_id: {case_key}")
-        if latest.get("case_version") != current.get("case_version"):
-            raise BillingSupportError(
-                "Support case changed concurrently; reviewer must re-read before mutation"
-            )
-        idem = f"review:{case_key}:{latest['case_version']}:{normalized_action}"
+        _assert_review_transition(str(current["case_state"]), normalized_action)
+        idem = (
+            f"review:{case_key}:{current['case_version']}:{normalized_action}"
+        )
         record, appended = _append_case_event_unlocked(
-            path=target,
+            path=support_target,
             records=records,
-            previous=latest,
+            previous=current,
             case_id=case_key,
             event_type=EVENT_REVIEW,
-            case_state=_nonempty(target_state, label="target_state"),
+            case_state=target_state,
             idempotency_key=idem,
             occurred_at_epoch=now,
             payload={
-                **{
-                    key: value
-                    for key, value in latest.items()
-                    if key
-                    not in {
-                        "case_event_id",
-                        "case_seq",
-                        "case_version",
-                        "previous_case_event_id",
-                        "event_type",
-                        "case_state",
-                        "occurred_at_epoch",
-                        "idempotency_key",
-                    }
-                },
+                **_copy_snapshot(current),
                 "review_action": normalized_action,
                 "reviewer_user_id": reviewer,
                 "review_reason": why,
                 "reviewed_at_epoch": now,
-                "payment_ledger_event_id": (
-                    ledger_result.get("record", {}).get("ledger_event_id")
-                    if ledger_result
-                    else None
-                ),
-                "settlement_ledger_event_id": (
-                    ledger_result.get("settlement_record", {}).get("ledger_event_id")
-                    if ledger_result
-                    else None
-                ),
+                "payment_ledger_event_id": None,
+                "settlement_ledger_event_id": None,
             },
         )
         return {
             "status": target_state,
             "appended": appended,
             "record": record,
-            "payment_ledger_result": ledger_result,
+            "payment_ledger_result": None,
         }
 
 
@@ -894,7 +1164,9 @@ def reopen_case(
     if prior is None:
         raise BillingSupportError(f"Unknown prior_case_id: {prior_id}")
     if prior.get("case_state") not in CLOSED_STATES:
-        raise BillingSupportError("Only a closed case may be reopened as a new case")
+        raise BillingSupportError(
+            "Only a closed case may be reopened as a new case"
+        )
     now = _now(now_ts)
     target = path or cases_path()
     new_case_id = _opaque_id()
@@ -925,7 +1197,9 @@ def reopen_case(
         return {"status": "OPENED", "appended": appended, "record": record}
 
 
-def _latest_private_target(subscriber_ref: str, notification_path: str | None) -> Optional[Dict[str, Any]]:
+def _latest_private_target(
+    subscriber_ref: str, notification_path: str | None
+) -> Optional[Dict[str, Any]]:
     matches = [
         row
         for row in notification_scheduler.load_events(notification_path)
@@ -933,6 +1207,44 @@ def _latest_private_target(subscriber_ref: str, notification_path: str | None) -
         and row.get("subscriber_ref") == subscriber_ref
     ]
     return dict(matches[-1]) if matches else None
+
+
+def _record_delivery_event(
+    *,
+    case_id: str,
+    direction: str,
+    result: str,
+    message_ref: str,
+    error: str | None,
+    now_ts: float | int | None,
+    path: str | None,
+) -> Dict[str, Any]:
+    target = path or cases_path()
+    now = _now(now_ts)
+    with storage.with_lock(_LOCK_NAME):
+        records = _read_events_unlocked(target)
+        current = _latest_by_case(records).get(case_id)
+        if current is None:
+            raise BillingSupportError(f"Unknown case_id: {case_id}")
+        idem = f"message-delivery:{case_id}:{direction}:{message_ref}:{result}"
+        record, appended = _append_case_event_unlocked(
+            path=target,
+            records=records,
+            previous=current,
+            case_id=case_id,
+            event_type=EVENT_MESSAGE_DELIVERY,
+            case_state=str(current["case_state"]),
+            idempotency_key=idem,
+            occurred_at_epoch=now,
+            payload={
+                **_copy_snapshot(current),
+                "delivery_direction": direction,
+                "delivery_result": result,
+                "delivery_message_ref": message_ref,
+                "delivery_error": _optional_text(error),
+            },
+        )
+        return {"appended": appended, "record": record}
 
 
 def relay_admin_reply_to_client(
@@ -955,20 +1267,38 @@ def relay_admin_reply_to_client(
         path=path,
     )
     case = reply["record"]
-    target = _latest_private_target(str(case["subscriber_ref"]), notification_path)
+    target = _latest_private_target(
+        str(case["subscriber_ref"]), notification_path
+    )
+    error: str | None = None
     if target is None:
-        return {**reply, "delivery_result": "FAILED_NO_PRIVATE_TARGET"}
-    try:
-        send_fn(
-            chat_id=int(target["telegram_chat_id"]),
-            text=f"Support case {case_id}:\n{text}",
-            reply_markup=None,
-            thread_id=None,
-        )
-        delivery = "SENT"
-    except Exception:
-        delivery = "FAILED"
-    return {**reply, "delivery_result": delivery}
+        delivery = "FAILED_NO_PRIVATE_TARGET"
+    else:
+        try:
+            send_fn(
+                chat_id=int(target["telegram_chat_id"]),
+                text=f"Support case {case_id}:\n{text}",
+                reply_markup=None,
+                thread_id=None,
+            )
+            delivery = "SENT"
+        except Exception as exc:
+            delivery = "FAILED"
+            error = telegram_publisher._sanitize(str(exc))
+    audit = _record_delivery_event(
+        case_id=case_id,
+        direction="ADMIN_TO_CLIENT",
+        result=delivery,
+        message_ref=str(admin_message_id),
+        error=error,
+        now_ts=now_ts,
+        path=path,
+    )
+    return {
+        **reply,
+        "delivery_result": delivery,
+        "delivery_evidence": audit["record"],
+    }
 
 
 def relay_client_message_to_admin(
@@ -998,8 +1328,6 @@ def relay_client_message_to_admin(
             chat_id = int(raw)
         except Exception:
             chat_id = None
-    if chat_id is None:
-        return {**message, "delivery_result": "FAILED_ADMIN_DESTINATION_MISSING"}
     thread_id = admin_thread_id
     if thread_id is None:
         raw_thread = os.getenv("ADMIN_CONTROL_THREAD_ID", "").strip()
@@ -1007,30 +1335,80 @@ def relay_client_message_to_admin(
             thread_id = int(raw_thread) if raw_thread else None
         except Exception:
             thread_id = None
-    try:
-        send_fn(
-            chat_id=int(chat_id),
-            thread_id=thread_id,
-            text=(
-                f"Billing support case {case_id}\n"
-                f"Subscriber ref: {hashlib.sha256(subscriber_ref.encode('utf-8')).hexdigest()[:12]}\n"
-                f"Client message:\n{text}"
-            ),
-            reply_markup=None,
-        )
-        delivery = "SENT"
-    except Exception:
-        delivery = "FAILED"
-    return {**message, "delivery_result": delivery}
+
+    error: str | None = None
+    if chat_id is None:
+        delivery = "FAILED_ADMIN_DESTINATION_MISSING"
+    else:
+        try:
+            send_fn(
+                chat_id=int(chat_id),
+                thread_id=thread_id,
+                text=(
+                    f"Billing support case {case_id}\n"
+                    "Subscriber ref: "
+                    f"{hashlib.sha256(subscriber_ref.encode('utf-8')).hexdigest()[:12]}\n"
+                    f"Client message:\n{text}"
+                ),
+                reply_markup=None,
+            )
+            delivery = "SENT"
+        except Exception as exc:
+            delivery = "FAILED"
+            error = telegram_publisher._sanitize(str(exc))
+    audit = _record_delivery_event(
+        case_id=case_id,
+        direction="CLIENT_TO_ADMIN",
+        result=delivery,
+        message_ref=str(client_message_id),
+        error=error,
+        now_ts=now_ts,
+        path=path,
+    )
+    return {
+        **message,
+        "delivery_result": delivery,
+        "delivery_evidence": audit["record"],
+    }
 
 
 def restricted_case_view(
-    *, case_id: str, reviewer_user_id: int, path: str | None = None
+    *,
+    case_id: str,
+    reviewer_user_id: int,
+    access_reason: str,
+    path: str | None = None,
+    now_ts: float | int | None = None,
 ) -> Dict[str, Any]:
     _require_reviewer(reviewer_user_id)
-    history = case_history(case_id, path)
-    if not history:
-        raise BillingSupportError(f"Unknown case_id: {case_id}")
+    why = _reason(access_reason)
+    target = path or cases_path()
+    case_key = _nonempty(case_id, label="case_id")
+    with storage.with_lock(_LOCK_NAME):
+        records = _read_events_unlocked(target)
+        current = _latest_by_case(records).get(case_key)
+        if current is None:
+            raise BillingSupportError(f"Unknown case_id: {case_key}")
+        idem = (
+            f"restricted-access:{case_key}:{int(reviewer_user_id)}:"
+            f"{_now(now_ts)}:{hashlib.sha256(why.encode('utf-8')).hexdigest()[:12]}"
+        )
+        _append_case_event_unlocked(
+            path=target,
+            records=records,
+            previous=current,
+            case_id=case_key,
+            event_type=EVENT_RESTRICTED_ACCESS,
+            case_state=str(current["case_state"]),
+            idempotency_key=idem,
+            occurred_at_epoch=_now(now_ts),
+            payload={
+                **_copy_snapshot(current),
+                "accessor_user_id": int(reviewer_user_id),
+                "access_reason": why,
+            },
+        )
+    history = case_history(case_key, target)
     return {"case": history[-1], "history": history}
 
 
@@ -1048,8 +1426,14 @@ def client_safe_case_view(
         "reviewer_user_id",
         "payment_ledger_event_id",
         "settlement_ledger_event_id",
+        "payment_intent_id",
+        "audit_correlation_id",
+        "accessor_user_id",
     }
     safe_history: list[Dict[str, Any]] = []
     for row in history:
-        safe_history.append({key: value for key, value in row.items() if key not in sensitive})
+        safe = {key: value for key, value in row.items() if key not in sensitive}
+        if safe.get("message_actor_type") == "ADMIN":
+            safe["message_actor_ref"] = "ADMIN"
+        safe_history.append(safe)
     return {"case": safe_history[-1], "history": safe_history}
