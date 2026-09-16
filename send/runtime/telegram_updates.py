@@ -11,6 +11,7 @@ import time
 import requests
 from typing import Dict, Any, Optional
 
+from billing import notification_scheduler
 from core import bot_service
 from core import outcome_service
 from core import observability_logger
@@ -104,6 +105,21 @@ def _emit_poller_startup(event: str, extra: Dict[str, Any]) -> None:
         pass
 
 
+def _run_billing_scheduler_safely() -> None:
+    """Run the restart-safe billing scheduler without risking poller liveness."""
+    try:
+        notification_scheduler.maybe_run_notification_cycle()
+    except Exception as exc:
+        observability_logger.log_error(
+            {
+                "event_type": "error",
+                "module": "telegram_updates",
+                "function": "billing_notification_scheduler",
+                "error": telegram_publisher._sanitize(str(exc)),
+            }
+        )
+
+
 def poll_updates():
     global LAST_UPDATE_ID, _POLLER_STARTED
     with _POLLER_LOCK:
@@ -142,6 +158,7 @@ def poll_updates():
             # (including empty ones) so liveness checks can verify the thread
             # is not stalled.
             _update_poller_heartbeat()
+            _run_billing_scheduler_safely()
 
             updates = data.get("result", [])
 
@@ -218,6 +235,30 @@ def process_update(update: Dict[str, Any]):
         chat = message.get("chat") or {}
         chat_id = chat.get("id")
         message_id = message.get("message_id")
+
+        if data and data.startswith(notification_scheduler.CALLBACK_PREFIX):
+            if chat_id is None:
+                _ack_callback(callback_id, "Billing action unavailable in this context.")
+                return
+            try:
+                result = notification_scheduler.handle_telegram_callback(
+                    telegram_user_id=int(user_id),
+                    telegram_chat_id=int(chat_id),
+                    callback_data=str(data),
+                    now_ts=int(time.time()),
+                )
+                _ack_callback(callback_id, str(result.get("ack_text") or ""))
+            except Exception as exc:
+                observability_logger.log_error(
+                    {
+                        "event_type": "error",
+                        "module": "telegram_updates",
+                        "function": "billing_callback",
+                        "error": telegram_publisher._sanitize(str(exc)),
+                    }
+                )
+                _ack_callback(callback_id, "Billing action could not be recorded.")
+            return
 
         if data and data.startswith("VOTE_"):
             result = outcome_service.handle_vote_callback_data(
