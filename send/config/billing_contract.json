@@ -1,0 +1,176 @@
+{
+  "schema_version": "1.0.0",
+  "contract_id": "tsp-billing-shared-contracts",
+  "scope": {
+    "current_strategy_product_ids": [
+      "BINARY_TRADING"
+    ],
+    "future_strategy_products_allowed_in_current_runtime": false
+  },
+  "truth_layers": [
+    "PAYMENT",
+    "SUBSCRIPTION",
+    "ENTITLEMENT",
+    "TELEGRAM_MEMBERSHIP"
+  ],
+  "identifier_contracts": {
+    "subscriber_ref": {
+      "type": "opaque_string",
+      "required": true
+    },
+    "strategy_product_id": {
+      "type": "enum_string",
+      "required": true
+    },
+    "plan_id": {
+      "type": "enum_string",
+      "required": true
+    },
+    "subscription_id": {
+      "type": "opaque_string",
+      "required": true
+    },
+    "payment_intent_id": {
+      "type": "opaque_string",
+      "required": true
+    },
+    "provider_event_id": {
+      "type": "opaque_string",
+      "required": false
+    },
+    "provider_tx_ref": {
+      "type": "opaque_string",
+      "required": false
+    },
+    "wallet_tx_id": {
+      "type": "opaque_string",
+      "required": false
+    },
+    "case_id": {
+      "type": "opaque_string",
+      "required": true
+    },
+    "entitlement_id": {
+      "type": "opaque_string",
+      "required": true
+    },
+    "entitlement_version": {
+      "type": "positive_integer",
+      "required": true,
+      "monotonic": true
+    },
+    "reconciliation_id": {
+      "type": "opaque_string",
+      "required": true
+    },
+    "audit_correlation_id": {
+      "type": "opaque_string",
+      "required": true
+    }
+  },
+  "enums": {
+    "plan_tier": [
+      "FREE",
+      "BASIC",
+      "PRO",
+      "ELITE"
+    ],
+    "billing_cadence": [
+      "MONTHLY"
+    ],
+    "payment_method": [
+      "FIAT",
+      "CRYPTO"
+    ],
+    "channel_membership_model": [
+      "EXCLUSIVE"
+    ],
+    "pricing_status": [
+      "NOT_APPLICABLE",
+      "NOT_CONFIGURED",
+      "CONFIGURED"
+    ],
+    "named_policy_state": [
+      "GRACE_HOLD",
+      "INTENT_PAYMENT_PENDING",
+      "CANCELED_AT_PERIOD_END",
+      "CHARGEBACK_OPEN",
+      "IN_SYNC",
+      "ACCESS_LEAK_RISK"
+    ]
+  },
+  "strategy_products": [
+    {
+      "strategy_product_id": "BINARY_TRADING",
+      "strategy_catalog_ref": "binary_canonical",
+      "trade_type": "BINARY_OPTIONS",
+      "channel_membership_model": "EXCLUSIVE",
+      "plans": [
+        {
+          "plan_id": "BINARY_TRADING_FREE",
+          "tier": "FREE",
+          "billing_cadence": null,
+          "requires_payment": false,
+          "pricing": {
+            "status": "NOT_APPLICABLE",
+            "amount_minor": null,
+            "currency": null
+          },
+          "telegram_destination_ref": "FREE_CHANNEL_ID",
+          "signal_limit_ref": "FREE_LIMIT"
+        },
+        {
+          "plan_id": "BINARY_TRADING_BASIC",
+          "tier": "BASIC",
+          "billing_cadence": "MONTHLY",
+          "requires_payment": true,
+          "pricing": {
+            "status": "NOT_CONFIGURED",
+            "amount_minor": null,
+            "currency": null
+          },
+          "telegram_destination_ref": "BASIC_CHANNEL_ID",
+          "signal_limit_ref": "BASIC_LIMIT"
+        },
+        {
+          "plan_id": "BINARY_TRADING_PRO",
+          "tier": "PRO",
+          "billing_cadence": "MONTHLY",
+          "requires_payment": true,
+          "pricing": {
+            "status": "NOT_CONFIGURED",
+            "amount_minor": null,
+            "currency": null
+          },
+          "telegram_destination_ref": "PRO_CHANNEL_ID",
+          "signal_limit_ref": "PRO_LIMIT"
+        },
+        {
+          "plan_id": "BINARY_TRADING_ELITE",
+          "tier": "ELITE",
+          "billing_cadence": "MONTHLY",
+          "requires_payment": true,
+          "pricing": {
+            "status": "NOT_CONFIGURED",
+            "amount_minor": null,
+            "currency": null
+          },
+          "telegram_destination_ref": "ELITE_CHANNEL_ID",
+          "signal_limit_ref": "ELITE_LIMIT"
+        }
+      ]
+    }
+  ],
+  "separation_invariants": [
+    "STRATEGY_FAMILY_NE_PLAN_TIER",
+    "PLAN_TIER_NE_PAYMENT_METHOD",
+    "PAYMENT_NE_SUBSCRIPTION",
+    "SUBSCRIPTION_NE_ENTITLEMENT",
+    "ENTITLEMENT_NE_TELEGRAM_MEMBERSHIP",
+    "PAYMENT_PROOF_SUBMITTED_NE_PAYMENT_VERIFIED",
+    "ADMIN_VERIFY_NE_DIRECT_CHANNEL_UPGRADE",
+    "INVITE_SENT_NE_MEMBER_JOINED",
+    "REMOVAL_REQUESTED_NE_ACCESS_REVOKED",
+    "UNMATCHED_PROVIDER_DEPOSIT_MUST_NOT_CREATE_ENTITLEMENT"
+  ]
+}
