@@ -77,7 +77,7 @@ def test_private_support_handler_does_not_capture_commands(monkeypatch) -> None:
     assert result == {"handled": False, "reason": "NOT_SUPPORT_TEXT"}
 
 
-def test_private_support_handler_requires_exactly_one_active_case(monkeypatch) -> None:
+def test_private_support_handler_requires_unique_support_context(monkeypatch) -> None:
     monkeypatch.setattr(
         support_runtime,
         "resolve_private_subscriber",
@@ -100,7 +100,7 @@ def test_private_support_handler_requires_exactly_one_active_case(monkeypatch) -
         }
     )
     assert result["handled"] is False
-    assert result["reason"] == "NO_UNIQUE_ACTIVE_SUPPORT_CASE"
+    assert result["reason"] == "NO_UNIQUE_SUPPORT_CONTEXT"
 
 
 def test_private_support_handler_relays_message_when_context_is_unique(monkeypatch) -> None:
@@ -244,6 +244,69 @@ def test_telegram_proof_stream_over_20mb_is_rejected(monkeypatch) -> None:
         )
 
 
+def test_private_proof_handler_records_restricted_proof_and_safe_admin_notice(monkeypatch) -> None:
+    body = b"receipt-bytes"
+    proof_sha = hashlib.sha256(body).hexdigest()
+    monkeypatch.setattr(
+        support_runtime,
+        "_private_context",
+        lambda *_args, **_kwargs: (
+            {"subscriber_ref": "subscriber-a", "strategy_product_id": "BINARY_TRADING"},
+            {"case_id": "case-proof", "subscriber_ref": "subscriber-a", "payment_intent_id": None},
+            101,
+            101,
+        ),
+    )
+    monkeypatch.setattr(
+        support_runtime,
+        "download_telegram_file_for_hash",
+        lambda **_kwargs: {
+            "content_bytes": body,
+            "sha256": proof_sha,
+            "file_path": "documents/proof.jpg",
+            "file_size": len(body),
+        },
+    )
+    recorded: list[dict] = []
+    monkeypatch.setattr(
+        support_runtime.support_cases,
+        "add_payment_proof",
+        lambda **kwargs: recorded.append(kwargs) or {
+            "record": {
+                "proof_id": "proof-1",
+                "proof_sha256": proof_sha,
+                "proof_file_name": "receipt.jpg",
+                "proof_mime_type": "image/jpeg",
+                "proof_file_size": len(body),
+                "payment_intent_id": None,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        support_runtime,
+        "_notify_admin_of_proof",
+        lambda **_kwargs: "SENT",
+    )
+    result = support_runtime.handle_private_proof_message(
+        {
+            "message_id": 4,
+            "chat": {"id": 101, "type": "private"},
+            "from": {"id": 101},
+            "document": {
+                "file_id": "restricted-file-id",
+                "file_unique_id": "stable-file-id",
+                "file_name": "receipt.jpg",
+                "mime_type": "image/jpeg",
+            },
+        }
+    )
+    assert result["handled"] is True
+    assert result["proof_sha256"] == proof_sha
+    assert recorded[0]["telegram_file_id"] == "restricted-file-id"
+    assert recorded[0]["telegram_file_unique_id"] == "stable-file-id"
+    assert recorded[0]["content_bytes"] == body
+
+
 def test_runtime_support_message_intercepts_only_when_handled(monkeypatch) -> None:
     generic: list[dict] = []
     client_acks: list[dict] = []
@@ -279,6 +342,82 @@ def test_runtime_support_message_intercepts_only_when_handled(monkeypatch) -> No
     assert generic == []
     assert client_acks[0]["chat_id"] == 101
     assert "case-runtime" in client_acks[0]["text"]
+
+
+def test_runtime_payment_proof_intercepts_before_generic_dispatch(monkeypatch) -> None:
+    generic: list[dict] = []
+    client_acks: list[dict] = []
+    monkeypatch.setattr(
+        telegram_updates.support_runtime,
+        "handle_private_proof_message",
+        lambda *_args, **_kwargs: {
+            "handled": True,
+            "case_id": "case-proof-runtime",
+            "proof_id": "proof-runtime",
+            "delivery_result": "SENT",
+        },
+    )
+    monkeypatch.setattr(
+        telegram_updates.bot_service,
+        "process_update",
+        lambda update: generic.append(update),
+    )
+    monkeypatch.setattr(
+        telegram_updates.telegram_publisher,
+        "send_message",
+        lambda **kwargs: client_acks.append(kwargs) or {"ok": True},
+    )
+    telegram_updates.process_update(
+        {
+            "message": {
+                "message_id": 46,
+                "chat": {"id": 101, "type": "private"},
+                "from": {"id": 101},
+                "document": {"file_id": "file-proof", "file_unique_id": "unique-proof"},
+            }
+        }
+    )
+    assert generic == []
+    assert client_acks[0]["chat_id"] == 101
+    assert "payment proof recorded" in client_acks[0]["text"].lower()
+
+
+def test_runtime_payment_proof_failure_is_consumed_and_safe(monkeypatch) -> None:
+    generic: list[dict] = []
+    client_acks: list[dict] = []
+    monkeypatch.setattr(
+        telegram_updates.support_runtime,
+        "handle_private_proof_message",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("secret failure")),
+    )
+    monkeypatch.setattr(
+        telegram_updates.bot_service,
+        "process_update",
+        lambda update: generic.append(update),
+    )
+    monkeypatch.setattr(
+        telegram_updates.telegram_publisher,
+        "send_message",
+        lambda **kwargs: client_acks.append(kwargs) or {"ok": True},
+    )
+    monkeypatch.setattr(
+        telegram_updates.observability_logger,
+        "log_error",
+        lambda *_args, **_kwargs: None,
+    )
+    telegram_updates.process_update(
+        {
+            "message": {
+                "message_id": 47,
+                "chat": {"id": 101, "type": "private"},
+                "from": {"id": 101},
+                "photo": [{"file_id": "file-proof", "file_unique_id": "unique-proof"}],
+            }
+        }
+    )
+    assert generic == []
+    assert "could not be recorded" in client_acks[0]["text"].lower()
+    assert "secret failure" not in client_acks[0]["text"]
 
 
 def test_runtime_non_support_message_falls_back_to_existing_dispatch(monkeypatch) -> None:
