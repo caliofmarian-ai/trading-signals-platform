@@ -21,7 +21,8 @@ BASIC = "BINARY_TRADING_BASIC"
 PRO = "BINARY_TRADING_PRO"
 ELITE = "BINARY_TRADING_ELITE"
 BASE = 1_700_000_000
-MONTH_END = BASE + 30 * 24 * 60 * 60
+MONTH_SECONDS = 30 * 24 * 60 * 60
+MONTH_END = BASE + MONTH_SECONDS
 
 
 @pytest.fixture
@@ -152,7 +153,6 @@ def test_no_subscription_resolves_stable_free_fallback(paths: tuple[Path, Path])
         now_ts=BASE + 100,
         path=str(subscription_path),
     )
-
     assert first["tier"] == "FREE"
     assert first["plan_id"] == FREE
     assert first["access_state"] == "FREE_FALLBACK"
@@ -173,7 +173,6 @@ def test_free_bootstrap_is_idempotent_and_versioned(paths: tuple[Path, Path]) ->
         now_ts=BASE + 50,
         path=str(subscription_path),
     )
-
     assert created["status"] == "CREATED"
     assert replay["status"] == "EXISTS"
     assert len(_events(subscription_path)) == 1
@@ -196,11 +195,7 @@ def test_paid_activation_requires_unique_settled_matched_payment(paths: tuple[Pa
         amount_minor=1200,
     )
     with pytest.raises(subscription_registry.SubscriptionRegistryError):
-        _activate(
-            subscription_path,
-            payment_path,
-            intent_id="pending-only",
-        )
+        _activate(subscription_path, payment_path, intent_id="pending-only")
     assert not subscription_path.exists()
 
     _settle(
@@ -209,11 +204,7 @@ def test_paid_activation_requires_unique_settled_matched_payment(paths: tuple[Pa
         amount_minor=1200,
         suffix="a",
     )
-    activated = _activate(
-        subscription_path,
-        payment_path,
-        intent_id="pending-only",
-    )
+    activated = _activate(subscription_path, payment_path, intent_id="pending-only")
     assert activated["status"] == subscription_registry.EVENT_ACTIVATED
     assert activated["record"]["tier"] == "BASIC"
     assert activated["record"]["state"] == "ACTIVE"
@@ -231,7 +222,6 @@ def test_activation_replay_cannot_increment_entitlement_version(paths: tuple[Pat
     )
     first = _activate(subscription_path, payment_path, intent_id="activation-replay")
     replay = _activate(subscription_path, payment_path, intent_id="activation-replay")
-
     assert first["appended"] is True
     assert replay["status"] == "DUPLICATE"
     assert replay["appended"] is False
@@ -249,7 +239,6 @@ def test_resolver_suspends_paid_access_at_expiry_even_before_scheduler_runs(path
         suffix="c",
     )
     _activate(subscription_path, payment_path, intent_id="expiry-safe")
-
     before = subscription_registry.resolve_entitlement(
         subscriber_ref=SUBSCRIBER,
         now_ts=MONTH_END - 1,
@@ -266,32 +255,50 @@ def test_resolver_suspends_paid_access_at_expiry_even_before_scheduler_runs(path
     assert after["access_state"] == "SUSPENDED"
 
 
-def test_deadline_catchup_records_grace_due_and_plus72_free_downgrade(paths: tuple[Path, Path]) -> None:
+def test_plus72_downgrade_requires_notification_policy_evidence(paths: tuple[Path, Path]) -> None:
     subscription_path, payment_path = paths
     _settled_intent(
         payment_path,
         plan_id=BASIC,
-        intent_id="deadline-catchup",
+        intent_id="deadline-gated",
         amount_minor=1200,
         suffix="d",
     )
-    _activate(subscription_path, payment_path, intent_id="deadline-catchup")
+    _activate(subscription_path, payment_path, intent_id="deadline-gated")
     now = MONTH_END + subscription_registry.AUTO_DOWNGRADE_SECONDS + 1
-    result = subscription_registry.evaluate_deadlines(
+
+    blocked = subscription_registry.evaluate_deadlines(
         subscriber_ref=SUBSCRIBER,
         strategy_product_id=PRODUCT,
         now_ts=now,
         path=str(subscription_path),
     )
-
-    assert result["status"] == "EXPIRED"
-    assert [event["event_type"] for event in result["events"]] == [
+    assert blocked["status"] == "PAYMENT_DUE"
+    assert blocked["downgrade_blocked_pending_evidence"] is True
+    assert [event["event_type"] for event in blocked["events"]] == [
         subscription_registry.EVENT_GRACE_STARTED,
         subscription_registry.EVENT_PAYMENT_DUE,
-        subscription_registry.EVENT_AUTO_DOWNGRADED,
     ]
-    versions = [event["entitlement_version"] for event in _events(subscription_path)]
-    assert versions == [1, 2, 3, 4]
+    suspended = subscription_registry.resolve_entitlement(
+        subscriber_ref=SUBSCRIBER,
+        now_ts=now,
+        path=str(subscription_path),
+    )
+    assert suspended["tier"] == "BASIC"
+    assert suspended["access_state"] == "SUSPENDED"
+    assert suspended["reason"] == "AUTO_DOWNGRADE_BLOCKED_PENDING_NOTIFICATION_EVIDENCE"
+
+    evidence_id = "notification-policy-evidence-001"
+    released = subscription_registry.evaluate_deadlines(
+        subscriber_ref=SUBSCRIBER,
+        strategy_product_id=PRODUCT,
+        now_ts=now,
+        downgrade_evidence_id=evidence_id,
+        path=str(subscription_path),
+    )
+    assert released["status"] == "EXPIRED"
+    assert released["events"][-1]["event_type"] == subscription_registry.EVENT_AUTO_DOWNGRADED
+    assert released["record"]["last_downgrade_evidence_id"] == evidence_id
     entitlement = subscription_registry.resolve_entitlement(
         subscriber_ref=SUBSCRIBER,
         now_ts=now,
@@ -301,8 +308,17 @@ def test_deadline_catchup_records_grace_due_and_plus72_free_downgrade(paths: tup
     assert entitlement["plan_id"] == FREE
     assert entitlement["access_state"] == "FREE_FALLBACK"
 
+    replay = subscription_registry.evaluate_deadlines(
+        subscriber_ref=SUBSCRIBER,
+        strategy_product_id=PRODUCT,
+        now_ts=now + 100,
+        downgrade_evidence_id=evidence_id,
+        path=str(subscription_path),
+    )
+    assert replay["appended"] is False
 
-def test_recorded_intent_can_hold_expired_paid_subscription_pending_for_max24h(paths: tuple[Path, Path]) -> None:
+
+def test_recorded_intent_can_cross_plus72_for_at_most24h(paths: tuple[Path, Path]) -> None:
     subscription_path, payment_path = paths
     _settled_intent(
         payment_path,
@@ -312,13 +328,15 @@ def test_recorded_intent_can_hold_expired_paid_subscription_pending_for_max24h(p
         suffix="e",
     )
     _activate(subscription_path, payment_path, intent_id="old-period")
+
+    # Record the intent at +60h, not +1h. Its 24h window therefore reaches +84h.
+    intent_time = MONTH_END + 60 * 60 * 60
     subscription_registry.evaluate_deadlines(
         subscriber_ref=SUBSCRIBER,
         strategy_product_id=PRODUCT,
-        now_ts=MONTH_END + 60 * 60,
+        now_ts=intent_time,
         path=str(subscription_path),
     )
-    intent_time = MONTH_END + 60 * 60
     _create_intent(
         payment_path,
         plan_id=BASIC,
@@ -352,7 +370,17 @@ def test_recorded_intent_can_hold_expired_paid_subscription_pending_for_max24h(p
         now_ts=after_pending,
         path=str(subscription_path),
     )
-    assert evaluated["record"]["state"] == "EXPIRED"
+    assert evaluated["record"]["state"] == "PAYMENT_DUE"
+    assert evaluated["downgrade_blocked_pending_evidence"] is True
+
+    finalized = subscription_registry.evaluate_deadlines(
+        subscriber_ref=SUBSCRIBER,
+        strategy_product_id=PRODUCT,
+        now_ts=after_pending,
+        downgrade_evidence_id="notification-policy-evidence-late-intent",
+        path=str(subscription_path),
+    )
+    assert finalized["record"]["state"] == "EXPIRED"
     final = subscription_registry.resolve_entitlement(
         subscriber_ref=SUBSCRIBER,
         now_ts=after_pending,
@@ -386,6 +414,13 @@ def test_new_free_subscriber_payment_intent_pending_expires_back_to_free(paths: 
     )
     assert result["record"]["state"] == "ACTIVE"
     assert result["record"]["tier"] == "FREE"
+    entitlement = subscription_registry.resolve_entitlement(
+        subscriber_ref=SUBSCRIBER,
+        now_ts=BASE + subscription_registry.INTENT_PAYMENT_PENDING_SECONDS + 1,
+        path=str(subscription_path),
+    )
+    assert entitlement["tier"] == "FREE"
+    assert entitlement["access_state"] == "ACTIVE"
 
 
 def test_cancellation_at_period_end_preserves_access_then_expires_without_grace(paths: tuple[Path, Path]) -> None:
@@ -430,6 +465,46 @@ def test_cancellation_at_period_end_preserves_access_then_expires_without_grace(
     assert after["tier"] == "FREE"
 
 
+def test_canceled_subscription_pending_intent_expiry_restores_cancel_and_expires(paths: tuple[Path, Path]) -> None:
+    subscription_path, payment_path = paths
+    _settled_intent(
+        payment_path,
+        plan_id=BASIC,
+        intent_id="cancel-with-pending-current",
+        amount_minor=1200,
+        suffix="g",
+    )
+    _activate(subscription_path, payment_path, intent_id="cancel-with-pending-current")
+    subscription_registry.cancel_at_period_end(
+        subscriber_ref=SUBSCRIBER,
+        strategy_product_id=PRODUCT,
+        now_ts=BASE + 100,
+        path=str(subscription_path),
+    )
+    _create_intent(
+        payment_path,
+        plan_id=BASIC,
+        intent_id="cancel-with-pending-next",
+        amount_minor=1200,
+    )
+    intent_time = MONTH_END - 60 * 60
+    subscription_registry.record_payment_intent_pending(
+        payment_intent_id="cancel-with-pending-next",
+        now_ts=intent_time,
+        path=str(subscription_path),
+        payment_path=str(payment_path),
+    )
+    result = subscription_registry.evaluate_deadlines(
+        subscriber_ref=SUBSCRIBER,
+        strategy_product_id=PRODUCT,
+        now_ts=intent_time + subscription_registry.INTENT_PAYMENT_PENDING_SECONDS + 1,
+        path=str(subscription_path),
+    )
+    assert result["record"]["state"] == "EXPIRED"
+    assert result["events"][0]["event_type"] == subscription_registry.EVENT_INTENT_EXPIRED
+    assert result["events"][1]["event_type"] == subscription_registry.EVENT_AUTO_DOWNGRADED
+
+
 def test_scheduled_paid_downgrade_becomes_effective_only_with_verified_next_period_payment(paths: tuple[Path, Path]) -> None:
     subscription_path, payment_path = paths
     _settled_intent(
@@ -437,7 +512,7 @@ def test_scheduled_paid_downgrade_becomes_effective_only_with_verified_next_peri
         plan_id=PRO,
         intent_id="pro-current",
         amount_minor=2500,
-        suffix="g",
+        suffix="h",
     )
     _activate(subscription_path, payment_path, intent_id="pro-current")
     scheduled = subscription_registry.request_downgrade(
@@ -448,21 +523,20 @@ def test_scheduled_paid_downgrade_becomes_effective_only_with_verified_next_peri
         path=str(subscription_path),
     )
     assert scheduled["record"]["scheduled_plan_id"] == BASIC
-    current = subscription_registry.resolve_entitlement(
+    assert subscription_registry.resolve_entitlement(
         subscriber_ref=SUBSCRIBER,
         now_ts=BASE + 200,
         path=str(subscription_path),
-    )
-    assert current["tier"] == "PRO"
+    )["tier"] == "PRO"
 
     next_start = MONTH_END
-    next_end = MONTH_END + 30 * 24 * 60 * 60
+    next_end = MONTH_END + MONTH_SECONDS
     _settled_intent(
         payment_path,
         plan_id=BASIC,
         intent_id="basic-next-period",
         amount_minor=1200,
-        suffix="h",
+        suffix="i",
         ts=next_start,
     )
     effective = _activate(
@@ -478,6 +552,63 @@ def test_scheduled_paid_downgrade_becomes_effective_only_with_verified_next_peri
     assert effective["record"]["scheduled_plan_id"] is None
 
 
+def test_post_expiry_lower_paid_plan_activation_does_not_require_prior_schedule(paths: tuple[Path, Path]) -> None:
+    subscription_path, payment_path = paths
+    _settled_intent(
+        payment_path,
+        plan_id=PRO,
+        intent_id="pro-expiring",
+        amount_minor=2500,
+        suffix="j",
+    )
+    _activate(subscription_path, payment_path, intent_id="pro-expiring")
+    lapse_time = MONTH_END + 49 * 60 * 60
+    subscription_registry.evaluate_deadlines(
+        subscriber_ref=SUBSCRIBER,
+        strategy_product_id=PRODUCT,
+        now_ts=lapse_time,
+        path=str(subscription_path),
+    )
+    _settled_intent(
+        payment_path,
+        plan_id=BASIC,
+        intent_id="basic-after-lapse",
+        amount_minor=1200,
+        suffix="k",
+        ts=lapse_time,
+    )
+    activated = _activate(
+        subscription_path,
+        payment_path,
+        intent_id="basic-after-lapse",
+        start=lapse_time,
+        end=lapse_time + MONTH_SECONDS,
+        effective=lapse_time,
+    )
+    assert activated["status"] == subscription_registry.EVENT_ACTIVATED
+    assert activated["record"]["tier"] == "BASIC"
+
+
+def test_invalid_or_non_owned_downgrade_plan_is_rejected(paths: tuple[Path, Path]) -> None:
+    subscription_path, payment_path = paths
+    _settled_intent(
+        payment_path,
+        plan_id=PRO,
+        intent_id="invalid-downgrade-current",
+        amount_minor=2500,
+        suffix="l",
+    )
+    _activate(subscription_path, payment_path, intent_id="invalid-downgrade-current")
+    with pytest.raises(subscription_registry.SubscriptionRegistryError):
+        subscription_registry.request_downgrade(
+            subscriber_ref=SUBSCRIBER,
+            strategy_product_id=PRODUCT,
+            target_plan_id="FOREX_FUTURE_BASIC",
+            now_ts=BASE + 100,
+            path=str(subscription_path),
+        )
+
+
 def test_midperiod_direct_downgrade_is_rejected(paths: tuple[Path, Path]) -> None:
     subscription_path, payment_path = paths
     _settled_intent(
@@ -485,7 +616,7 @@ def test_midperiod_direct_downgrade_is_rejected(paths: tuple[Path, Path]) -> Non
         plan_id=PRO,
         intent_id="pro-midperiod",
         amount_minor=2500,
-        suffix="i",
+        suffix="m",
     )
     _activate(subscription_path, payment_path, intent_id="pro-midperiod")
     _settled_intent(
@@ -493,7 +624,7 @@ def test_midperiod_direct_downgrade_is_rejected(paths: tuple[Path, Path]) -> Non
         plan_id=BASIC,
         intent_id="basic-too-early",
         amount_minor=1200,
-        suffix="j",
+        suffix="n",
         ts=BASE + 200,
     )
     with pytest.raises(subscription_registry.SubscriptionRegistryError):
@@ -514,10 +645,9 @@ def test_midperiod_upgrade_requires_and_validates_governed_proration(paths: tupl
         plan_id=BASIC,
         intent_id="basic-before-upgrade",
         amount_minor=1000,
-        suffix="k",
+        suffix="o",
     )
     _activate(subscription_path, payment_path, intent_id="basic-before-upgrade")
-
     effective_at = BASE + (MONTH_END - BASE) // 2
     calculation = subscription_registry.calculate_proration(
         source_period_price_minor=1000,
@@ -536,7 +666,7 @@ def test_midperiod_upgrade_requires_and_validates_governed_proration(paths: tupl
         plan_id=PRO,
         intent_id="pro-upgrade",
         amount_minor=500,
-        suffix="l",
+        suffix="p",
         ts=effective_at,
     )
     with pytest.raises(subscription_registry.SubscriptionRegistryError):
@@ -548,7 +678,6 @@ def test_midperiod_upgrade_requires_and_validates_governed_proration(paths: tupl
             end=MONTH_END,
             effective=effective_at,
         )
-
     upgraded = _activate(
         subscription_path,
         payment_path,
@@ -574,7 +703,7 @@ def test_upgrade_rejects_settlement_that_does_not_equal_prorated_net_due(paths: 
         plan_id=BASIC,
         intent_id="basic-proration-mismatch",
         amount_minor=1000,
-        suffix="m",
+        suffix="q",
     )
     _activate(subscription_path, payment_path, intent_id="basic-proration-mismatch")
     effective_at = BASE + (MONTH_END - BASE) // 2
@@ -583,7 +712,7 @@ def test_upgrade_rejects_settlement_that_does_not_equal_prorated_net_due(paths: 
         plan_id=PRO,
         intent_id="pro-wrong-proration",
         amount_minor=501,
-        suffix="n",
+        suffix="r",
         ts=effective_at,
     )
     with pytest.raises(subscription_registry.SubscriptionRegistryError):
@@ -609,7 +738,7 @@ def test_same_plan_renewal_requires_non_overlapping_next_period(paths: tuple[Pat
         plan_id=BASIC,
         intent_id="basic-renew-current",
         amount_minor=1200,
-        suffix="o",
+        suffix="s",
     )
     _activate(subscription_path, payment_path, intent_id="basic-renew-current")
     _settled_intent(
@@ -617,7 +746,7 @@ def test_same_plan_renewal_requires_non_overlapping_next_period(paths: tuple[Pat
         plan_id=BASIC,
         intent_id="basic-renew-next",
         amount_minor=1200,
-        suffix="p",
+        suffix="t",
         ts=MONTH_END,
     )
     with pytest.raises(subscription_registry.SubscriptionRegistryError):
@@ -629,13 +758,12 @@ def test_same_plan_renewal_requires_non_overlapping_next_period(paths: tuple[Pat
             end=MONTH_END + 100,
             effective=BASE + 100,
         )
-
     renewed = _activate(
         subscription_path,
         payment_path,
         intent_id="basic-renew-next",
         start=MONTH_END,
-        end=MONTH_END + 30 * 24 * 60 * 60,
+        end=MONTH_END + MONTH_SECONDS,
         effective=MONTH_END,
     )
     assert renewed["status"] == subscription_registry.EVENT_RENEWED
@@ -647,18 +775,17 @@ def test_same_plan_renewal_requires_non_overlapping_next_period(paths: tuple[Pat
     [("REFUNDED", "REFUND_HOLD"), ("CHARGEBACK", "CHARGEBACK_OPEN")],
 )
 def test_current_payment_reversal_places_entitlement_on_hold(
-    paths: tuple[Path, Path],
-    reversal_state: str,
-    expected_state: str,
+    paths: tuple[Path, Path], reversal_state: str, expected_state: str
 ) -> None:
     subscription_path, payment_path = paths
     intent_id = f"reversal-{reversal_state.lower()}"
+    suffix = "u" if reversal_state == "REFUNDED" else "v"
     _settled_intent(
         payment_path,
         plan_id=ELITE,
         intent_id=intent_id,
         amount_minor=4000,
-        suffix="q" if reversal_state == "REFUNDED" else "r",
+        suffix=suffix,
     )
     _activate(subscription_path, payment_path, intent_id=intent_id)
     payment_ledger.ingest_provider_event(
@@ -668,7 +795,7 @@ def test_current_payment_reversal_places_entitlement_on_hold(
         provider_state=reversal_state.lower(),
         amount_minor=4000,
         currency="EUR",
-        raw_event_hash=("s" if reversal_state == "REFUNDED" else "t") * 32,
+        raw_event_hash=("w" if reversal_state == "REFUNDED" else "x") * 32,
         idempotency_key=f"reverse:{intent_id}",
         provider_event_id=f"reverse-event:{intent_id}",
         provider_tx_ref=f"tx:{intent_id}",
@@ -698,7 +825,7 @@ def test_old_payment_reversal_cannot_hold_newer_subscription_period(paths: tuple
         plan_id=BASIC,
         intent_id="old-payment",
         amount_minor=1200,
-        suffix="u",
+        suffix="y",
     )
     _activate(subscription_path, payment_path, intent_id="old-payment")
     _settled_intent(
@@ -706,7 +833,7 @@ def test_old_payment_reversal_cannot_hold_newer_subscription_period(paths: tuple
         plan_id=BASIC,
         intent_id="new-payment",
         amount_minor=1200,
-        suffix="v",
+        suffix="z",
         ts=MONTH_END,
     )
     _activate(
@@ -714,7 +841,7 @@ def test_old_payment_reversal_cannot_hold_newer_subscription_period(paths: tuple
         payment_path,
         intent_id="new-payment",
         start=MONTH_END,
-        end=MONTH_END + 30 * 24 * 60 * 60,
+        end=MONTH_END + MONTH_SECONDS,
         effective=MONTH_END,
     )
     payment_ledger.ingest_provider_event(
@@ -724,7 +851,7 @@ def test_old_payment_reversal_cannot_hold_newer_subscription_period(paths: tuple
         provider_state="chargeback",
         amount_minor=1200,
         currency="EUR",
-        raw_event_hash="wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+        raw_event_hash="0123456789abcdef0123456789abcdef",
         idempotency_key="old-chargeback",
         provider_event_id="old-chargeback-event",
         provider_tx_ref="tx:old-payment",
@@ -747,7 +874,7 @@ def test_payment_failed_before_expiry_does_not_prematurely_remove_paid_access(pa
         plan_id=BASIC,
         intent_id="payment-failure-period",
         amount_minor=1200,
-        suffix="x",
+        suffix="1",
     )
     _activate(subscription_path, payment_path, intent_id="payment-failure-period")
     failed = subscription_registry.record_payment_status(
