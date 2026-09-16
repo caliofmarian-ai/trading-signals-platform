@@ -71,6 +71,7 @@ _SNAPSHOT_FIELDS = (
     "last_payment_intent_id",
     "last_payment_ledger_event_id",
     "proration_evidence",
+    "last_downgrade_evidence_id",
 )
 
 
@@ -123,13 +124,6 @@ def _contract() -> Dict[str, Any]:
         raise SubscriptionRegistryError(str(exc)) from exc
 
 
-def _plan(plan_id: str) -> Dict[str, Any]:
-    try:
-        return get_plan(plan_id, _contract())
-    except BillingContractError as exc:
-        raise SubscriptionRegistryError(str(exc)) from exc
-
-
 def _product(strategy_product_id: str) -> Dict[str, Any]:
     try:
         return get_strategy_product(strategy_product_id, _contract())
@@ -137,10 +131,32 @@ def _product(strategy_product_id: str) -> Dict[str, Any]:
         raise SubscriptionRegistryError(str(exc)) from exc
 
 
+def _plan(plan_id: str) -> Dict[str, Any]:
+    try:
+        return get_plan(plan_id, _contract())
+    except BillingContractError as exc:
+        raise SubscriptionRegistryError(str(exc)) from exc
+
+
+def _plan_for_product(strategy_product_id: str, plan_id: str) -> Dict[str, Any]:
+    product = _product(strategy_product_id)
+    matches = [
+        plan
+        for plan in product.get("plans", [])
+        if isinstance(plan, dict) and plan.get("plan_id") == plan_id
+    ]
+    if len(matches) != 1:
+        raise SubscriptionRegistryError(
+            f"plan_id {plan_id} is not owned by strategy_product_id {strategy_product_id}"
+        )
+    return dict(matches[0])
+
+
 def _free_plan_id(strategy_product_id: str) -> str:
     product = _product(strategy_product_id)
     free = [
-        plan for plan in product.get("plans", [])
+        plan
+        for plan in product.get("plans", [])
         if isinstance(plan, dict) and plan.get("tier") == "FREE"
     ]
     if len(free) != 1:
@@ -150,16 +166,15 @@ def _free_plan_id(strategy_product_id: str) -> str:
     return str(free[0]["plan_id"])
 
 
-def _tier_for_plan(plan_id: str) -> str:
-    tier = str(_plan(plan_id).get("tier") or "")
+def _tier_for_product_plan(strategy_product_id: str, plan_id: str) -> str:
+    tier = str(_plan_for_product(strategy_product_id, plan_id).get("tier") or "")
     if tier not in _TIER_RANK:
         raise SubscriptionRegistryError(f"Unsupported plan tier: {tier}")
     return tier
 
 
-def _is_paid_plan(plan_id: str) -> bool:
-    plan = _plan(plan_id)
-    return bool(plan.get("requires_payment"))
+def _is_paid_product_plan(strategy_product_id: str, plan_id: str) -> bool:
+    return bool(_plan_for_product(strategy_product_id, plan_id).get("requires_payment"))
 
 
 def _read_events_unlocked(path: str) -> list[Dict[str, Any]]:
@@ -169,7 +184,9 @@ def _read_events_unlocked(path: str) -> list[Dict[str, Any]]:
     try:
         lines = target.read_text(encoding="utf-8").splitlines()
     except Exception as exc:
-        raise SubscriptionRegistryError(f"Unable to read subscription registry: {target}") from exc
+        raise SubscriptionRegistryError(
+            f"Unable to read subscription registry: {target}"
+        ) from exc
 
     records: list[Dict[str, Any]] = []
     event_ids: set[str] = set()
@@ -190,19 +207,28 @@ def _read_events_unlocked(path: str) -> list[Dict[str, Any]]:
             raise SubscriptionRegistryError(
                 f"Subscription registry record at line {line_number} is not an object"
             )
-        event_id = _nonempty(record.get("subscription_event_id"), label="subscription_event_id")
+
+        event_id = _nonempty(
+            record.get("subscription_event_id"), label="subscription_event_id"
+        )
         if event_id in event_ids:
-            raise SubscriptionRegistryError(f"Duplicate subscription_event_id: {event_id}")
+            raise SubscriptionRegistryError(
+                f"Duplicate subscription_event_id: {event_id}"
+            )
         event_ids.add(event_id)
 
         seq = record.get("subscription_seq")
         if isinstance(seq, bool) or not isinstance(seq, int) or seq <= 0:
-            raise SubscriptionRegistryError(f"Invalid subscription_seq at line {line_number}")
+            raise SubscriptionRegistryError(
+                f"Invalid subscription_seq at line {line_number}"
+            )
         if seq in seqs:
             raise SubscriptionRegistryError(f"Duplicate subscription_seq: {seq}")
         seqs.add(seq)
 
-        subscription_id = _nonempty(record.get("subscription_id"), label="subscription_id")
+        subscription_id = _nonempty(
+            record.get("subscription_id"), label="subscription_id"
+        )
         version = record.get("entitlement_version")
         if isinstance(version, bool) or not isinstance(version, int) or version <= 0:
             raise SubscriptionRegistryError(
@@ -220,15 +246,33 @@ def _read_events_unlocked(path: str) -> list[Dict[str, Any]]:
         actual_previous = record.get("previous_subscription_event_id")
         if actual_previous != expected_previous:
             raise SubscriptionRegistryError(
-                f"Broken subscription event chain for {subscription_id} at line {line_number}"
+                f"Broken subscription event chain for {subscription_id} "
+                f"at line {line_number}"
             )
         previous_ids[subscription_id] = event_id
 
         state = record.get("state")
         if state not in SUBSCRIPTION_STATES:
-            raise SubscriptionRegistryError(f"Unsupported subscription state in ledger: {state}")
-        for field in ("subscriber_ref", "strategy_product_id", "plan_id", "tier", "entitlement_id"):
+            raise SubscriptionRegistryError(
+                f"Unsupported subscription state in ledger: {state}"
+            )
+        for field in (
+            "subscriber_ref",
+            "strategy_product_id",
+            "plan_id",
+            "tier",
+            "entitlement_id",
+        ):
             _nonempty(record.get(field), label=field)
+        _plan_for_product(
+            str(record["strategy_product_id"]), str(record["plan_id"])
+        )
+        if _tier_for_product_plan(
+            str(record["strategy_product_id"]), str(record["plan_id"])
+        ) != str(record["tier"]):
+            raise SubscriptionRegistryError(
+                f"Plan/tier mismatch in subscription ledger at line {line_number}"
+            )
         records.append(record)
 
     if records:
@@ -236,21 +280,14 @@ def _read_events_unlocked(path: str) -> list[Dict[str, Any]]:
         actual = [int(record["subscription_seq"]) for record in records]
         if actual != expected:
             raise SubscriptionRegistryError(
-                f"Subscription sequence is non-contiguous: expected={expected} actual={actual}"
+                f"Subscription sequence is non-contiguous: "
+                f"expected={expected} actual={actual}"
             )
     return records
 
 
 def load_subscription_events(path: str | None = None) -> list[Dict[str, Any]]:
     return _read_events_unlocked(path or events_path())
-
-
-def _latest_for_subscription(
-    records: Iterable[Mapping[str, Any]],
-    subscription_id: str,
-) -> Optional[Mapping[str, Any]]:
-    matches = [record for record in records if record.get("subscription_id") == subscription_id]
-    return matches[-1] if matches else None
 
 
 def _latest_for_pair(
@@ -281,6 +318,7 @@ def current_subscription(
 ) -> Optional[Dict[str, Any]]:
     subscriber = _nonempty(subscriber_ref, label="subscriber_ref")
     product = _nonempty(strategy_product_id, label="strategy_product_id")
+    _product(product)
     record = _latest_for_pair(load_subscription_events(path), subscriber, product)
     return dict(record) if record is not None else None
 
@@ -292,8 +330,7 @@ def _snapshot(record: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
 
 
 def _find_idempotency(
-    records: Iterable[Mapping[str, Any]],
-    idempotency_key: str,
+    records: Iterable[Mapping[str, Any]], idempotency_key: str
 ) -> Optional[Mapping[str, Any]]:
     for record in records:
         if record.get("idempotency_key") == idempotency_key:
@@ -315,10 +352,13 @@ def _append_event_unlocked(
 ) -> tuple[Dict[str, Any], bool]:
     idem = _nonempty(idempotency_key, label="idempotency_key")
     existing = _find_idempotency(records, idem)
+    expected_subscription_id = changes.get(
+        "subscription_id", previous.get("subscription_id") if previous else None
+    )
     if existing is not None:
         same_identity = (
             existing.get("event_type") == event_type
-            and existing.get("subscription_id") == changes.get("subscription_id", previous.get("subscription_id") if previous else None)
+            and existing.get("subscription_id") == expected_subscription_id
         )
         if not same_identity:
             raise SubscriptionRegistryError(
@@ -328,14 +368,25 @@ def _append_event_unlocked(
 
     payload = _snapshot(previous)
     payload.update(dict(changes))
-    subscription_id = _nonempty(payload.get("subscription_id"), label="subscription_id")
-    payload["entitlement_id"] = _nonempty(payload.get("entitlement_id"), label="entitlement_id")
-    payload["subscriber_ref"] = _nonempty(payload.get("subscriber_ref"), label="subscriber_ref")
+    subscription_id = _nonempty(
+        payload.get("subscription_id"), label="subscription_id"
+    )
+    payload["entitlement_id"] = _nonempty(
+        payload.get("entitlement_id"), label="entitlement_id"
+    )
+    payload["subscriber_ref"] = _nonempty(
+        payload.get("subscriber_ref"), label="subscriber_ref"
+    )
     payload["strategy_product_id"] = _nonempty(
         payload.get("strategy_product_id"), label="strategy_product_id"
     )
     payload["plan_id"] = _nonempty(payload.get("plan_id"), label="plan_id")
     payload["tier"] = _nonempty(payload.get("tier"), label="tier")
+    _plan_for_product(payload["strategy_product_id"], payload["plan_id"])
+    if _tier_for_product_plan(
+        payload["strategy_product_id"], payload["plan_id"]
+    ) != payload["tier"]:
+        raise SubscriptionRegistryError("Subscription plan/tier mismatch")
     state = payload.get("state")
     if state not in SUBSCRIPTION_STATES:
         raise SubscriptionRegistryError(f"Unsupported subscription state: {state}")
@@ -348,7 +399,9 @@ def _append_event_unlocked(
             "subscription_seq": len(records) + 1,
             "event_type": event_type,
             "entitlement_version": previous_version + 1,
-            "previous_subscription_event_id": previous.get("subscription_event_id") if previous else None,
+            "previous_subscription_event_id": (
+                previous.get("subscription_event_id") if previous else None
+            ),
             "idempotency_key": idem,
             "occurred_at_epoch": occurred_at_epoch,
             "reason": reason,
@@ -370,7 +423,8 @@ def _base_free_snapshot(
     free_plan = _free_plan_id(strategy_product_id)
     return {
         "subscription_id": subscription_id or _opaque_id(),
-        "entitlement_id": entitlement_id or _stable_free_entitlement_id(subscriber_ref, strategy_product_id),
+        "entitlement_id": entitlement_id
+        or _stable_free_entitlement_id(subscriber_ref, strategy_product_id),
         "subscriber_ref": subscriber_ref,
         "strategy_product_id": strategy_product_id,
         "plan_id": free_plan,
@@ -388,6 +442,7 @@ def _base_free_snapshot(
         "last_payment_intent_id": None,
         "last_payment_ledger_event_id": None,
         "proration_evidence": None,
+        "last_downgrade_evidence_id": None,
     }
 
 
@@ -404,12 +459,19 @@ def ensure_free_entitlement(
     _product(product)
     now = _now(now_ts)
     target = path or events_path()
-    idem = f"free-bootstrap:{uuid.uuid5(uuid.NAMESPACE_URL, subscriber + ':' + product)}"
+    idem = (
+        "free-bootstrap:"
+        f"{uuid.uuid5(uuid.NAMESPACE_URL, subscriber + ':' + product)}"
+    )
     with storage.with_lock(_LOCK_NAME):
         records = _read_events_unlocked(target)
         current = _latest_for_pair(records, subscriber, product)
         if current is not None:
-            return {"status": "EXISTS", "appended": False, "record": dict(current)}
+            return {
+                "status": "EXISTS",
+                "appended": False,
+                "record": dict(current),
+            }
         base = _base_free_snapshot(
             subscriber_ref=subscriber,
             strategy_product_id=product,
@@ -430,12 +492,15 @@ def ensure_free_entitlement(
 
 
 def _payment_intent_creation(
-    payment_intent_id: str,
-    payment_path: str | None,
+    payment_intent_id: str, payment_path: str | None
 ) -> Dict[str, Any]:
-    history = payment_ledger.payment_history(payment_intent_id, payment_path)
+    try:
+        history = payment_ledger.payment_history(payment_intent_id, payment_path)
+    except payment_ledger.PaymentLedgerError as exc:
+        raise SubscriptionRegistryError(str(exc)) from exc
     matches = [
-        record for record in history
+        record
+        for record in history
         if record.get("event_type") == payment_ledger.EVENT_INTENT_CREATED
     ]
     if len(matches) != 1:
@@ -446,8 +511,7 @@ def _payment_intent_creation(
 
 
 def _verified_settlement(
-    payment_intent_id: str,
-    payment_path: str | None,
+    payment_intent_id: str, payment_path: str | None
 ) -> Dict[str, Any]:
     try:
         settled = payment_ledger.settled_payment_record(payment_intent_id, payment_path)
@@ -477,14 +541,28 @@ def calculate_proration(
     effective_at_ts: float | int,
     currency: str,
 ) -> Dict[str, Any]:
-    if isinstance(source_period_price_minor, bool) or not isinstance(source_period_price_minor, int) or source_period_price_minor < 0:
-        raise SubscriptionRegistryError("source_period_price_minor must be a non-negative integer")
-    if isinstance(target_period_price_minor, bool) or not isinstance(target_period_price_minor, int) or target_period_price_minor < 0:
-        raise SubscriptionRegistryError("target_period_price_minor must be a non-negative integer")
+    if (
+        isinstance(source_period_price_minor, bool)
+        or not isinstance(source_period_price_minor, int)
+        or source_period_price_minor < 0
+    ):
+        raise SubscriptionRegistryError(
+            "source_period_price_minor must be a non-negative integer"
+        )
+    if (
+        isinstance(target_period_price_minor, bool)
+        or not isinstance(target_period_price_minor, int)
+        or target_period_price_minor < 0
+    ):
+        raise SubscriptionRegistryError(
+            "target_period_price_minor must be a non-negative integer"
+        )
     start, end = _validate_period(period_start_ts, period_end_ts)
     effective = _positive_epoch(effective_at_ts, label="effective_at_ts")
     if not (start <= effective < end):
-        raise SubscriptionRegistryError("Upgrade effective_at_ts must fall inside the current period")
+        raise SubscriptionRegistryError(
+            "Upgrade effective_at_ts must fall inside the current period"
+        )
     ccy = _nonempty(currency, label="currency").upper()
     if len(ccy) != 3 or not ccy.isalpha():
         raise SubscriptionRegistryError("currency must be a three-letter code")
@@ -519,15 +597,19 @@ def calculate_proration(
     }
 
 
-def _configured_price_if_any(plan_id: str) -> tuple[Optional[int], Optional[str]]:
-    pricing = _plan(plan_id).get("pricing")
+def _configured_price_if_any(
+    strategy_product_id: str, plan_id: str
+) -> tuple[Optional[int], Optional[str]]:
+    pricing = _plan_for_product(strategy_product_id, plan_id).get("pricing")
     if not isinstance(pricing, dict) or pricing.get("status") != "CONFIGURED":
         return None, None
     amount = pricing.get("amount_minor")
     currency = pricing.get("currency")
     if isinstance(amount, int) and isinstance(currency, str):
         return amount, currency.upper()
-    raise SubscriptionRegistryError(f"Configured plan pricing is malformed: {plan_id}")
+    raise SubscriptionRegistryError(
+        f"Configured plan pricing is malformed: {plan_id}"
+    )
 
 
 def _validate_upgrade_proration(
@@ -539,15 +621,25 @@ def _validate_upgrade_proration(
     evidence: Mapping[str, Any] | None,
 ) -> Dict[str, Any]:
     if not isinstance(evidence, Mapping):
-        raise SubscriptionRegistryError("Mid-period upgrade requires proration_evidence")
-    required = {"source_period_price_minor", "target_period_price_minor", "currency"}
+        raise SubscriptionRegistryError(
+            "Mid-period upgrade requires proration_evidence"
+        )
+    required = {
+        "source_period_price_minor",
+        "target_period_price_minor",
+        "currency",
+    }
     missing = sorted(required - set(evidence))
     if missing:
-        raise SubscriptionRegistryError(f"proration_evidence missing keys: {missing}")
+        raise SubscriptionRegistryError(
+            f"proration_evidence missing keys: {missing}"
+        )
     start = current.get("starts_at_epoch")
     end = current.get("expires_at_epoch")
     if start is None or end is None:
-        raise SubscriptionRegistryError("Current paid period is missing start/end timestamps")
+        raise SubscriptionRegistryError(
+            "Current paid period is missing start/end timestamps"
+        )
     calculation = calculate_proration(
         source_period_price_minor=evidence["source_period_price_minor"],
         target_period_price_minor=evidence["target_period_price_minor"],
@@ -561,16 +653,33 @@ def _validate_upgrade_proration(
             "Settled upgrade payment does not equal governed prorated net due"
         )
     if calculation["currency"] != str(settlement.get("currency") or "").upper():
-        raise SubscriptionRegistryError("Proration currency does not match settlement currency")
+        raise SubscriptionRegistryError(
+            "Proration currency does not match settlement currency"
+        )
 
-    source_configured, source_ccy = _configured_price_if_any(str(current["plan_id"]))
-    target_configured, target_ccy = _configured_price_if_any(target_plan_id)
+    product_id = str(current["strategy_product_id"])
+    source_configured, source_ccy = _configured_price_if_any(
+        product_id, str(current["plan_id"])
+    )
+    target_configured, target_ccy = _configured_price_if_any(
+        product_id, target_plan_id
+    )
     if source_configured is not None:
-        if source_configured != calculation["source_period_price_minor"] or source_ccy != calculation["currency"]:
-            raise SubscriptionRegistryError("Proration source price conflicts with configured catalog price")
+        if (
+            source_configured != calculation["source_period_price_minor"]
+            or source_ccy != calculation["currency"]
+        ):
+            raise SubscriptionRegistryError(
+                "Proration source price conflicts with configured catalog price"
+            )
     if target_configured is not None:
-        if target_configured != calculation["target_period_price_minor"] or target_ccy != calculation["currency"]:
-            raise SubscriptionRegistryError("Proration target price conflicts with configured catalog price")
+        if (
+            target_configured != calculation["target_period_price_minor"]
+            or target_ccy != calculation["currency"]
+        ):
+            raise SubscriptionRegistryError(
+                "Proration target price conflicts with configured catalog price"
+            )
     return calculation
 
 
@@ -590,16 +699,31 @@ def activate_from_settled_payment(
     intent = _payment_intent_creation(intent_id, payment_path)
     settlement = _verified_settlement(intent_id, payment_path)
     subscriber = _nonempty(intent.get("subscriber_ref"), label="subscriber_ref")
-    product_id = _nonempty(intent.get("strategy_product_id"), label="strategy_product_id")
+    product_id = _nonempty(
+        intent.get("strategy_product_id"), label="strategy_product_id"
+    )
     target_plan = _nonempty(intent.get("plan_id"), label="plan_id")
-    if settlement.get("subscriber_ref") != subscriber or settlement.get("strategy_product_id") != product_id or settlement.get("plan_id") != target_plan:
-        raise SubscriptionRegistryError("Settlement attribution does not match payment intent")
-    if not _is_paid_plan(target_plan):
+    target_plan_row = _plan_for_product(product_id, target_plan)
+    if (
+        settlement.get("subscriber_ref") != subscriber
+        or settlement.get("strategy_product_id") != product_id
+        or settlement.get("plan_id") != target_plan
+    ):
+        raise SubscriptionRegistryError(
+            "Settlement attribution does not match payment intent"
+        )
+    if target_plan_row.get("requires_payment") is not True:
         raise SubscriptionRegistryError("Paid activation requires a paid plan")
 
     start, end = _validate_period(period_start_ts, period_end_ts)
     effective = _now(effective_at_ts)
-    target_tier = _tier_for_plan(target_plan)
+    if effective < start:
+        raise SubscriptionRegistryError(
+            "Activation cannot occur before the paid period starts"
+        )
+    target_tier = str(target_plan_row.get("tier") or "")
+    if target_tier not in _TIER_RANK:
+        raise SubscriptionRegistryError(f"Unsupported target tier: {target_tier}")
     target_path = path or events_path()
     idem = f"payment-activation:{settlement['ledger_event_id']}"
 
@@ -607,18 +731,28 @@ def activate_from_settled_payment(
         records = _read_events_unlocked(target_path)
         existing_idem = _find_idempotency(records, idem)
         if existing_idem is not None:
-            return {"status": "DUPLICATE", "appended": False, "record": dict(existing_idem)}
+            return {
+                "status": "DUPLICATE",
+                "appended": False,
+                "record": dict(existing_idem),
+            }
         current = _latest_for_pair(records, subscriber, product_id)
-        if current is not None and subscription_id is not None and current.get("subscription_id") != subscription_id:
-            raise SubscriptionRegistryError("subscription_id conflicts with existing subscriber/product subscription")
+        if (
+            current is not None
+            and subscription_id is not None
+            and current.get("subscription_id") != subscription_id
+        ):
+            raise SubscriptionRegistryError(
+                "subscription_id conflicts with existing subscriber/product subscription"
+            )
 
         transition = EVENT_ACTIVATED
         reason = "VERIFIED_PAYMENT_ACTIVATION"
         proration = None
-        scheduled_plan = None
+        previous: Optional[Mapping[str, Any]]
+
         if current is None:
-            if effective < start:
-                raise SubscriptionRegistryError("Activation cannot occur before the paid period starts")
+            previous = None
             base = _base_free_snapshot(
                 subscriber_ref=subscriber,
                 strategy_product_id=product_id,
@@ -626,20 +760,34 @@ def activate_from_settled_payment(
                 entitlement_id=_opaque_id(),
                 starts_at_epoch=effective,
             )
-            previous: Optional[Mapping[str, Any]] = None
         else:
             previous = current
             base = _snapshot(current)
-            current_tier = str(current.get("tier"))
+            current_tier = str(current["tier"])
             current_rank = _TIER_RANK[current_tier]
             target_rank = _TIER_RANK[target_tier]
-            current_expires = current.get("expires_at_epoch")
+            state = str(current["state"])
+            if state in {"CHARGEBACK_OPEN", "REFUND_HOLD"}:
+                raise SubscriptionRegistryError(
+                    "Payment hold must be resolved before a new paid activation"
+                )
 
-            if current_tier != "FREE" and current.get("state") != "EXPIRED" and current_expires is not None and effective < int(current_expires):
+            current_expires = current.get("expires_at_epoch")
+            active_paid_period = (
+                current_tier != "FREE"
+                and state != "EXPIRED"
+                and current_expires is not None
+                and effective < int(current_expires)
+            )
+
+            if active_paid_period:
                 if target_rank > current_rank:
-                    if start != int(current.get("starts_at_epoch")) or end != int(current_expires):
+                    if (
+                        start != int(current.get("starts_at_epoch"))
+                        or end != int(current_expires)
+                    ):
                         raise SubscriptionRegistryError(
-                            "Mid-period upgrade must preserve the current period boundaries"
+                            "Mid-period upgrade must preserve current period boundaries"
                         )
                     proration = _validate_upgrade_proration(
                         current=current,
@@ -652,40 +800,42 @@ def activate_from_settled_payment(
                     reason = "VERIFIED_PAYMENT_PRORATED_UPGRADE"
                 elif target_rank == current_rank:
                     raise SubscriptionRegistryError(
-                        "Same-plan renewal cannot become effective before the current period ends"
+                        "Same-plan renewal cannot become effective before current period end"
                     )
                 else:
                     raise SubscriptionRegistryError(
-                        "Downgrade cannot become effective before the current billing period ends"
+                        "Downgrade cannot become effective before current billing period end"
                     )
-            elif current_tier != "FREE" and target_rank < current_rank:
-                if current.get("scheduled_plan_id") != target_plan:
-                    raise SubscriptionRegistryError(
-                        "Paid downgrade requires a previously scheduled target plan"
-                    )
-                if current_expires is not None and start < int(current_expires):
-                    raise SubscriptionRegistryError(
-                        "Scheduled downgrade cannot start before the prior period ends"
-                    )
-                transition = EVENT_DOWNGRADE_EFFECTIVE
-                reason = "VERIFIED_PAYMENT_SCHEDULED_DOWNGRADE"
-            elif current_tier == target_tier and current_tier != "FREE":
-                if current_expires is not None and start < int(current_expires):
-                    raise SubscriptionRegistryError(
-                        "Renewal period overlaps the current paid period"
-                    )
-                transition = EVENT_RENEWED
-                reason = "VERIFIED_PAYMENT_RENEWAL"
-            elif current_tier == "FREE" or current.get("state") == "EXPIRED":
-                if effective < start:
-                    raise SubscriptionRegistryError("Activation cannot occur before the paid period starts")
+            elif current_tier == "FREE":
                 transition = EVENT_ACTIVATED
-                reason = "VERIFIED_PAYMENT_ACTIVATION"
+                reason = "VERIFIED_PAYMENT_ACTIVATION_FROM_FREE"
+            else:
+                if current_expires is not None and start < int(current_expires):
+                    raise SubscriptionRegistryError(
+                        "New paid period overlaps the previous paid period"
+                    )
+                if target_rank == current_rank:
+                    transition = EVENT_RENEWED
+                    reason = "VERIFIED_PAYMENT_RENEWAL"
+                elif target_rank < current_rank:
+                    if current.get("scheduled_plan_id") == target_plan:
+                        transition = EVENT_DOWNGRADE_EFFECTIVE
+                        reason = "VERIFIED_PAYMENT_SCHEDULED_DOWNGRADE"
+                    else:
+                        transition = EVENT_ACTIVATED
+                        reason = "VERIFIED_PAYMENT_POST_EXPIRY_LOWER_TIER_ACTIVATION"
+                else:
+                    transition = EVENT_ACTIVATED
+                    reason = "VERIFIED_PAYMENT_NEW_PERIOD_UPGRADE"
 
         changes = dict(base)
         changes.update(
             {
-                "subscription_id": base.get("subscription_id") or subscription_id or _opaque_id(),
+                "subscription_id": (
+                    base.get("subscription_id")
+                    or subscription_id
+                    or _opaque_id()
+                ),
                 "entitlement_id": base.get("entitlement_id") or _opaque_id(),
                 "plan_id": target_plan,
                 "tier": target_tier,
@@ -694,7 +844,7 @@ def activate_from_settled_payment(
                 "expires_at_epoch": end,
                 "grace_until_epoch": end + GRACE_HOLD_SECONDS,
                 "auto_downgrade_at_epoch": end + AUTO_DOWNGRADE_SECONDS,
-                "scheduled_plan_id": scheduled_plan,
+                "scheduled_plan_id": None,
                 "pending_plan_id": None,
                 "pending_payment_intent_id": None,
                 "intent_pending_until_epoch": None,
@@ -702,6 +852,7 @@ def activate_from_settled_payment(
                 "last_payment_intent_id": intent_id,
                 "last_payment_ledger_event_id": settlement["ledger_event_id"],
                 "proration_evidence": proration,
+                "last_downgrade_evidence_id": None,
             }
         )
         record, appended = _append_event_unlocked(
@@ -713,7 +864,10 @@ def activate_from_settled_payment(
             idempotency_key=idem,
             occurred_at_epoch=effective,
             reason=reason,
-            audit_correlation_id=audit_correlation_id or str(settlement.get("audit_correlation_id") or _opaque_id()),
+            audit_correlation_id=(
+                audit_correlation_id
+                or str(settlement.get("audit_correlation_id") or _opaque_id())
+            ),
         )
         return {"status": transition, "appended": appended, "record": record}
 
@@ -728,13 +882,23 @@ def record_payment_intent_pending(
 ) -> Dict[str, Any]:
     intent_id = _nonempty(payment_intent_id, label="payment_intent_id")
     intent = _payment_intent_creation(intent_id, payment_path)
-    if payment_ledger.settled_payment_record(intent_id, payment_path) is not None:
-        raise SubscriptionRegistryError("Settled payment cannot enter INTENT_PAYMENT_PENDING")
+    try:
+        settled = payment_ledger.settled_payment_record(intent_id, payment_path)
+    except payment_ledger.PaymentLedgerError as exc:
+        raise SubscriptionRegistryError(str(exc)) from exc
+    if settled is not None:
+        raise SubscriptionRegistryError(
+            "Settled payment cannot enter INTENT_PAYMENT_PENDING"
+        )
     subscriber = _nonempty(intent.get("subscriber_ref"), label="subscriber_ref")
-    product_id = _nonempty(intent.get("strategy_product_id"), label="strategy_product_id")
+    product_id = _nonempty(
+        intent.get("strategy_product_id"), label="strategy_product_id"
+    )
     pending_plan = _nonempty(intent.get("plan_id"), label="plan_id")
-    if not _is_paid_plan(pending_plan):
-        raise SubscriptionRegistryError("INTENT_PAYMENT_PENDING requires a paid target plan")
+    if not _is_paid_product_plan(product_id, pending_plan):
+        raise SubscriptionRegistryError(
+            "INTENT_PAYMENT_PENDING requires a paid target plan"
+        )
     now = _now(now_ts)
     target = path or events_path()
     idem = f"intent-pending:{intent_id}"
@@ -743,7 +907,11 @@ def record_payment_intent_pending(
         records = _read_events_unlocked(target)
         existing = _find_idempotency(records, idem)
         if existing is not None:
-            return {"status": "DUPLICATE", "appended": False, "record": dict(existing)}
+            return {
+                "status": "DUPLICATE",
+                "appended": False,
+                "record": dict(existing),
+            }
         current = _latest_for_pair(records, subscriber, product_id)
         if current is None:
             base = _base_free_snapshot(
@@ -754,6 +922,10 @@ def record_payment_intent_pending(
             previous: Optional[Mapping[str, Any]] = None
             resume_state = "ACTIVE"
         else:
+            if current.get("state") in {"CHARGEBACK_OPEN", "REFUND_HOLD"}:
+                raise SubscriptionRegistryError(
+                    "Payment intent cannot bypass an unresolved payment hold"
+                )
             base = _snapshot(current)
             previous = current
             resume_state = str(current.get("state") or "ACTIVE")
@@ -778,7 +950,11 @@ def record_payment_intent_pending(
             reason="RECORDED_PAID_PLAN_PAYMENT_INTENT",
             audit_correlation_id=audit_correlation_id or _opaque_id(),
         )
-        return {"status": "INTENT_PAYMENT_PENDING", "appended": appended, "record": record}
+        return {
+            "status": "INTENT_PAYMENT_PENDING",
+            "appended": appended,
+            "record": record,
+        }
 
 
 def request_downgrade(
@@ -793,7 +969,7 @@ def request_downgrade(
     subscriber = _nonempty(subscriber_ref, label="subscriber_ref")
     product = _nonempty(strategy_product_id, label="strategy_product_id")
     target_plan = _nonempty(target_plan_id, label="target_plan_id")
-    target_tier = _tier_for_plan(target_plan)
+    target_tier = _tier_for_product_plan(product, target_plan)
     now = _now(now_ts)
     target = path or events_path()
 
@@ -801,15 +977,27 @@ def request_downgrade(
         records = _read_events_unlocked(target)
         current = _latest_for_pair(records, subscriber, product)
         if current is None or current.get("tier") == "FREE":
-            raise SubscriptionRegistryError("Downgrade requires an existing paid subscription")
-        if current.get("state") in {"EXPIRED", "CHARGEBACK_OPEN", "REFUND_HOLD"}:
-            raise SubscriptionRegistryError("Downgrade cannot be scheduled from the current state")
+            raise SubscriptionRegistryError(
+                "Downgrade requires an existing paid subscription"
+            )
+        if current.get("state") in {
+            "EXPIRED",
+            "CHARGEBACK_OPEN",
+            "REFUND_HOLD",
+        }:
+            raise SubscriptionRegistryError(
+                "Downgrade cannot be scheduled from the current state"
+            )
         if _TIER_RANK[target_tier] >= _TIER_RANK[str(current["tier"])]:
             raise SubscriptionRegistryError("target_plan_id is not a lower tier")
         expires = current.get("expires_at_epoch")
         if expires is None or now >= int(expires):
-            raise SubscriptionRegistryError("Downgrade must be scheduled before period expiry")
-        idem = f"downgrade:{current['subscription_id']}:{target_plan}:{expires}"
+            raise SubscriptionRegistryError(
+                "Downgrade must be scheduled before period expiry"
+            )
+        idem = (
+            f"downgrade:{current['subscription_id']}:{target_plan}:{expires}"
+        )
         record, appended = _append_event_unlocked(
             path=target,
             records=records,
@@ -821,7 +1009,11 @@ def request_downgrade(
             reason="DOWNGRADE_EFFECTIVE_NEXT_BILLING_PERIOD",
             audit_correlation_id=audit_correlation_id or _opaque_id(),
         )
-        return {"status": "DOWNGRADE_SCHEDULED", "appended": appended, "record": record}
+        return {
+            "status": "DOWNGRADE_SCHEDULED",
+            "appended": appended,
+            "record": record,
+        }
 
 
 def cancel_at_period_end(
@@ -841,10 +1033,14 @@ def cancel_at_period_end(
         records = _read_events_unlocked(target)
         current = _latest_for_pair(records, subscriber, product)
         if current is None or current.get("tier") == "FREE":
-            raise SubscriptionRegistryError("Cancellation requires an existing paid subscription")
+            raise SubscriptionRegistryError(
+                "Cancellation requires an existing paid subscription"
+            )
         expires = current.get("expires_at_epoch")
         if expires is None or now >= int(expires):
-            raise SubscriptionRegistryError("Cancellation-at-period-end must be scheduled before expiry")
+            raise SubscriptionRegistryError(
+                "Cancellation-at-period-end must be scheduled before expiry"
+            )
         free_plan = _free_plan_id(product)
         idem = f"cancel-period-end:{current['subscription_id']}:{expires}"
         record, appended = _append_event_unlocked(
@@ -861,7 +1057,11 @@ def cancel_at_period_end(
             reason="CANCELED_AT_PERIOD_END",
             audit_correlation_id=audit_correlation_id or _opaque_id(),
         )
-        return {"status": "CANCELED_AT_PERIOD_END", "appended": appended, "record": record}
+        return {
+            "status": "CANCELED_AT_PERIOD_END",
+            "appended": appended,
+            "record": record,
+        }
 
 
 def record_payment_status(
@@ -876,7 +1076,9 @@ def record_payment_status(
     path: str | None = None,
 ) -> Dict[str, Any]:
     if state not in {"PAYMENT_DUE", "PAYMENT_FAILED"}:
-        raise SubscriptionRegistryError("record_payment_status supports PAYMENT_DUE/PAYMENT_FAILED only")
+        raise SubscriptionRegistryError(
+            "record_payment_status supports PAYMENT_DUE/PAYMENT_FAILED only"
+        )
     subscriber = _nonempty(subscriber_ref, label="subscriber_ref")
     product = _nonempty(strategy_product_id, label="strategy_product_id")
     why = _nonempty(reason, label="reason")
@@ -886,14 +1088,21 @@ def record_payment_status(
         records = _read_events_unlocked(target)
         current = _latest_for_pair(records, subscriber, product)
         if current is None or current.get("tier") == "FREE":
-            raise SubscriptionRegistryError("Payment state requires an existing paid subscription")
-        idem = f"payment-state:{current['subscription_id']}:{state}:{payment_intent_id or 'none'}:{why}"
+            raise SubscriptionRegistryError(
+                "Payment state requires an existing paid subscription"
+            )
+        idem = (
+            f"payment-state:{current['subscription_id']}:{state}:"
+            f"{payment_intent_id or 'none'}:{why}"
+        )
         record, appended = _append_event_unlocked(
             path=target,
             records=records,
             previous=current,
             changes={"state": state},
-            event_type=EVENT_PAYMENT_DUE if state == "PAYMENT_DUE" else EVENT_PAYMENT_FAILED,
+            event_type=(
+                EVENT_PAYMENT_DUE if state == "PAYMENT_DUE" else EVENT_PAYMENT_FAILED
+            ),
             idempotency_key=idem,
             occurred_at_epoch=now,
             reason=why,
@@ -911,10 +1120,14 @@ def apply_payment_reversal(
     payment_path: str | None = None,
 ) -> Dict[str, Any]:
     intent_id = _nonempty(payment_intent_id, label="payment_intent_id")
-    history = payment_ledger.payment_history(intent_id, payment_path)
+    try:
+        history = payment_ledger.payment_history(intent_id, payment_path)
+    except payment_ledger.PaymentLedgerError as exc:
+        raise SubscriptionRegistryError(str(exc)) from exc
     intent = _payment_intent_creation(intent_id, payment_path)
     reversals = [
-        record for record in history
+        record
+        for record in history
         if record.get("event_type") == payment_ledger.EVENT_REVERSAL
         and record.get("reconciliation_result") == "MATCHED"
         and record.get("payment_state") in {"REFUNDED", "CHARGEBACK"}
@@ -925,7 +1138,9 @@ def apply_payment_reversal(
         )
     reversal = reversals[0]
     subscriber = _nonempty(intent.get("subscriber_ref"), label="subscriber_ref")
-    product = _nonempty(intent.get("strategy_product_id"), label="strategy_product_id")
+    product = _nonempty(
+        intent.get("strategy_product_id"), label="strategy_product_id"
+    )
     now = _now(now_ts)
     target = path or events_path()
 
@@ -933,14 +1148,24 @@ def apply_payment_reversal(
         records = _read_events_unlocked(target)
         current = _latest_for_pair(records, subscriber, product)
         if current is None or current.get("tier") == "FREE":
-            raise SubscriptionRegistryError("Payment reversal has no current paid subscription")
+            raise SubscriptionRegistryError(
+                "Payment reversal has no current paid subscription"
+            )
         if current.get("last_payment_intent_id") != intent_id:
             raise SubscriptionRegistryError(
-                "Reversal does not target the payment currently backing the subscription"
+                "Reversal does not target the payment currently backing subscription"
             )
         reversal_state = str(reversal["payment_state"])
-        state = "CHARGEBACK_OPEN" if reversal_state == "CHARGEBACK" else "REFUND_HOLD"
-        event_type = EVENT_CHARGEBACK_HOLD if reversal_state == "CHARGEBACK" else EVENT_REFUND_HOLD
+        state = (
+            "CHARGEBACK_OPEN"
+            if reversal_state == "CHARGEBACK"
+            else "REFUND_HOLD"
+        )
+        event_type = (
+            EVENT_CHARGEBACK_HOLD
+            if reversal_state == "CHARGEBACK"
+            else EVENT_REFUND_HOLD
+        )
         idem = f"payment-reversal:{reversal['ledger_event_id']}"
         record, appended = _append_event_unlocked(
             path=target,
@@ -951,7 +1176,10 @@ def apply_payment_reversal(
             idempotency_key=idem,
             occurred_at_epoch=now,
             reason=f"MATCHED_PAYMENT_{reversal_state}",
-            audit_correlation_id=audit_correlation_id or str(reversal.get("audit_correlation_id") or _opaque_id()),
+            audit_correlation_id=(
+                audit_correlation_id
+                or str(reversal.get("audit_correlation_id") or _opaque_id())
+            ),
         )
         return {"status": state, "appended": appended, "record": record}
 
@@ -991,11 +1219,22 @@ def evaluate_deadlines(
     subscriber_ref: str,
     strategy_product_id: str,
     now_ts: float | int | None = None,
+    downgrade_evidence_id: str | None = None,
     path: str | None = None,
 ) -> Dict[str, Any]:
+    """Persist deterministic lifecycle deadlines without inventing policy proof.
+
+    The +72h boundary is necessary but not sufficient for automatic FREE
+    downgrade. Issue #163 owns mandatory notification/delivery evidence. Until
+    that lane supplies a non-empty ``downgrade_evidence_id``, the paid plan
+    remains PAYMENT_DUE/PAYMENT_FAILED with paid access SUSPENDED.
+    """
+
     subscriber = _nonempty(subscriber_ref, label="subscriber_ref")
     product = _nonempty(strategy_product_id, label="strategy_product_id")
+    _product(product)
     now = _now(now_ts)
+    evidence_id = _optional_text(downgrade_evidence_id)
     target = path or events_path()
     appended_events: list[Dict[str, Any]] = []
 
@@ -1003,32 +1242,40 @@ def evaluate_deadlines(
         records = _read_events_unlocked(target)
         current = _latest_for_pair(records, subscriber, product)
         if current is None:
-            return {"status": "NO_SUBSCRIPTION", "appended": False, "events": []}
+            return {
+                "status": "NO_SUBSCRIPTION",
+                "appended": False,
+                "events": [],
+            }
 
-        for _ in range(8):
+        for _ in range(10):
             state = str(current["state"])
             tier = str(current["tier"])
-            if tier == "FREE" or state in {"EXPIRED", "CHARGEBACK_OPEN", "REFUND_HOLD"}:
-                break
-
             expires = current.get("expires_at_epoch")
             grace_until = current.get("grace_until_epoch")
             auto_at = current.get("auto_downgrade_at_epoch")
             occurred = int(current.get("occurred_at_epoch") or 0)
 
+            # Pending intent is processed first, including FREE subscribers.
             if state == "INTENT_PAYMENT_PENDING":
                 pending_until = current.get("intent_pending_until_epoch")
                 if pending_until is None or now < int(pending_until):
                     break
                 resume = str(current.get("resume_state_after_intent") or "ACTIVE")
                 next_state = resume if resume in SUBSCRIPTION_STATES else "ACTIVE"
-                if expires is not None and int(pending_until) >= int(expires):
-                    if auto_at is not None and int(pending_until) >= int(auto_at):
-                        next_state = "EXPIRED"
-                    elif grace_until is not None and int(pending_until) >= int(grace_until):
+
+                if tier == "FREE":
+                    next_state = "ACTIVE"
+                elif resume == "EXPIRED":
+                    next_state = "EXPIRED"
+                elif resume == "CANCELED_AT_PERIOD_END":
+                    next_state = "CANCELED_AT_PERIOD_END"
+                elif expires is not None and int(pending_until) >= int(expires):
+                    if grace_until is not None and int(pending_until) >= int(grace_until):
                         next_state = "PAYMENT_DUE"
                     else:
                         next_state = "GRACE_HOLD"
+
                 current = _append_deadline_event(
                     target=target,
                     records=records + appended_events,
@@ -1037,7 +1284,10 @@ def evaluate_deadlines(
                     event_type=EVENT_INTENT_EXPIRED,
                     occurred_at=int(pending_until),
                     reason="INTENT_PAYMENT_PENDING_MAX_24H_EXPIRED",
-                    idempotency_suffix=f"intent-expired:{current.get('pending_payment_intent_id')}:{pending_until}",
+                    idempotency_suffix=(
+                        "intent-expired:"
+                        f"{current.get('pending_payment_intent_id')}:{pending_until}"
+                    ),
                     changes={
                         "pending_plan_id": None,
                         "pending_payment_intent_id": None,
@@ -1048,10 +1298,21 @@ def evaluate_deadlines(
                 appended_events.append(current)
                 continue
 
+            if tier == "FREE" or state in {
+                "EXPIRED",
+                "CHARGEBACK_OPEN",
+                "REFUND_HOLD",
+            }:
+                break
+
             if expires is None:
-                raise SubscriptionRegistryError("Paid subscription is missing expires_at_epoch")
+                raise SubscriptionRegistryError(
+                    "Paid subscription is missing expires_at_epoch"
+                )
             expires_int = int(expires)
 
+            # Explicit cancellation/downgrade-to-FREE is user intent, not the
+            # no-response auto-downgrade policy and therefore needs no #163 proof.
             if state == "CANCELED_AT_PERIOD_END" and now >= expires_int:
                 current = _append_deadline_event(
                     target=target,
@@ -1062,7 +1323,10 @@ def evaluate_deadlines(
                     occurred_at=expires_int,
                     reason="CANCELLATION_EFFECTIVE_AT_PERIOD_END",
                     idempotency_suffix=f"canceled-expired:{expires_int}",
-                    changes={"scheduled_plan_id": None},
+                    changes={
+                        "scheduled_plan_id": None,
+                        "last_downgrade_evidence_id": None,
+                    },
                 )
                 appended_events.append(current)
                 continue
@@ -1078,12 +1342,19 @@ def evaluate_deadlines(
                     occurred_at=expires_int,
                     reason="SCHEDULED_DOWNGRADE_TO_FREE_EFFECTIVE",
                     idempotency_suffix=f"scheduled-free:{expires_int}",
-                    changes={"scheduled_plan_id": None},
+                    changes={
+                        "scheduled_plan_id": None,
+                        "last_downgrade_evidence_id": None,
+                    },
                 )
                 appended_events.append(current)
                 continue
 
-            if state in {"ACTIVE", "PAYMENT_DUE", "PAYMENT_FAILED"} and occurred < expires_int and now >= expires_int:
+            if (
+                state in {"ACTIVE", "PAYMENT_DUE", "PAYMENT_FAILED"}
+                and occurred < expires_int
+                and now >= expires_int
+            ):
                 current = _append_deadline_event(
                     target=target,
                     records=records + appended_events,
@@ -1097,7 +1368,11 @@ def evaluate_deadlines(
                 appended_events.append(current)
                 continue
 
-            if state == "GRACE_HOLD" and grace_until is not None and now >= int(grace_until):
+            if (
+                state == "GRACE_HOLD"
+                and grace_until is not None
+                and now >= int(grace_until)
+            ):
                 current = _append_deadline_event(
                     target=target,
                     records=records + appended_events,
@@ -1111,7 +1386,13 @@ def evaluate_deadlines(
                 appended_events.append(current)
                 continue
 
-            if state in {"PAYMENT_DUE", "PAYMENT_FAILED"} and auto_at is not None and now >= int(auto_at):
+            if (
+                state in {"PAYMENT_DUE", "PAYMENT_FAILED"}
+                and auto_at is not None
+                and now >= int(auto_at)
+            ):
+                if evidence_id is None:
+                    break
                 current = _append_deadline_event(
                     target=target,
                     records=records + appended_events,
@@ -1119,9 +1400,15 @@ def evaluate_deadlines(
                     state="EXPIRED",
                     event_type=EVENT_AUTO_DOWNGRADED,
                     occurred_at=int(auto_at),
-                    reason="NO_SETTLED_PAYMENT_OR_ACTIVE_INTENT_AT_PLUS_72H",
-                    idempotency_suffix=f"auto-free:{auto_at}",
-                    changes={"scheduled_plan_id": None},
+                    reason=(
+                        "NO_SETTLED_PAYMENT_OR_ACTIVE_INTENT_AT_PLUS_72H_"
+                        "WITH_NOTIFICATION_POLICY_EVIDENCE"
+                    ),
+                    idempotency_suffix=f"auto-free:{auto_at}:{evidence_id}",
+                    changes={
+                        "scheduled_plan_id": None,
+                        "last_downgrade_evidence_id": evidence_id,
+                    },
                 )
                 appended_events.append(current)
                 continue
@@ -1132,45 +1419,64 @@ def evaluate_deadlines(
         "appended": bool(appended_events),
         "events": appended_events,
         "record": dict(current),
+        "downgrade_blocked_pending_evidence": bool(
+            current.get("tier") != "FREE"
+            and current.get("state") in {"PAYMENT_DUE", "PAYMENT_FAILED"}
+            and current.get("auto_downgrade_at_epoch") is not None
+            and now >= int(current["auto_downgrade_at_epoch"])
+            and evidence_id is None
+        ),
     }
 
 
-def _time_aware_access(record: Mapping[str, Any], now: int) -> tuple[str, str, str]:
+def _time_aware_access(
+    record: Mapping[str, Any], now: int
+) -> tuple[str, str, str, str]:
     product = str(record["strategy_product_id"])
     free_plan = _free_plan_id(product)
     tier = str(record["tier"])
     plan_id = str(record["plan_id"])
     state = str(record["state"])
 
-    if tier == "FREE":
-        return free_plan, "FREE", "ACTIVE"
     if state in {"CHARGEBACK_OPEN", "REFUND_HOLD"}:
-        return plan_id, tier, "HOLD"
+        return plan_id, tier, "HOLD", "PAYMENT_REVERSAL_HOLD"
     if state == "EXPIRED":
-        return free_plan, "FREE", "FREE_FALLBACK"
+        return free_plan, "FREE", "FREE_FALLBACK", "SUBSCRIPTION_EXPIRED"
 
     expires = record.get("expires_at_epoch")
-    auto_at = record.get("auto_downgrade_at_epoch")
     if state == "CANCELED_AT_PERIOD_END" and expires is not None and now >= int(expires):
-        return free_plan, "FREE", "FREE_FALLBACK"
+        return (
+            free_plan,
+            "FREE",
+            "FREE_FALLBACK",
+            "CANCELLATION_PERIOD_ENDED",
+        )
 
     if state == "INTENT_PAYMENT_PENDING":
-        pending_until = record.get("intent_pending_until_epoch")
-        if pending_until is not None and now < int(pending_until):
-            if expires is not None and now >= int(expires):
-                return plan_id, tier, "SUSPENDED"
-            return plan_id, tier, "ACTIVE"
-        if auto_at is not None and now >= int(auto_at):
-            return free_plan, "FREE", "FREE_FALLBACK"
+        resume = str(record.get("resume_state_after_intent") or "ACTIVE")
+        if tier == "FREE":
+            return free_plan, "FREE", "ACTIVE", "FREE_WITH_PAYMENT_INTENT_PENDING"
+        if resume == "EXPIRED":
+            return (
+                free_plan,
+                "FREE",
+                "FREE_FALLBACK",
+                "EXPIRED_WITH_NEW_PAYMENT_INTENT_PENDING",
+            )
         if expires is not None and now >= int(expires):
-            return plan_id, tier, "SUSPENDED"
-        return plan_id, tier, "ACTIVE"
+            return (
+                plan_id,
+                tier,
+                "SUSPENDED",
+                "PAID_EXPIRED_WITH_PAYMENT_INTENT_PENDING",
+            )
+        return plan_id, tier, "ACTIVE", "PAID_ACTIVE_WITH_PAYMENT_INTENT_PENDING"
 
-    if auto_at is not None and now >= int(auto_at):
-        return free_plan, "FREE", "FREE_FALLBACK"
+    if tier == "FREE":
+        return free_plan, "FREE", "ACTIVE", "FREE_ENTITLEMENT"
     if expires is not None and now >= int(expires):
-        return plan_id, tier, "SUSPENDED"
-    return plan_id, tier, "ACTIVE"
+        return plan_id, tier, "SUSPENDED", "PAID_PERIOD_EXPIRED"
+    return plan_id, tier, "ACTIVE", "PAID_PERIOD_ACTIVE"
 
 
 def resolve_entitlement(
@@ -1201,9 +1507,21 @@ def resolve_entitlement(
             "reason": "NO_SUBSCRIPTION_FREE_BASELINE",
         }
 
-    plan_id, tier, access = _time_aware_access(current, now)
+    plan_id, tier, access, reason = _time_aware_access(current, now)
     if access not in ENTITLEMENT_ACCESS_STATES:
-        raise SubscriptionRegistryError(f"Unsupported entitlement access state: {access}")
+        raise SubscriptionRegistryError(
+            f"Unsupported entitlement access state: {access}"
+        )
+    auto_at = current.get("auto_downgrade_at_epoch")
+    if (
+        tier != "FREE"
+        and access == "SUSPENDED"
+        and current.get("state") in {"PAYMENT_DUE", "PAYMENT_FAILED"}
+        and auto_at is not None
+        and now >= int(auto_at)
+    ):
+        reason = "AUTO_DOWNGRADE_BLOCKED_PENDING_NOTIFICATION_EVIDENCE"
+
     return {
         "entitlement_id": current["entitlement_id"],
         "entitlement_version": current["entitlement_version"],
@@ -1217,9 +1535,10 @@ def resolve_entitlement(
         "source_subscription_event_id": current["subscription_event_id"],
         "expires_at_epoch": current.get("expires_at_epoch"),
         "grace_until_epoch": current.get("grace_until_epoch"),
-        "auto_downgrade_at_epoch": current.get("auto_downgrade_at_epoch"),
+        "auto_downgrade_at_epoch": auto_at,
         "pending_payment_intent_id": current.get("pending_payment_intent_id"),
         "pending_plan_id": current.get("pending_plan_id"),
         "scheduled_plan_id": current.get("scheduled_plan_id"),
-        "reason": "AUTHORITATIVE_SUBSCRIPTION_RESOLUTION",
+        "last_downgrade_evidence_id": current.get("last_downgrade_evidence_id"),
+        "reason": reason,
     }
