@@ -4,10 +4,10 @@ import json
 import os
 import time
 import uuid
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, Mapping, Sequence
 
 from billing import (
     kucoin_watcher,
@@ -114,8 +114,8 @@ _PROVIDER_SUCCESS_TYPES = {
         {
             revolut_merchant.EVENT_ORDER_BOUND,
             revolut_merchant.EVENT_ORDER_RECOVERED,
-            revolut_merchant.EVENT_ORDER_RECONCILED,
-            revolut_merchant.EVENT_RECURRING_PAYMENT,
+            revolut_merchant.EVENT_RECONCILED,
+            revolut_merchant.EVENT_RECURRING_PAYMENT_INITIATED,
         }
     ),
     "KUCOIN": frozenset(
@@ -223,7 +223,7 @@ def collect_source_records(
     return {"records": records, "source_status": statuses}
 
 
-def _as_text(value: Any) -> Optional[str]:
+def _as_text(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, (str, int)) and not isinstance(value, bool):
@@ -245,7 +245,7 @@ def _correlation_values(record: Mapping[str, Any]) -> Dict[str, list[str]]:
     return result
 
 
-def _iso_epoch(value: Any) -> Optional[float]:
+def _iso_epoch(value: Any) -> float | None:
     if not isinstance(value, str) or not value.strip():
         return None
     text = value.strip()
@@ -260,7 +260,7 @@ def _iso_epoch(value: Any) -> Optional[float]:
         return None
 
 
-def _event_epoch(record: Mapping[str, Any]) -> Optional[float]:
+def _event_epoch(record: Mapping[str, Any]) -> float | None:
     for field in (
         "occurred_at_epoch",
         "reviewed_at_epoch",
@@ -312,7 +312,7 @@ def normalize_timeline(
 ) -> list[Dict[str, Any]]:
     timeline: list[Dict[str, Any]] = []
     for source in SOURCE_NAMES:
-        for record in records.get(source, ()):  # source order is canonical per source
+        for record in records.get(source, ()):
             timeline.append(normalize_event(source, record))
     timeline.sort(
         key=lambda row: (
@@ -413,7 +413,16 @@ def _latest_payment_states(rows: Sequence[Mapping[str, Any]]) -> Dict[str, str]:
     return latest
 
 
-def _backlog(records: Mapping[str, Sequence[Mapping[str, Any]]]) -> Dict[str, int]:
+def _source_pass(
+    source_status: Mapping[str, Mapping[str, Any]], source: str
+) -> bool:
+    return source_status.get(source, {}).get("status") == "PASS"
+
+
+def _backlog(
+    records: Mapping[str, Sequence[Mapping[str, Any]]],
+    source_status: Mapping[str, Mapping[str, Any]],
+) -> Dict[str, int | None]:
     payment_rows = records.get(_SOURCE_PAYMENT, ())
     subscription_rows = records.get(_SOURCE_SUBSCRIPTION, ())
     notification_rows = records.get(_SOURCE_NOTIFICATION, ())
@@ -472,24 +481,60 @@ def _backlog(records: Mapping[str, Sequence[Mapping[str, Any]]]) -> Dict[str, in
     )
 
     return {
-        "payment_pending_or_unknown": payment_pending,
-        "payment_unmatched": int(payment_reconciliation.get("UNMATCHED", 0)),
-        "payment_contradictory": int(payment_reconciliation.get("CONTRADICTORY", 0)),
-        "kucoin_manual_review_required": sum(
-            1
-            for row in kucoin_rows
-            if row.get("event_type") == kucoin_watcher.EVENT_MANUAL_REVIEW
+        "payment_pending_or_unknown": (
+            payment_pending if _source_pass(source_status, _SOURCE_PAYMENT) else None
         ),
-        "revolut_unmatched_webhook": sum(
-            1
-            for row in revolut_rows
-            if row.get("event_type") == revolut_merchant.EVENT_WEBHOOK_UNMATCHED
+        "payment_unmatched": (
+            int(payment_reconciliation.get("UNMATCHED", 0))
+            if _source_pass(source_status, _SOURCE_PAYMENT)
+            else None
         ),
-        "support_open_cases": support_open,
-        "notification_failed_deliveries": failed_notifications,
-        "subscription_hold_states": subscription_hold,
-        "membership_not_in_sync": membership_not_in_sync,
-        "access_leak_risk": access_leak_risk,
+        "payment_contradictory": (
+            int(payment_reconciliation.get("CONTRADICTORY", 0))
+            if _source_pass(source_status, _SOURCE_PAYMENT)
+            else None
+        ),
+        "kucoin_manual_review_required": (
+            sum(
+                1
+                for row in kucoin_rows
+                if row.get("event_type") == kucoin_watcher.EVENT_MANUAL_REVIEW
+            )
+            if _source_pass(source_status, _SOURCE_KUCOIN)
+            else None
+        ),
+        "revolut_unmatched_webhook": (
+            sum(
+                1
+                for row in revolut_rows
+                if row.get("event_type") == revolut_merchant.EVENT_WEBHOOK_UNMATCHED
+            )
+            if _source_pass(source_status, _SOURCE_REVOLUT)
+            else None
+        ),
+        "support_open_cases": (
+            support_open if _source_pass(source_status, _SOURCE_SUPPORT) else None
+        ),
+        "notification_failed_deliveries": (
+            failed_notifications
+            if _source_pass(source_status, _SOURCE_NOTIFICATION)
+            else None
+        ),
+        "subscription_hold_states": (
+            subscription_hold
+            if _source_pass(source_status, _SOURCE_SUBSCRIPTION)
+            else None
+        ),
+        "membership_not_in_sync": (
+            membership_not_in_sync
+            if _source_pass(source_status, _SOURCE_MEMBERSHIP)
+            else None
+        ),
+        "access_leak_risk": (
+            access_leak_risk
+            if _source_pass(source_status, _SOURCE_MEMBERSHIP)
+            else None
+        ),
     }
 
 
@@ -545,9 +590,11 @@ def _deduplication(
 ) -> Dict[str, Any]:
     by_source: Dict[str, Dict[str, Any]] = {}
     total_duplicates = 0
+    all_sources_validated = True
     for source in SOURCE_NAMES:
         state = str(source_status.get(source, {}).get("status") or "UNKNOWN")
         if state != "PASS":
+            all_sources_validated = False
             by_source[source] = {
                 "status": state,
                 "events_with_idempotency_key": None,
@@ -567,9 +614,16 @@ def _deduplication(
             "events_with_idempotency_key": len(keys),
             "persisted_duplicate_idempotency_keys": duplicates,
         }
+    overall = (
+        "FAIL"
+        if total_duplicates
+        else ("PASS" if all_sources_validated else "UNKNOWN")
+    )
     return {
-        "status": "PASS" if total_duplicates == 0 else "FAIL",
-        "persisted_duplicate_idempotency_keys": total_duplicates,
+        "status": overall,
+        "persisted_duplicate_idempotency_keys": (
+            total_duplicates if all_sources_validated or total_duplicates else None
+        ),
         "by_source": by_source,
     }
 
@@ -585,39 +639,41 @@ def _incidents(
 ) -> list[Dict[str, Any]]:
     incidents: list[Dict[str, Any]] = []
 
-    for row in records.get(_SOURCE_PAYMENT, ()):
-        if row.get("reconciliation_result") != "CONTRADICTORY":
-            continue
-        incidents.append(
-            {
-                "severity": "CRITICAL",
-                "incident_type": "CONTRADICTORY_PROVIDER_EVIDENCE",
-                "source": _SOURCE_PAYMENT,
-                "source_event_id": row.get("ledger_event_id"),
-                "correlation": _incident_correlation(row),
-            }
-        )
+    if _source_pass(source_status, _SOURCE_PAYMENT):
+        for row in records.get(_SOURCE_PAYMENT, ()):
+            if row.get("reconciliation_result") != "CONTRADICTORY":
+                continue
+            incidents.append(
+                {
+                    "severity": "CRITICAL",
+                    "incident_type": "CONTRADICTORY_PROVIDER_EVIDENCE",
+                    "source": _SOURCE_PAYMENT,
+                    "source_event_id": row.get("ledger_event_id"),
+                    "correlation": _incident_correlation(row),
+                }
+            )
 
-    final_membership = [
-        row
-        for row in records.get(_SOURCE_MEMBERSHIP, ())
-        if row.get("event_type") == membership_reconciler.EVENT_FINAL
-    ]
-    for reconciliation_id, row in _latest_by(
-        final_membership, "reconciliation_id"
-    ).items():
-        if row.get("reconciliation_state") != "ACCESS_LEAK_RISK":
-            continue
-        incidents.append(
-            {
-                "severity": "CRITICAL",
-                "incident_type": "ACCESS_LEAK_RISK",
-                "source": _SOURCE_MEMBERSHIP,
-                "source_event_id": row.get("membership_event_id"),
-                "reconciliation_id": reconciliation_id,
-                "correlation": _incident_correlation(row),
-            }
-        )
+    if _source_pass(source_status, _SOURCE_MEMBERSHIP):
+        final_membership = [
+            row
+            for row in records.get(_SOURCE_MEMBERSHIP, ())
+            if row.get("event_type") == membership_reconciler.EVENT_FINAL
+        ]
+        for reconciliation_id, row in _latest_by(
+            final_membership, "reconciliation_id"
+        ).items():
+            if row.get("reconciliation_state") != "ACCESS_LEAK_RISK":
+                continue
+            incidents.append(
+                {
+                    "severity": "CRITICAL",
+                    "incident_type": "ACCESS_LEAK_RISK",
+                    "source": _SOURCE_MEMBERSHIP,
+                    "source_event_id": row.get("membership_event_id"),
+                    "reconciliation_id": reconciliation_id,
+                    "correlation": _incident_correlation(row),
+                }
+            )
 
     for provider in sorted(_PROVIDER_SOURCE):
         health = _provider_health(provider, records, source_status)
@@ -666,6 +722,20 @@ def max_snapshots_from_env() -> int:
     )
 
 
+def _incident_assessment_status(
+    source_status: Mapping[str, Mapping[str, Any]],
+) -> str:
+    states = {
+        str(source_status.get(source, {}).get("status") or "UNKNOWN")
+        for source in SOURCE_NAMES
+    }
+    if "FAIL" in states:
+        return "FAIL"
+    if states == {"PASS"}:
+        return "PASS"
+    return "UNKNOWN"
+
+
 def build_snapshot(
     records: Mapping[str, Sequence[Mapping[str, Any]]],
     source_status: Mapping[str, Mapping[str, Any]],
@@ -707,10 +777,11 @@ def build_snapshot(
         "source_count": len(SOURCE_NAMES),
         "timeline_event_count": len(timeline),
         "provider_health": provider_health,
-        "reconciliation_backlog": _backlog(records),
+        "reconciliation_backlog": _backlog(records, source_status),
         "deduplication": _deduplication(records, source_status),
         "incidents": incidents,
         "incident_counts": dict(sorted(severity_counts.items())),
+        "incident_assessment_status": _incident_assessment_status(source_status),
         "provider_failure_threshold": threshold,
     }
 
@@ -758,9 +829,8 @@ def render_operator_summary(snapshot: Mapping[str, Any]) -> str:
         if isinstance(row, Mapping) and row.get("severity") == "CRITICAL"
     )
     backlog_bits = [
-        f"{key}={value}"
+        f"{key}={'UNKNOWN' if value is None else value}"
         for key, value in sorted(backlog.items())
-        if isinstance(value, int)
     ]
     return "\n".join(
         (
@@ -768,7 +838,8 @@ def render_operator_summary(snapshot: Mapping[str, Any]) -> str:
             "Sources: " + ", ".join(source_bits),
             "Providers: " + ", ".join(provider_bits),
             "Backlog: " + ", ".join(backlog_bits),
-            f"Critical incidents: {critical}",
+            "Critical incidents observed: "
+            f"{critical}; assessment={snapshot.get('incident_assessment_status', 'UNKNOWN')}",
         )
     )
 
