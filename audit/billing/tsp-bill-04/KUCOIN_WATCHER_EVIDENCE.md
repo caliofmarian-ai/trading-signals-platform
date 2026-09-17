@@ -88,13 +88,21 @@ Fixtures use visibly fake values. Runtime error redaction removes credential val
 
 ## Verification status
 
-At implementation time:
+Implementation-head verification completed on 2026-09-17:
+
+- implementation head: `95b1c026c6c6e137839997f0a9b4da2fdefbdc31`;
+- Repository CI run: `35202417662`;
+- required job: `Required Repository CI` — `SUCCESS`;
+- exact checkout SHA validation: `PASS`;
+- full repository regression suite: `1480 passed`.
+
+Status separation:
 
 - `SOURCE VERIFIED`: `PASS` against the official provider contract listed above.
-- `CI VERIFIED`: `PENDING` until exact-head repository CI completes.
+- `CI VERIFIED`: `PASS` for the implementation head above; the evidence-only follow-up commit must still pass final exact-head CI before merge.
 - `DEPLOYED`: `PENDING` until merge and Railway automatic deployment are verified.
 - `PROVIDER VERIFIED`: `UNKNOWN` — no authenticated KuCoin provider credentials/evidence were provisioned for this lane.
-- `BILLING VERIFIED`: limited to deterministic mocked/no-network tests until exact-head CI.
+- `BILLING VERIFIED`: `PASS` for deterministic mocked/no-network coverage; authenticated provider acceptance remains separate.
 - `MEMBERSHIP VERIFIED`: `NOT APPLICABLE` to this lane.
 - `END-TO-END ACCEPTED`: `NOT APPLICABLE`; owned independently by #169.
 
