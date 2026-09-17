@@ -130,15 +130,36 @@ Repeated-provider-failure threshold is configurable through `BILLING_OBSERVABILI
 
 An observed count of `0` is not represented as proof of no incident when required source evidence is missing.
 
+## Deterministic verification
+
+Implementation-head verification completed on 2026-09-17:
+
+- implementation head: `516176a9b96dab6df7b4f1b8b5f88127e445c284`;
+- Repository CI run: `35203790802`;
+- required job: `Required Repository CI` — `SUCCESS`;
+- exact checkout SHA validation: `PASS`;
+- full repository regression suite: `1489 passed`.
+
+Dedicated coverage verifies:
+
+- missing source -> `UNKNOWN` vs existing empty source -> measured zero;
+- corrupt source -> `FAIL`;
+- normalized allow-list excludes supplied secret/private payload fields;
+- transitive correlation across payment/support/subscription/membership truth layers;
+- provider outage, reconciliation backlog and access leak remain distinct;
+- contradictory provider evidence and repeated provider failure create separate critical incidents;
+- `UNKNOWN` source coverage never turns into a synthetic zero/clean assessment;
+- persisted duplicate idempotency keys are visible as integrity failure;
+- bounded derived snapshot rotation leaves source truth untouched;
+- corrupt derived snapshot storage fails closed.
+
 ## Verification status
 
-Before exact-head repository CI:
-
 - `SOURCE VERIFIED = PASS` for repository authority boundaries and existing billing source contracts.
-- `CI VERIFIED = PENDING`.
-- `DEPLOYED = PENDING`.
+- `CI VERIFIED = PASS` for implementation head `516176a9b96dab6df7b4f1b8b5f88127e445c284`; this evidence-only follow-up commit must still pass final exact-head CI before merge.
+- `DEPLOYED = PENDING` until merge and Railway automatic deployment are verified.
 - `PROVIDER VERIFIED = NOT APPLICABLE` — this lane makes no provider calls.
-- `BILLING VERIFIED = PENDING` until deterministic tests and repository CI pass.
+- `BILLING VERIFIED = PASS` for deterministic read-only projection/correlation/incident tests.
 - `MEMBERSHIP VERIFIED = NOT APPLICABLE` to mutation; membership evidence is read-only input.
 - `END-TO-END ACCEPTED = NOT APPLICABLE`; final independent acceptance remains #169.
 
