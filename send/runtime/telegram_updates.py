@@ -11,7 +11,7 @@ import time
 import requests
 from typing import Dict, Any, Optional
 
-from billing import notification_scheduler, support_runtime
+from billing import membership_scheduler, notification_scheduler, support_runtime
 from core import bot_service
 from core import outcome_service
 from core import observability_logger
@@ -105,7 +105,7 @@ def _emit_poller_startup(event: str, extra: Dict[str, Any]) -> None:
 
 
 def _run_billing_scheduler_safely() -> None:
-    """Run the restart-safe billing scheduler without risking poller liveness."""
+    """Run billing schedulers independently without risking poller liveness."""
     try:
         notification_scheduler.maybe_run_notification_cycle()
     except Exception as exc:
@@ -114,6 +114,18 @@ def _run_billing_scheduler_safely() -> None:
                 "event_type": "error",
                 "module": "telegram_updates",
                 "function": "billing_notification_scheduler",
+                "error": telegram_publisher._sanitize(str(exc)),
+            }
+        )
+
+    try:
+        membership_scheduler.maybe_run_membership_cycle()
+    except Exception as exc:
+        observability_logger.log_error(
+            {
+                "event_type": "error",
+                "module": "telegram_updates",
+                "function": "billing_membership_scheduler",
                 "error": telegram_publisher._sanitize(str(exc)),
             }
         )
