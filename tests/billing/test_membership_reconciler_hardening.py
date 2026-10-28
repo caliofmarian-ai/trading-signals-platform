@@ -254,3 +254,43 @@ def test_dry_run_reconcile_all_known_subscribers_does_not_mutate_membership(
     )
     assert len(results) == 2
     assert all(call["apply_actions"] is False for call in calls)
+
+def test_reconcile_all_isolates_one_unexpected_subscriber_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    subscription_rows = [
+        {"subscriber_ref": "subscriber-a", "strategy_product_id": PRODUCT},
+        {"subscriber_ref": "subscriber-b", "strategy_product_id": PRODUCT},
+    ]
+    monkeypatch.setattr(
+        membership_reconciler.subscription_registry,
+        "load_subscription_events",
+        lambda _path=None: subscription_rows,
+    )
+    seen: list[str] = []
+
+    def fake_reconcile(**kwargs):
+        subscriber = kwargs["subscriber_ref"]
+        seen.append(subscriber)
+        if subscriber == "subscriber-a":
+            raise RuntimeError("synthetic per-subscriber failure")
+        return {"state": "IN_SYNC", "actions_applied": False}
+
+    monkeypatch.setattr(
+        membership_reconciler,
+        "reconcile_membership",
+        fake_reconcile,
+    )
+    results = membership_reconciler.reconcile_all_known_subscribers(
+        apply_actions=False,
+        path=str(tmp_path / "membership.jsonl"),
+    )
+
+    assert seen == ["subscriber-a", "subscriber-b"]
+    assert len(results) == 2
+    assert results[0]["state"] == "UNKNOWN"
+    assert results[0]["batch_error"] is True
+    assert results[0]["error_type"] == "RuntimeError"
+    assert "subscriber-a" not in str(results[0])
+    assert results[1]["state"] == "IN_SYNC"
+
