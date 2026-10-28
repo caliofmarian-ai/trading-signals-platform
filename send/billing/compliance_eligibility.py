@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
@@ -29,8 +28,13 @@ class ComplianceEligibilityError(RuntimeError):
 
 
 def config_path() -> Path:
-    raw = str(os.getenv("COMPLIANCE_ELIGIBILITY_CONFIG") or "").strip()
-    return Path(raw) if raw else DEFAULT_CONFIG_PATH
+    """Return the repository-versioned eligibility authority.
+
+    Production eligibility is intentionally not environment-overridable: an
+    APPROVED transition must arrive through a reviewed repository config change.
+    Explicit path arguments remain available to deterministic tests only.
+    """
+    return DEFAULT_CONFIG_PATH
 
 
 def _nonempty(value: Any, *, label: str) -> str:
