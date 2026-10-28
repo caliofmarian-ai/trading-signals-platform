@@ -124,3 +124,69 @@ def test_scheduler_failure_is_contained_from_poller(monkeypatch) -> None:
     assert len(errors) == 1
     assert errors[0]["function"] == "billing_notification_scheduler"
     assert "scheduler synthetic failure" in errors[0]["error"]
+
+def test_notification_scheduler_failure_does_not_suppress_membership_cycle(
+    monkeypatch,
+) -> None:
+    errors: list[dict] = []
+    membership_calls: list[bool] = []
+
+    def fail_notification():
+        raise RuntimeError("notification failure")
+
+    monkeypatch.setattr(
+        telegram_updates.notification_scheduler,
+        "maybe_run_notification_cycle",
+        fail_notification,
+    )
+    monkeypatch.setattr(
+        telegram_updates.membership_scheduler,
+        "maybe_run_membership_cycle",
+        lambda: membership_calls.append(True),
+    )
+    monkeypatch.setattr(
+        telegram_updates.observability_logger,
+        "log_error",
+        lambda payload: errors.append(payload),
+    )
+
+    telegram_updates._run_billing_scheduler_safely()
+
+    assert membership_calls == [True]
+    assert len(errors) == 1
+    assert errors[0]["function"] == "billing_notification_scheduler"
+
+
+def test_membership_scheduler_failure_does_not_suppress_notification_cycle(
+    monkeypatch,
+) -> None:
+    errors: list[dict] = []
+    notification_calls: list[bool] = []
+
+    monkeypatch.setattr(
+        telegram_updates.notification_scheduler,
+        "maybe_run_notification_cycle",
+        lambda: notification_calls.append(True),
+    )
+
+    def fail_membership():
+        raise RuntimeError("membership failure")
+
+    monkeypatch.setattr(
+        telegram_updates.membership_scheduler,
+        "maybe_run_membership_cycle",
+        fail_membership,
+    )
+    monkeypatch.setattr(
+        telegram_updates.observability_logger,
+        "log_error",
+        lambda payload: errors.append(payload),
+    )
+
+    telegram_updates._run_billing_scheduler_safely()
+
+    assert notification_calls == [True]
+    assert len(errors) == 1
+    assert errors[0]["function"] == "billing_membership_scheduler"
+    assert "membership failure" in errors[0]["error"]
+
