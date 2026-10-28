@@ -944,20 +944,33 @@ def reconcile_all_known_subscribers(
     for row in subscription_registry.load_subscription_events(subscription_path):
         key = (str(row.get("subscriber_ref")), str(row.get("strategy_product_id")))
         latest[key] = dict(row)
-    return [
-        reconcile_membership(
-            subscriber_ref=subscriber,
-            strategy_product_id=product,
-            now_ts=now_ts,
-            apply_actions=apply_actions,
-            api=api,
-            send_fn=send_fn,
-            path=path,
-            subscription_path=subscription_path,
-            notification_path=notification_path,
-        )
-        for subscriber, product in sorted(latest)
-    ]
+    results: list[Dict[str, Any]] = []
+    for subscriber, product in sorted(latest):
+        try:
+            result = reconcile_membership(
+                subscriber_ref=subscriber,
+                strategy_product_id=product,
+                now_ts=now_ts,
+                apply_actions=apply_actions,
+                api=api,
+                send_fn=send_fn,
+                path=path,
+                subscription_path=subscription_path,
+                notification_path=notification_path,
+            )
+        except Exception as exc:
+            # Batch orchestration must not let one unexpected subscriber-level
+            # failure suppress reconciliation evidence for the remaining set.
+            # Do not copy subscriber refs, Telegram IDs, or exception text into
+            # this aggregate result.
+            result = {
+                "state": "UNKNOWN",
+                "actions_applied": False,
+                "batch_error": True,
+                "error_type": type(exc).__name__[:120] or "Exception",
+            }
+        results.append(result)
+    return results
 
 
 def automatic_reconciliation_enabled() -> bool:
