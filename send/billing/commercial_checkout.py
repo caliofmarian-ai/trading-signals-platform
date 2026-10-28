@@ -99,7 +99,13 @@ def evaluate_commercial_checkout(
     )
     pricing = _catalog_pricing(plan)
 
-    reasons = list(compliance.get("reason_codes") or [])
+    # Positive approval markers are evidence, not blocking reasons.
+    # Only non-APPROVED compliance decisions contribute blocker codes.
+    reasons = (
+        []
+        if compliance.get("status") == "APPROVED"
+        else list(compliance.get("reason_codes") or [])
+    )
     if pricing["status"] != "CONFIGURED":
         reasons.append("CATALOG_PRICING_NOT_CONFIGURED")
     amount = pricing.get("amount_minor")
