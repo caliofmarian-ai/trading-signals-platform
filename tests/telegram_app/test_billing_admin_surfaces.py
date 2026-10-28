@@ -12,7 +12,7 @@ if str(SEND_DIR) not in sys.path:
     sys.path.insert(0, str(SEND_DIR))
 
 from billing import billing_observability
-from core import billing_admin_views, telegram_admin_ui
+from core import billing_admin_views, bot_service, telegram_admin_ui
 from core.role_constants import ROLE_ANALYST, ROLE_OWNER, ROLE_PRIMARY_ADMIN
 
 
@@ -83,6 +83,22 @@ def test_billing_subpages_inherit_distribution_role_boundary():
     assert not telegram_admin_ui.panel_visible_for_role(ROLE_ANALYST, "DISTRIBUTION")
     assert telegram_admin_ui.is_distribution_subpage_action("BILLING_HOME")
 
+
+
+
+def test_forged_billing_callback_is_denied_outside_distribution_role(monkeypatch):
+    monkeypatch.setattr(bot_service, "get_primary_role", lambda _user_id: ROLE_ANALYST)
+    result = bot_service._handle_admin_navigation_action(
+        "BILLING_HOME",
+        12345,
+        {
+            "chat": {"id": -100999, "type": "supergroup"},
+            "from": {"id": 12345},
+            "message_id": 77,
+        },
+    )
+    assert result["text"] == "Access denied (missing panel permission)."
+    assert result["reply_markup"] is None
 
 def test_subscriber_inventory_masks_identity_and_preserves_attention_truth():
     raw_subscriber = "subscriber-secret-123"
