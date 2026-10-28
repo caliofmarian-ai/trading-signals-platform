@@ -945,6 +945,19 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
         }
 
+    # Billing pages are Distribution sub-surfaces, not new canonical roots.
+    # Forged BILLING_* callbacks must inherit the same role authorization as
+    # the Distribution panel; button visibility is never authorization.
+    if (
+        telegram_admin_ui.is_distribution_subpage_action(action)
+        and not telegram_admin_ui.panel_visible_for_role(role, "DISTRIBUTION")
+    ):
+        return {
+            "text": "Access denied (missing panel permission).",
+            "reply_markup": None,
+            _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
+        }
+
     # ---- BACK: navigate to canonical immediate parent ----
     # Uses the static CANONICAL_ADMIN_PARENT_MAP for deterministic, loop-free navigation.
     # For context-sensitive pages (OPS_ENGINE→OPERATIONS, SH_ENGINE→SYSHEALTH) the
@@ -1308,6 +1321,49 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
                 _surface_current_state(content),
             ),
             "reply_markup": telegram_admin_ui.future_forex_strategy_markup(),
+        }
+
+    if action in {
+        "BILLING_HOME",
+        "BILLING_SUBSCRIBERS",
+        "BILLING_SUPPORT",
+        "BILLING_PROVIDERS",
+        "BILLING_AUDIT",
+    }:
+        # TSP-BILL-09: billing/admin read surfaces live beneath Distribution.
+        # Renderers consume persisted evidence only and never mutate billing truth.
+        from core.billing_admin_views import (
+            render_billing_audit,
+            render_billing_overview,
+            render_provider_status,
+            render_subscriber_inventory,
+            render_support_queue,
+        )
+
+        if action == "BILLING_HOME":
+            return {
+                "text": _format_surface(
+                    "billing_access",
+                    "💳 Billing & Access",
+                    render_billing_overview(),
+                ),
+                "reply_markup": telegram_admin_ui.billing_home_markup(),
+            }
+        if action == "BILLING_SUBSCRIBERS":
+            title = "👥 Subscriber Billing"
+            content = render_subscriber_inventory()
+        elif action == "BILLING_SUPPORT":
+            title = "🆘 Billing Support Queue"
+            content = render_support_queue()
+        elif action == "BILLING_PROVIDERS":
+            title = "💳 Payment Providers"
+            content = render_provider_status()
+        else:
+            title = "🔍 Billing Audit"
+            content = render_billing_audit()
+        return {
+            "text": _format_surface("billing_access", title, content),
+            "reply_markup": telegram_admin_ui.billing_subpage_markup(action),
         }
 
     if action == "DISTRIBUTION":
