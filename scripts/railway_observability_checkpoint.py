@@ -311,6 +311,23 @@ def collect_checkpoint(*, base_dir: Path, now_ts: int | None = None) -> dict[str
             "reason": "BLOCKER_DIAGNOSTICS_FAILED",
         }
 
+    # R-037: bounded metadata-only disk inventory for a future governed
+    # retention/archive migration. A candidate is never a delete instruction.
+    try:
+        from scripts.railway_retention_inventory import collect_retention_inventory
+        report["retention_inventory"] = collect_retention_inventory(
+            base_dir=Path(base_dir), now_ts=now,
+        )
+    except Exception:
+        report["retention_inventory"] = {
+            "component": "tsp_storage_retention_dry_run",
+            "scope": "BOUNDED_STAT_ONLY_NO_DELETION",
+            "coverage": "UNKNOWN",
+            "reason": "RETENTION_INVENTORY_FAILED",
+            "eligible_for_deletion": False,
+            "actual_freed_bytes": 0,
+        }
+
     # Never echo the provider token/config body; only known code identifiers.
     candidate = str(os.getenv("MARKET_DATA_PROVIDER") or "").strip().upper()
     report["configured_provider_from_env"] = (
