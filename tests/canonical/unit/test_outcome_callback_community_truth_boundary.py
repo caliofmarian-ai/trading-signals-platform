@@ -145,9 +145,11 @@ def test_malformed_rows_do_not_generate_false_market_truth(tmp_path, monkeypatch
         _row("sig-1", "bad", "INVALID"),
         _row("sig-1", "", "WIN"),
         {"signal_id": "sig-1", "event_type": "unexpected", "member_ref": "x", "outcome": "WIN"},
+        {"signal_id": "sig-1", "event_type": "user_outcome_record", "member_ref": "y", "outcome": "WIN",
+         "truth_domain": ["MARKET_TRUTH", "COMMUNITY_TRUTH"]},
     ]
     result = _read_stats(monkeypatch, tmp_path, rows)
     assert result["win_count"] == 1
     assert result["invalid_count"] == 2
-    assert result["excluded_other_truth"] == 1
+    assert result["excluded_other_truth"] == 2
     assert result["authoritative_for_strategy_performance"] is False
