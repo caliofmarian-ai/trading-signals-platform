@@ -1398,6 +1398,18 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
                 "Evidence: UNKNOWN (read-only publication source unavailable)"
             )
         content = content + "\n\n" + publication_text
+        # R-028: correlated stage evidence is descriptive only. It never
+        # elevates strategic PRE/CONFIRM into Telegram delivery or market truth.
+        try:
+            from core import lifecycle_funnel_evidence
+            funnel_snapshot = lifecycle_funnel_evidence.build_funnel(range_days=1)
+            funnel_text = lifecycle_funnel_evidence.render_funnel_summary(funnel_snapshot)
+        except Exception:
+            funnel_text = (
+                "Lifecycle evidence — trailing 1d UTC\n"
+                "Sources: UNKNOWN (read-only funnel unavailable)"
+            )
+        content = content + "\n\n" + funnel_text
         try:
             import os as _os
             report_path = _find_latest_report_json()
