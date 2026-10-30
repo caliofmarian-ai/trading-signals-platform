@@ -42,6 +42,14 @@ _PANEL_SYSHEALTH = "SYSHEALTH"
 _PANEL_GOVDOCS = "GOVDOCS"
 _PANEL_SECAUDIT = "SECAUDIT"
 
+_BILLING_SUBPAGE_ACTIONS: frozenset[str] = frozenset({
+    "BILLING_HOME",
+    "BILLING_SUBSCRIBERS",
+    "BILLING_SUPPORT",
+    "BILLING_PROVIDERS",
+    "BILLING_AUDIT",
+})
+
 _SAFE_KNOWLEDGE_RETURN_ACTIONS: frozenset[str] = frozenset({
     "HOME",
     "STATUS",
@@ -142,6 +150,11 @@ CANONICAL_ADMIN_PARENT_MAP: dict[str, str] = {
     "STRATEGY_CHOOSE": "DECISION_VIS",
     "STRATEGY_FOREX_FUTURE": "STRATEGY_CHOOSE",
     "DISTRIBUTION": "HOME",
+    "BILLING_HOME": "DISTRIBUTION",
+    "BILLING_SUBSCRIBERS": "BILLING_HOME",
+    "BILLING_SUPPORT": "BILLING_HOME",
+    "BILLING_PROVIDERS": "BILLING_HOME",
+    "BILLING_AUDIT": "BILLING_HOME",
     "RESEARCH": "HOME",
     "INTELLIGENCE": "HOME",
     "AFFILIATE": "HOME",
@@ -212,6 +225,11 @@ def panel_visible_for_role(role: str, panel_action: str) -> bool:
 
 def is_canonical_panel_action(panel_action: str) -> bool:
     return str(panel_action or "").strip().upper() in _ALL_PANEL_KEYS
+
+
+def is_distribution_subpage_action(action: str) -> bool:
+    """Return True for billing pages that inherit Distribution authorization."""
+    return str(action or "").strip().upper() in _BILLING_SUBPAGE_ACTIONS
 
 
 def knowledge_visible_for_role(role: str, knowledge_key: str) -> bool:
@@ -615,14 +633,34 @@ def distribution_markup() -> dict[str, list[list[dict[str, str]]]]:
     """
     Distribution Control panel navigation.
 
-    Source: ADMIN_TREE_MAP_v2.0.0.md §6.5
-    Purpose: route status, channel readiness, publication controls.
-    Read-only: no mutation controls available at this time.
+    Billing is a governed sub-surface of Distribution so the canonical
+    11-root-panel contract remains unchanged.  The billing pages are read-only
+    presentation surfaces and inherit the Distribution authorization boundary.
     """
     return _kb([
+        [_btn("💳 Billing & Access", "BILLING_HOME")],
         [_btn("🔄 Refresh", "DISTRIBUTION")],
         [_knowledge_btn("distribution", "DISTRIBUTION")],
         [_btn("⬅️ Admin", "HOME")],
+    ])
+
+
+def billing_home_markup() -> dict[str, list[list[dict[str, str]]]]:
+    return _kb([
+        [_btn("👥 Subscribers", "BILLING_SUBSCRIBERS"), _btn("🆘 Support Queue", "BILLING_SUPPORT")],
+        [_btn("💳 Providers", "BILLING_PROVIDERS"), _btn("🔍 Billing Audit", "BILLING_AUDIT")],
+        [_btn("🔄 Refresh", "BILLING_HOME")],
+        [_btn("⬅️ Distribution", "DISTRIBUTION"), _btn("⬅️ Admin", "HOME")],
+    ])
+
+
+def billing_subpage_markup(refresh_action: str) -> dict[str, list[list[dict[str, str]]]]:
+    action = str(refresh_action or "").strip().upper()
+    if action not in _BILLING_SUBPAGE_ACTIONS or action == "BILLING_HOME":
+        action = "BILLING_HOME"
+    return _kb([
+        [_btn("🔄 Refresh", action)],
+        [_btn("⬅️ Billing", "BILLING_HOME"), _btn("⬅️ Distribution", "DISTRIBUTION")],
     ])
 
 
