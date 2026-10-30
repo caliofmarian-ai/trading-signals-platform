@@ -135,7 +135,7 @@ def _canonical_row(row: Dict[str, Any]) -> Optional[tuple[Any, ...]]:
         or expiry.get("directional_result") != expected_label
         or _number(row.get("expiry_price")) != price
         or _number(row.get("label_observation_ts")) != observed_ts
-        or finalized_ts < observed_ts
+        or finalized_ts + 1 < observed_ts  # finalized_ts is integer-second precision
     ):
         return None
     return (
