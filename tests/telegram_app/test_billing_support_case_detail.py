@@ -6,6 +6,8 @@ Telegram messages, or expose sensitive proof/message/source identifiers.
 
 from __future__ import annotations
 
+import importlib
+
 from billing import support_cases
 from core import billing_admin_views, bot_service, telegram_admin_ui
 from core.role_constants import ROLE_ANALYST, ROLE_OWNER
@@ -153,7 +155,11 @@ def test_owner_case_callback_is_read_only_with_safe_parent(monkeypatch):
     ctx = _context([_case_event()])
     monkeypatch.setattr(bot_service, "get_primary_role", lambda uid: ROLE_OWNER)
     monkeypatch.setattr(bot_service, "_is_owner_private_for_message", lambda *_args: True)
-    monkeypatch.setattr(billing_admin_views, "_safe_context", lambda: ctx)
+    # Other canonical test suites intentionally purge/re-import core modules.
+    # Patch the exact current runtime module imported by bot_service, not a
+    # stale module object held by this test's top-level import.
+    runtime_views = importlib.import_module("core.billing_admin_views")
+    monkeypatch.setattr(runtime_views, "_safe_context", lambda: ctx)
     result = bot_service._handle_admin_navigation_action(
         f"BILLING_CASE:{token}",
         111,
