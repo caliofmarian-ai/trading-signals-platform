@@ -177,3 +177,54 @@ def test_window_hours_fail_closed(hours):
 def test_invalid_now_timestamp_fails_closed(bad_now):
     with pytest.raises(ValueError):
         publication_evidence.publication_snapshot(now_ts=bad_now)
+
+
+def test_research_panel_shows_read_only_publication_evidence(monkeypatch):
+    from core import bot_service
+    from core.role_constants import ROLE_OWNER
+
+    monkeypatch.setattr(bot_service, "get_primary_role", lambda _id: ROLE_OWNER)
+    monkeypatch.setattr(bot_service, "_iter_recent_engine_events", lambda limit=500: [])
+    monkeypatch.setattr(
+        publication_evidence,
+        "publication_snapshot",
+        lambda: {
+            "status": "OBSERVED",
+            "window_hours": 24,
+            "window_start_utc": "2026-10-29T12:00:00Z",
+            "window_end_utc": "2026-10-30T12:00:00Z",
+            "unique_open_now_published": 2,
+            "published_per_hour_rolling_avg": 0.08,
+            "published_route_rows": 3,
+            "deduplicated_publications": 1,
+            "results": {"FAILED": 0},
+            "invalid_count": 0,
+            "historical_excluded_count": 0,
+        },
+    )
+    response = bot_service._handle_admin_navigation_action(
+        "RESEARCH",
+        12345,
+        {"chat": {"id": -100999, "type": "supergroup"}, "from": {"id": 12345}},
+    )
+    assert "Unique signals published: 2" in response["text"]
+    assert "Observed rolling average per hour: 0.08" in response["text"]
+    assert "Market WIN/LOSS" in response["text"]
+
+
+def test_publication_evidence_inherits_existing_research_role_boundary(monkeypatch):
+    from core import bot_service
+    from core.role_constants import ROLE_USER
+
+    monkeypatch.setattr(bot_service, "get_primary_role", lambda _id: ROLE_USER)
+
+    def forbidden():
+        raise AssertionError("Unauthorized research page must not inspect publication records")
+
+    monkeypatch.setattr(publication_evidence, "publication_snapshot", forbidden)
+    response = bot_service._handle_admin_navigation_action(
+        "RESEARCH",
+        12345,
+        {"chat": {"id": -100999, "type": "supergroup"}, "from": {"id": 12345}},
+    )
+    assert response["text"] == "Access denied (missing panel permission)."
