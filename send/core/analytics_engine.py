@@ -500,7 +500,14 @@ def get_symbol_ranking(range_days: int) -> List[Dict[str, Any]]:
 
 
 def get_focus_history(range_days: int) -> Dict[str, Any]:
-    return {}
+    """Return bounded, observed primary-v3 FSM watchlist history.
+
+    Missing entries, replacement victims and unrecorded periods are never
+    reconstructed from the current mutable watchlist snapshot.
+    """
+    from core import focus_history_evidence
+
+    return focus_history_evidence.build_focus_history(range_days=range_days)
 
 
 def get_funnel(range_days: int) -> Dict[str, Any]:
