@@ -121,6 +121,16 @@ class FinnhubForexFeed:
         self._stream_started = False
         self._stream_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        # Connection != subscription acceptance != actual EUR/USD price.
+        # Only real provider ticks can advance strategy readiness.
+        self._stream_state = "NOT_STARTED"
+        self._subscription_state = "NOT_SENT"
+        self._stream_connection_attempts = 0
+        self._stream_failure_count = 0
+        self._stream_last_failure_class: Optional[str] = None
+        self._valid_trade_tick_count = 0
+        self._last_stream_connected_ts: Optional[int] = None
+        self._last_stream_evidence_emit_ts: Dict[str, int] = {}
         self._load_store()
 
     def _connect(self):
@@ -206,7 +216,12 @@ class FinnhubForexFeed:
             payload = json.loads(message) if isinstance(message, str) else message
         except (ValueError, TypeError):
             return
-        if not isinstance(payload, dict) or payload.get("type") != "trade":
+        if not isinstance(payload, dict):
+            return
+        if payload.get("type") == "error":
+            # Never persist or print provider error text: it may contain secrets.
+            raise FinnhubMarketDataUnavailable("Finnhub provider returned an error frame")
+        if payload.get("type") != "trade":
             return
         rows = payload.get("data")
         if not isinstance(rows, list):
@@ -230,9 +245,15 @@ class FinnhubForexFeed:
                 self._last_price_ts = tick_ms // 1000
                 for code, seconds in (("M1", 60), ("M5", 300)):
                     self._upsert_tick(code, seconds, tick_ms // 1000, price, volume)
+                self._valid_trade_tick_count += 1
+                self._stream_state = "RECEIVING_REAL_TICKS"
+                self._subscription_state = "REAL_TICK_CONFIRMED"
+                self._stream_last_failure_class = None
             changed = True
         if changed:
             self._persist_store()
+            if self._valid_trade_tick_count == 1:
+                self._emit_stream_observation("FIRST_REAL_TICK")
 
     def _upsert_tick(
         self, code: str, seconds: int, ts: int, price: float, volume: float
@@ -267,15 +288,84 @@ class FinnhubForexFeed:
             older["complete"] = True
         del candles[MAX_CANDLES:]
 
+    def _emit_stream_observation(self, event: str) -> None:
+        """One bounded Railway-only, price-free diagnostic per event / 5 minutes.
+
+        A socket connect/subscribe event is NEVER interpreted as received data.
+        This does not write historical files, bypass publishing or run new API requests.
+        """
+        now_ts = int(self.clock())
+        with self._lock:
+            last = self._last_stream_evidence_emit_ts.get(event)
+            if last is not None and 0 <= now_ts - last < 300:
+                return
+            self._last_stream_evidence_emit_ts[event] = now_ts
+            record = {
+                "component": "finnhub_stream_readiness",
+                "event": event,
+                "symbol": "EUR/USD",
+                "stream_state": self._stream_state,
+                "subscription_state": self._subscription_state,
+                "connection_attempts": self._stream_connection_attempts,
+                "failure_count": self._stream_failure_count,
+                "failure_class": self._stream_last_failure_class,
+                "valid_trade_tick_count": self._valid_trade_tick_count,
+                "last_real_tick_ts": self._last_price_ts,
+                "M1_observed_candles": len(self._candles["M1"]),
+                "M5_observed_candles": len(self._candles["M5"]),
+                "required_candles_each": self.minimum_candles,
+                "no_prices_or_trade_recommendations": True,
+            }
+        try:
+            print("TSP_FINNHUB_STREAM_EVIDENCE " + json.dumps(record, sort_keys=True), flush=True)
+        except Exception:
+            # A diagnostic print must never block market-data collection.
+            pass
+
+    @staticmethod
+    def _safe_transport_failure_class(exc: Exception) -> str:
+        # Bounded allowlist: never propagate WebSocket exception messages/URLs
+        # (the URL contains an API key).
+        name = type(exc).__name__
+        if isinstance(exc, FinnhubMarketDataUnavailable):
+            return "PROVIDER_ERROR_FRAME"
+        allowed = {
+            "TimeoutError", "ConnectionError", "ConnectionRefusedError",
+            "ConnectionResetError", "BrokenPipeError", "OSError",
+            "WebSocketTimeoutException", "WebSocketConnectionClosedException",
+            "WebSocketBadStatusException", "WebSocketProtocolException",
+        }
+        return name if name in allowed else "OTHER_TRANSPORT_ERROR"
+
     def _stream_forever(self) -> None:
         while not self._stop_event.is_set():
             socket = None
             try:
+                with self._lock:
+                    self._stream_connection_attempts += 1
+                    self._stream_state = "CONNECTING"
                 socket = self._connect()
+                with self._lock:
+                    self._last_stream_connected_ts = int(self.clock())
+                    self._stream_state = "CONNECTED_NOT_SUBSCRIBED"
                 socket.send(json.dumps({"type": "subscribe", "symbol": self.finnhub_symbol}))
+                with self._lock:
+                    self._subscription_state = "SENT_UNVERIFIED"
+                    self._stream_state = "SUBSCRIBED_WAITING_REAL_TICK"
+                self._emit_stream_observation("SUBSCRIBE_SENT_UNVERIFIED")
                 while not self._stop_event.is_set():
-                    self.ingest_message(socket.recv())
-            except Exception:
+                    frame = socket.recv()
+                    if frame == "" or frame == b"":
+                        # A clean close is not a market-data tick.
+                        raise ConnectionError("Finnhub stream closed")
+                    self.ingest_message(frame)
+            except Exception as exc:
+                with self._lock:
+                    self._stream_failure_count += 1
+                    self._stream_last_failure_class = self._safe_transport_failure_class(exc)
+                    self._stream_state = "DISCONNECTED_RETRYING"
+                    self._subscription_state = "UNVERIFIED_AFTER_DISCONNECT"
+                self._emit_stream_observation("STREAM_RETRYING")
                 if self._stop_event.wait(2.0):
                     return
             finally:
@@ -284,12 +374,16 @@ class FinnhubForexFeed:
                         socket.close()
                     except Exception:
                         pass
+                if self._stop_event.is_set():
+                    with self._lock:
+                        self._stream_state = "STOPPED"
 
     def start(self) -> None:
         with self._lock:
             if self._stream_started:
                 return
             self._stream_started = True
+            self._stream_state = "STARTING"
             self._stream_thread = threading.Thread(
                 target=self._stream_forever,
                 name="finnhub-eurusd-price-stream",
@@ -299,6 +393,8 @@ class FinnhubForexFeed:
 
     def stop(self) -> None:
         self._stop_event.set()
+        with self._lock:
+            self._stream_state = "STOPPED"
 
     def get_candles(self, symbol: str, timeframe: str) -> List[Dict[str, Any]]:
         normalize_symbol(symbol)
@@ -335,6 +431,13 @@ class FinnhubForexFeed:
             load_state = self._store_load_state
             write_state = self._store_write_state
             last_persisted_ts = self._last_persisted_ts
+            stream_state = self._stream_state
+            subscription_state = self._subscription_state
+            stream_connection_attempts = self._stream_connection_attempts
+            stream_failure_count = self._stream_failure_count
+            stream_last_failure_class = self._stream_last_failure_class
+            valid_trade_tick_count = self._valid_trade_tick_count
+            last_stream_connected_ts = self._last_stream_connected_ts
             integrity = inspect_history(self._candles)
         if load_state == "ERROR" or write_state == "ERROR":
             persistence_state = "ERROR"
@@ -350,6 +453,13 @@ class FinnhubForexFeed:
             "symbol": self.symbol,
             "provider_symbol": self.finnhub_symbol,
             "last_price_ts": last_price_ts,
+            "stream_state": stream_state,
+            "subscription_state": subscription_state,
+            "stream_connection_attempts": stream_connection_attempts,
+            "stream_failure_count": stream_failure_count,
+            "stream_last_failure_class": stream_last_failure_class,
+            "valid_trade_tick_count": valid_trade_tick_count,
+            "last_stream_connected_ts": last_stream_connected_ts,
             "price_age_seconds": age,
             "freshness_limit_seconds": self.freshness_seconds,
             "fresh": age is not None and 0 <= age <= self.freshness_seconds,
