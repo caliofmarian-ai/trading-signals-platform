@@ -1424,6 +1424,18 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
                 "Evidence: UNKNOWN (objective source unavailable)"
             )
         content = content + "\n\n" + market_text
+        # R-030: historical focus observations come exclusively from primary-v3
+        # persisted FSM transition logs, never from current mutable watchlist.
+        try:
+            from core import focus_history_evidence
+            focus_snapshot = focus_history_evidence.build_focus_history(range_days=7)
+            focus_text = focus_history_evidence.render_focus_history(focus_snapshot)
+        except Exception:
+            focus_text = (
+                "FSM Focus / Watchlist History — read only\n"
+                "Evidence: UNKNOWN (FSM focus log unavailable)"
+            )
+        content = content + "\n\n" + focus_text
         try:
             import os as _os
             report_path = _find_latest_report_json()
