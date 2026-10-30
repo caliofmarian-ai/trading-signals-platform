@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Optional
 
 import requests
 
-from billing import payment_ledger
+from billing import commercial_checkout, payment_ledger
 from core import storage
 
 PROVIDER = "REVOLUT_MERCHANT"
@@ -736,20 +736,27 @@ def create_payment_intent_and_order(
     path: str | None = None,
     payment_path: str | None = None,
     now_ts: float | int | None = None,
+    contract_path: str | Path | None = None,
+    eligibility_path: str | Path | None = None,
 ) -> Dict[str, Any]:
-    intent_result = payment_ledger.create_payment_intent(
+    # Paid commercial intent creation must cross the provider-neutral
+    # compliance/catalog boundary before any chargeable provider order exists.
+    # Recovery/reconciliation of already-governed intents remains separate.
+    intent_result = commercial_checkout.create_paid_payment_intent(
         subscriber_ref=subscriber_ref,
         strategy_product_id=strategy_product_id,
         plan_id=plan_id,
-        amount_minor=amount_minor,
-        currency=currency,
-        payment_method="FIAT",
         provider=PROVIDER,
+        payment_method="FIAT",
         idempotency_key=idempotency_key,
+        requested_amount_minor=amount_minor,
+        requested_currency=currency,
         payment_intent_id=payment_intent_id,
         audit_correlation_id=audit_correlation_id,
         now_ts=now_ts,
-        path=payment_path,
+        payment_path=payment_path,
+        contract_path=contract_path,
+        eligibility_path=eligibility_path,
     )
     intent_id = str(intent_result["record"]["payment_intent_id"])
     order_result = create_order_for_intent(
