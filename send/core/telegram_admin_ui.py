@@ -50,6 +50,15 @@ _BILLING_SUBPAGE_ACTIONS: frozenset[str] = frozenset({
     "BILLING_AUDIT",
 })
 
+# R-031: Research is still one canonical root; these are strictly read-only
+# child pages that inherit the existing RESEARCH panel authorization.
+_RESEARCH_SUBPAGE_ACTIONS: frozenset[str] = frozenset({
+    "RESEARCH_PUBLICATIONS",
+    "RESEARCH_LIFECYCLE",
+    "RESEARCH_MARKET",
+    "RESEARCH_FOCUS",
+})
+
 _SAFE_KNOWLEDGE_RETURN_ACTIONS: frozenset[str] = frozenset({
     "HOME",
     "STATUS",
@@ -156,6 +165,10 @@ CANONICAL_ADMIN_PARENT_MAP: dict[str, str] = {
     "BILLING_PROVIDERS": "BILLING_HOME",
     "BILLING_AUDIT": "BILLING_HOME",
     "RESEARCH": "HOME",
+    "RESEARCH_PUBLICATIONS": "RESEARCH",
+    "RESEARCH_LIFECYCLE": "RESEARCH",
+    "RESEARCH_MARKET": "RESEARCH",
+    "RESEARCH_FOCUS": "RESEARCH",
     "INTELLIGENCE": "HOME",
     "AFFILIATE": "HOME",
     "ROLES": "HOME",
@@ -230,6 +243,11 @@ def is_canonical_panel_action(panel_action: str) -> bool:
 def is_distribution_subpage_action(action: str) -> bool:
     """Return True for billing pages that inherit Distribution authorization."""
     return str(action or "").strip().upper() in _BILLING_SUBPAGE_ACTIONS
+
+
+def is_research_subpage_action(action: str) -> bool:
+    """Return True for read-only pages inheriting the Research role boundary."""
+    return str(action or "").strip().upper() in _RESEARCH_SUBPAGE_ACTIONS
 
 
 def knowledge_visible_for_role(role: str, knowledge_key: str) -> bool:
@@ -671,13 +689,33 @@ def research_markup(*, has_file: bool = False, filename: str = "") -> dict[str, 
     Source: ADMIN_TREE_MAP_v2.0.0.md §6.6
     Purpose: performance summaries, rejection analytics, outcome analytics.
     """
-    rows: list[list[dict[str, str]]] = []
+    rows: list[list[dict[str, str]]] = [
+        [
+            _btn("📡 Published Signals", "RESEARCH_PUBLICATIONS"),
+            _btn("🔀 Signal Lifecycle", "RESEARCH_LIFECYCLE"),
+        ],
+        [
+            _btn("📈 Market Outcomes", "RESEARCH_MARKET"),
+            _btn("🧭 Focus History", "RESEARCH_FOCUS"),
+        ],
+    ]
     if has_file and filename:
         rows.append([_btn("📥 Download Report", f"FILE_DL:{DIR_KEY_RPT}:{filename}")])
     rows.append([_btn("🔄 Refresh", "RESEARCH")])
     rows.append([_knowledge_btn("research_analytics", "RESEARCH")])
     rows.append([_btn("⬅️ Admin", "HOME")])
     return _kb(rows)
+
+
+def research_subpage_markup(action: str) -> dict[str, list[list[dict[str, str]]]]:
+    """Safe report detail buttons, without introducing a new admin root."""
+    page = str(action or "").strip().upper()
+    if page not in _RESEARCH_SUBPAGE_ACTIONS:
+        page = "RESEARCH"
+    return _kb([
+        [_btn("🔄 Refresh", page)],
+        [_btn("⬅️ Research & Analytics", "RESEARCH"), _btn("⬅️ Admin", "HOME")],
+    ])
 
 
 def intelligence_markup() -> dict[str, list[list[dict[str, str]]]]:
