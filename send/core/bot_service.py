@@ -205,17 +205,34 @@ def _send_reply(message: Dict[str, Any], text: str, reply_markup: Optional[Dict[
 
 
 def _emit_interactive_trace(payload: Dict[str, Any], *, critical: bool = False) -> None:
+    """Keep anomalous navigation evidence, not successful per-button noise.
+
+    Each normal edit previously wrote and fsynced an error-events JSONL line.
+    Critical navigation failures remain observable, without persisting the
+    raw user/chat IDs or filesystem paths present in the rich UI trace.
+    """
+    if not critical:
+        return
+    diagnostic = {
+        "correlation_id": payload.get("correlation_id"),
+        "update_id": payload.get("update_id"),
+        "command_family": payload.get("command_family"),
+        "selected_operation": payload.get("selected_operation"),
+        "edit_result_category": payload.get("edit_result_category"),
+        "preferred_edit_result_category": payload.get("preferred_edit_result_category"),
+        "active_edit_result_category": payload.get("active_edit_result_category"),
+        "error_present": bool(payload.get("send_error") or payload.get("post_send_error")),
+    }
     observability_logger.log_warning(
         warn_type="telegram_ui_navigation_trace",
-        message="Telegram interactive navigation decision",
-        context=payload,
+        message="Telegram interactive navigation anomaly",
+        context=diagnostic,
         source={"module": "bot_service", "function": "_send_interactive_page"},
     )
-    if critical:
-        try:
-            print(json.dumps({"component": "telegram_ui_navigation", **payload}, sort_keys=True), file=sys.stderr, flush=True)
-        except Exception:
-            pass
+    try:
+        print(json.dumps({"component": "telegram_ui_navigation", **diagnostic}, sort_keys=True), file=sys.stderr, flush=True)
+    except Exception:
+        pass
 
 
 def _edit_interactive_message(
