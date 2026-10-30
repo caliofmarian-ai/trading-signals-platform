@@ -273,14 +273,14 @@ def test_research_panel_focus_history_requires_admin_permission(tmp_path: Path, 
     )
     monkeypatch.setattr(bot_service, "get_primary_role", lambda _: ROLE_OWNER)
     response = bot_service._handle_admin_navigation_action(
-        "RESEARCH", 123,
+        "RESEARCH_FOCUS", 123,
         {"chat": {"id": -100456, "type": "supergroup"}, "from": {"id": 123}},
     )
     assert "FSM Focus / Watchlist History" in response["text"]
     assert "Entries / exits / refreshes: 1 / 0 / 0" in response["text"]
     monkeypatch.setattr(bot_service, "get_primary_role", lambda _: ROLE_USER)
     forbidden = bot_service._handle_admin_navigation_action(
-        "RESEARCH", 123,
+        "RESEARCH_FOCUS", 123,
         {"chat": {"id": -100456, "type": "supergroup"}, "from": {"id": 123}},
     )
     assert forbidden["text"] == "Access denied (missing panel permission)."
