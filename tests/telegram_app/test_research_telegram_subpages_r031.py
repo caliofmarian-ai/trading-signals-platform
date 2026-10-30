@@ -108,7 +108,7 @@ def test_research_overview_never_reads_every_report_source(monkeypatch):
 
     response = bot._handle_admin_navigation_action("RESEARCH", 12345, _message())
     assert "Research & Analytics" in response["text"]
-    assert "Select a report below" in response["text"]
+    assert "Select a report to inspect" in response["text"]
     assert "Strategy Decisions: recent strategy evaluations" in response["text"]
     assert "ADMIN_NAV:RESEARCH_STRATEGY" in _actions(response["reply_markup"])
     assert _utf16_units(response["text"]) <= bot._RESEARCH_TELEGRAM_TEXT_BUDGET
