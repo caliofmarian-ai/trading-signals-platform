@@ -21,7 +21,7 @@ def _trade(
     timeframe: str = "M1",
     strategy_version: str | None = "2.0.0",
     direction: str = "BUY",
-    open_ts: int = NOW - 500,
+    open_ts: int = NOW - 1000,
     expiry_lag: int = 1,
 ) -> dict:
     entry = 1.1
@@ -45,10 +45,15 @@ def _trade(
         "direction": direction,
         "entry_price": entry,
         "open_ts": open_ts,
+        "finalized_ts": max(open_ts + 601, observed + 1),
         "expiry_price": price,
         "result_at_expiry": outcome,
         "label_observation_ts": observed,
         "checkpoints": {
+            "mid_expiry": {"state": "OBSERVED"},
+            "post_1m": {"state": "OBSERVED"},
+            "post_3m": {"state": "OBSERVED"},
+            "post_5m": {"state": "OBSERVED"},
             "expiry": {
                 "state": "OBSERVED",
                 "price": price,
@@ -190,7 +195,7 @@ def test_explicit_utc_open_time_window_no_future_or_silent_backfill(tmp_path: Pa
     result = _snapshot(
         tmp_path,
         [_trade("START", open_ts=NOW - 7 * 86400),
-         _trade("END", open_ts=NOW),
+         _trade("END", open_ts=NOW - 601),
          _trade("PAST", open_ts=NOW - 7 * 86400 - 1),
          _trade("FUTURE", open_ts=NOW + 1)],
     )
@@ -263,3 +268,21 @@ def test_invalid_window_fails_closed(range_days):
 def test_invalid_now_fails_closed(now_ts):
     with pytest.raises(ValueError):
         market.build_market_snapshot(now_ts=now_ts)
+
+
+
+def test_future_labels_do_not_leak_into_current_market_stats(tmp_path: Path):
+    future_label = _trade("LOOKAHEAD", expiry_lag=2000)
+    result = _snapshot(tmp_path, [future_label, _trade("REAL")])
+    assert result["verified_finalized_trade_count"] == 1
+    assert result["quality"]["future_evidence_excluded"] == 1
+
+
+def test_claimed_finalized_missing_checkpoint_fails_closed(tmp_path: Path):
+    incomplete = _trade("MISSING-CHECKPOINT")
+    incomplete["checkpoints"]["post_3m"]["state"] = "PENDING"
+    missing_final_ts = _trade("MISSING-FINALIZED-TIME")
+    missing_final_ts.pop("finalized_ts")
+    result = _snapshot(tmp_path, [incomplete, missing_final_ts, _trade("REAL")])
+    assert result["quality"]["invalid_rows"] == 2
+    assert result["verified_finalized_trade_count"] == 1
