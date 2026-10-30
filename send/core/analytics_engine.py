@@ -494,7 +494,14 @@ def get_focus_history(range_days: int) -> Dict[str, Any]:
 
 
 def get_funnel(range_days: int) -> Dict[str, Any]:
-    return {}
+    """Read-only lifecycle stage evidence; never market outcome or mutation truth.
+
+    The report separates strategy, FSM, candidates, route publication and
+    visibility. It does not fabricate cross-stage conversion rates.
+    """
+    from core import lifecycle_funnel_evidence
+
+    return lifecycle_funnel_evidence.build_funnel(range_days=range_days)
 
 
 def get_user_stats(user_id: int, range_days: int) -> Dict[str, Any]:
