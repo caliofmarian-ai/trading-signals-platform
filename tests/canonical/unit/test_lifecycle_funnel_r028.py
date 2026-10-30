@@ -326,7 +326,7 @@ def test_research_renders_funnel_for_authorized_role(monkeypatch, tmp_path: Path
     )
     monkeypatch.setattr(bot_service, "_iter_recent_engine_events", lambda limit=500: [])
     response = bot_service._handle_admin_navigation_action(
-        "RESEARCH", 12345,
+        "RESEARCH_LIFECYCLE", 12345,
         {"chat": {"id": -100999, "type": "supergroup"}, "from": {"id": 12345}},
     )
     assert "Lifecycle evidence — trailing 1d UTC" in response["text"]
@@ -347,7 +347,7 @@ def test_research_funnel_not_read_for_unauthorized_role(monkeypatch):
 
     monkeypatch.setattr(funnel, "build_funnel", forbidden)
     response = bot_service._handle_admin_navigation_action(
-        "RESEARCH", 12345,
+        "RESEARCH_LIFECYCLE", 12345,
         {"chat": {"id": -100999, "type": "supergroup"}, "from": {"id": 12345}},
     )
     assert response["text"] == "Access denied (missing panel permission)."
