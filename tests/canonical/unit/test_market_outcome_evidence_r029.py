@@ -268,7 +268,7 @@ def test_research_shows_read_only_market_evidence_for_authorized_owner(tmp_path:
     )
     monkeypatch.setattr(bot_service, "_iter_recent_engine_events", lambda limit=500: [])
     result = bot_service._handle_admin_navigation_action(
-        "RESEARCH", 12345, {"chat": {"id": -100999, "type": "supergroup"}, "from": {"id": 12345}},
+        "RESEARCH_MARKET", 12345, {"chat": {"id": -100999, "type": "supergroup"}, "from": {"id": 12345}},
     )
     assert "Objective market outcomes" in result["text"]
     assert "Validated trades: 1" in result["text"]
