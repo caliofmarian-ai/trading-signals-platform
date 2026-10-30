@@ -180,10 +180,15 @@ def test_invalid_now_timestamp_fails_closed(bad_now):
 
 
 def test_research_panel_shows_read_only_publication_evidence(monkeypatch):
-    from core import bot_service
+    from core import admin_permissions, bot_service
     from core.role_constants import ROLE_OWNER
 
     monkeypatch.setattr(bot_service, "get_primary_role", lambda _id: ROLE_OWNER)
+    monkeypatch.setattr(
+        admin_permissions,
+        "has_permission",
+        lambda _user_id, permission: permission == "admin.view",
+    )
     monkeypatch.setattr(bot_service, "_iter_recent_engine_events", lambda limit=500: [])
     monkeypatch.setattr(
         publication_evidence,
@@ -228,3 +233,25 @@ def test_publication_evidence_inherits_existing_research_role_boundary(monkeypat
         {"chat": {"id": -100999, "type": "supergroup"}, "from": {"id": 12345}},
     )
     assert response["text"] == "Access denied (missing panel permission)."
+
+
+
+def test_oversized_interactive_log_fails_closed_instead_of_blocking_bot(tmp_path: Path):
+    path = tmp_path / "large_distribution_log.jsonl"
+    with path.open("wb") as handle:
+        handle.truncate(publication_evidence.MAX_INTERACTIVE_SOURCE_BYTES + 1)
+    result = publication_evidence.publication_snapshot(path=str(path), now_ts=NOW)
+    assert result["status"] == "UNKNOWN"
+    assert result["reason"] == "SOURCE_TOO_LARGE_FOR_INTERACTIVE_SCAN"
+    assert result["published_per_hour_rolling_avg"] is None
+
+
+def test_unhashable_publish_result_degrades_row_not_research_surface(tmp_path: Path):
+    path = tmp_path / "malformed_results.jsonl"
+    bad = _row("SIG-BAD")
+    bad["data"]["publish_result"] = {"unexpected": True}
+    _write(path, [bad, _row("SIG-VALID")])
+    result = publication_evidence.publication_snapshot(path=str(path), now_ts=NOW)
+    assert result["status"] == "OBSERVED"
+    assert result["invalid_count"] == 1
+    assert result["unique_open_now_published"] == 1
