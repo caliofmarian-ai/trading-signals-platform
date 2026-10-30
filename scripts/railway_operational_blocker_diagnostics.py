@@ -152,7 +152,7 @@ def inspect_error_tail(*, path: str | Path, now_ts: int) -> dict[str, Any]:
             continue
         parsed += 1
         event_type = value.get("event_type")
-        if event_type not in {"warning", "error", "config_load_error"}:
+        if not isinstance(event_type, str) or event_type not in {"warning", "error", "config_load_error"}:
             continue
         # Date/time and source kind are required to attribute a recent warning.
         stamp_ms = _timestamp(value.get("ts_epoch_ms"), now_ts * 1000)
