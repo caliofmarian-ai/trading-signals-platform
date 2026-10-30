@@ -91,7 +91,13 @@ def _canonical_row(row: Dict[str, Any]) -> Optional[tuple[Any, ...]]:
         return None
 
     open_ts = row.get("open_ts")
+    finalized_ts = row.get("finalized_ts")
     if isinstance(open_ts, bool) or not isinstance(open_ts, int) or open_ts <= 0:
+        return None
+    if (
+        isinstance(finalized_ts, bool) or not isinstance(finalized_ts, int)
+        or finalized_ts < open_ts
+    ):
         return None
     direction = row.get("direction")
     entry = _number(row.get("entry_price"))
@@ -100,6 +106,14 @@ def _canonical_row(row: Dict[str, Any]) -> Optional[tuple[Any, ...]]:
     checkpoints = row.get("checkpoints")
     expiry = checkpoints.get("expiry") if isinstance(checkpoints, dict) else None
     if not isinstance(expiry, dict) or expiry.get("state") != "OBSERVED":
+        return None
+    # FINALIZED is authoritative only when all governed checkpoints resolved
+    # with real observations; otherwise the record is not objective full truth.
+    if not all(
+        isinstance(checkpoints.get(key), dict)
+        and checkpoints[key].get("state") == "OBSERVED"
+        for key in ("mid_expiry", "expiry", "post_1m", "post_3m", "post_5m")
+    ):
         return None
     price = _number(expiry.get("price"))
     target_ts = _number(expiry.get("target_ts"))
@@ -121,6 +135,7 @@ def _canonical_row(row: Dict[str, Any]) -> Optional[tuple[Any, ...]]:
         or expiry.get("directional_result") != expected_label
         or _number(row.get("expiry_price")) != price
         or _number(row.get("label_observation_ts")) != observed_ts
+        or finalized_ts < observed_ts
     ):
         return None
     return (
@@ -189,6 +204,7 @@ def build_market_snapshot(
             "out_of_window": 0,
             "identical_duplicates": 0,
             "conflicting_identities": 0,
+            "future_evidence_excluded": 0,
         }
     )
     try:
@@ -223,6 +239,14 @@ def build_market_snapshot(
                 quality["invalid_rows"] += 1
                 continue
             trade_id, _, _, _, _, _, opened, _ = valid
+            # Point-in-time reports must not consume labels or finalization
+            # whose timestamps lie beyond the observation cutoff.
+            if (
+                _number(row.get("label_observation_ts")) > now
+                or row["finalized_ts"] > now
+            ):
+                quality["future_evidence_excluded"] += 1
+                continue
             if opened < start or opened > now:
                 quality["out_of_window"] += 1
                 continue
@@ -340,7 +364,8 @@ def render_market_summary(snapshot: Mapping[str, Any]) -> str:
     if any(q.values()):
         lines.append(
             f"Quality: invalid {q.get('invalid_rows', 0)}, incomplete {q.get('incomplete_rows', 0)}, "
-            f"conflicting {q.get('conflicting_identities', 0)}, other-truth excluded {q.get('other_truth_excluded', 0)}"
+            f"conflicting {q.get('conflicting_identities', 0)}, future excluded {q.get('future_evidence_excluded', 0)}, "
+            f"other-truth excluded {q.get('other_truth_excluded', 0)}"
         )
     lines.extend(
         [
