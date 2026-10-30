@@ -598,42 +598,103 @@ def handle_vote_callback_data(
 
 
 def compute_signal_stats(signal_id: str) -> Dict[str, Any]:
-    signal_id = str(signal_id).strip()
+    """Summarize COMMUNITY_SELF_REPORT only, never strategy market performance.
+
+    This callback helper is an explicitly non-authoritative community view.
+    MISSED is a distinct non-execution report, never a directional LOSS.
+    The former unqualified `win_rate_percent` remains null as a compatibility
+    marker; only a sufficiently sampled, clearly labelled self-report share
+    may be displayed by a governed downstream user interface.
+    """
+    signal_id = str(signal_id or "").strip()
     wins = loses = missed = 0
+    excluded_other_truth = 0
+    duplicate_count = 0
+    invalid_count = 0
+    seen_members: set[str] = set()
 
     try:
-        with open(OUTCOMES_JSONL, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
+        with open(OUTCOMES_JSONL, "r", encoding="utf-8") as source:
+            for raw_line in source:
+                if not raw_line.strip():
                     continue
                 try:
                     import json
-                    obj = json.loads(line)
-                except Exception:
+
+                    record = json.loads(raw_line)
+                except (ValueError, TypeError):
+                    invalid_count += 1
+                    continue
+                if not isinstance(record, dict) or record.get("signal_id") != signal_id:
                     continue
 
-                if obj.get("signal_id") != signal_id:
+                # Legacy unlabeled rows from this dedicated community-only
+                # file may be interpreted as community feedback, but an
+                # explicitly different truth layer must never enter the tally.
+                if (
+                    record.get("truth_domain") not in {None, "COMMUNITY_TRUTH"}
+                    or record.get("truth_source") not in {None, "COMMUNITY_SELF_REPORT"}
+                    or record.get("event_type") not in {None, "user_outcome_record"}
+                ):
+                    excluded_other_truth += 1
+                    continue
+                outcome = str(record.get("outcome") or "").upper().strip()
+                if outcome not in ALLOWED_OUTCOMES:
+                    invalid_count += 1
                     continue
 
-                out = str(obj.get("outcome", "")).upper()
-                if out == "WIN":
+                member = record.get("member_ref") or record.get("user_id")
+                if isinstance(member, bool) or not isinstance(member, (str, int)):
+                    invalid_count += 1
+                    continue
+                member_key = str(member).strip()
+                if not member_key:
+                    invalid_count += 1
+                    continue
+                if member_key in seen_members:
+                    duplicate_count += 1
+                    continue
+                seen_members.add(member_key)
+                if outcome == "WIN":
                     wins += 1
-                elif out == "LOSE":
+                elif outcome == "LOSE":
                     loses += 1
-                elif out == "MISSED":
+                else:
                     missed += 1
     except FileNotFoundError:
         pass
 
     total = wins + loses + missed
-    win_rate = (wins / total * 100.0) if total > 0 else 0.0
+    decisive = wins + loses
+    # Match the canonical analytics small-sample discipline; even when a
+    # descriptive rate exists, it is self-report and NOT MARKET_TRUTH.
+    minimum_sample = 5
+    insufficient_sample = decisive < minimum_sample
+    self_reported_win_rate = (
+        round(wins / decisive * 100.0, 2)
+        if not insufficient_sample else None
+    )
+    missed_rate = round(missed / total * 100.0, 2) if total else None
 
     return {
         "signal_id": signal_id,
+        "truth_domain": "COMMUNITY_TRUTH",
+        "truth_source": "COMMUNITY_SELF_REPORT",
+        "authoritative_for_strategy_performance": False,
+        "win_rate_truth_domain": "COMMUNITY_TRUTH",
         "win_count": wins,
         "lose_count": loses,
         "missed_count": missed,
         "total": total,
-        "win_rate_percent": round(win_rate, 2),
+        "no_data": total == 0,
+        "decisive_sample": decisive,
+        "insufficient_sample": insufficient_sample,
+        "minimum_sample_for_rate": minimum_sample,
+        "self_reported_win_rate_percent": self_reported_win_rate,
+        "community_missed_rate_percent": missed_rate,
+        "win_rate_percent": None,
+        "deprecated_unqualified_win_rate_disabled": True,
+        "excluded_other_truth": excluded_other_truth,
+        "duplicate_count": duplicate_count,
+        "invalid_count": invalid_count,
     }
