@@ -311,6 +311,19 @@ def collect_checkpoint(*, base_dir: Path, now_ts: int | None = None) -> dict[str
             "reason": "BLOCKER_DIAGNOSTICS_FAILED",
         }
 
+    # R-036: compare persisted active-symbol count against current configured
+    # REST budget without issuing API calls or mutating Owner provider choice.
+    try:
+        from scripts.railway_twelve_data_capacity import collect_request_capacity
+        report["market_request_capacity"] = collect_request_capacity(
+            base_dir=Path(base_dir),
+        )
+    except Exception:
+        report["market_request_capacity"] = {
+            "scope": "PREBOOT_CONFIG_CAPACITY_ESTIMATE_NOT_OBSERVED_REQUESTS",
+            "status": "UNKNOWN", "reason": "CAPACITY_READER_FAILED",
+        }
+
     # Never echo the provider token/config body; only known code identifiers.
     candidate = str(os.getenv("MARKET_DATA_PROVIDER") or "").strip().upper()
     report["configured_provider_from_env"] = (
