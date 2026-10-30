@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import List, Optional
 
 from core.owner_knowledge import get_knowledge
@@ -242,9 +243,18 @@ def is_canonical_panel_action(panel_action: str) -> bool:
     return str(panel_action or "").strip().upper() in _ALL_PANEL_KEYS
 
 
+_BILLING_CASE_TOKEN_RE = re.compile(r"^BILLING_CASE:[0-9A-F]{16}$")
+
+
+def is_billing_case_detail_action(action: str) -> bool:
+    """Only well-formed opaque case tokens may enter the gated detail route."""
+    return bool(_BILLING_CASE_TOKEN_RE.fullmatch(str(action or "").strip().upper()))
+
+
 def is_distribution_subpage_action(action: str) -> bool:
-    """Return True for billing pages that inherit Distribution authorization."""
-    return str(action or "").strip().upper() in _BILLING_SUBPAGE_ACTIONS
+    """Billing pages, including opaque case details, inherit Distribution RBAC."""
+    normalized = str(action or "").strip().upper()
+    return normalized in _BILLING_SUBPAGE_ACTIONS or is_billing_case_detail_action(normalized)
 
 
 def is_research_subpage_action(action: str) -> bool:
@@ -682,6 +692,37 @@ def billing_subpage_markup(refresh_action: str) -> dict[str, list[list[dict[str,
         [_btn("🔄 Refresh", action)],
         [_btn("⬅️ Billing", "BILLING_HOME"), _btn("⬅️ Distribution", "DISTRIBUTION")],
     ])
+
+
+def billing_support_queue_markup(
+    cases: list[tuple[str, str]],
+) -> dict[str, list[list[dict[str, str]]]]:
+    """Opaque read-only links to at most five verified open support cases."""
+    rows: list[list[dict[str, str]]] = []
+    for label, raw_token in cases[:5]:
+        token = str(raw_token or "").lower()
+        if not is_billing_case_detail_action(f"BILLING_CASE:{token}"):
+            continue
+        # The visible label is derived from the fixed-length token, never from
+        # free-form support text or a raw case/subscriber identifier.
+        rows.append([_btn(f"🔎 CASE-…{token[:8].upper()}", f"BILLING_CASE:{token}")])
+    rows.extend([
+        [_btn("🔄 Refresh Queue", "BILLING_SUPPORT")],
+        [_btn("⬅️ Billing", "BILLING_HOME"), _btn("⬅️ Distribution", "DISTRIBUTION")],
+    ])
+    return _kb(rows)
+
+
+def billing_support_case_markup(case_token: str) -> dict[str, list[list[dict[str, str]]]]:
+    token = str(case_token or "").lower()
+    rows: list[list[dict[str, str]]] = []
+    if is_billing_case_detail_action(f"BILLING_CASE:{token}"):
+        rows.append([_btn("🔄 Refresh Case", f"BILLING_CASE:{token}")])
+    rows.extend([
+        [_btn("⬅️ Support Queue", "BILLING_SUPPORT")],
+        [_btn("⬅️ Billing", "BILLING_HOME")],
+    ])
+    return _kb(rows)
 
 
 def research_markup(*, has_file: bool = False, filename: str = "") -> dict[str, list[list[dict[str, str]]]]:
