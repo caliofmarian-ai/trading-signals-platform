@@ -89,7 +89,11 @@ def _source(
             if error is not None:
                 info["invalid_rows"] += 1
                 continue
-            if event.get("event_type") not in event_types:
+            event_type = event.get("event_type")
+            if not isinstance(event_type, str):
+                info["invalid_rows"] += 1
+                continue
+            if event_type not in event_types:
                 continue
             if (
                 event_schema_migration.classify_event_identity(event)
@@ -169,7 +173,7 @@ def build_funnel(
             return False
         if kind == "decision_evaluated":
             decision_kind = data.get("decision_kind")
-            if decision_kind not in (*STAGES, "REJECT", "NO_SIGNAL"):
+            if not isinstance(decision_kind, str) or decision_kind not in (*STAGES, "REJECT", "NO_SIGNAL"):
                 return False
             families[kind] += 1
             decision_kinds[decision_kind] += 1
@@ -198,7 +202,7 @@ def build_funnel(
 
         if kind == "signal_execution_result":
             phase = data.get("execution_phase")
-            if phase not in {"PRE_DISTRIBUTION", "POST_DISTRIBUTION"}:
+            if not isinstance(phase, str) or phase not in {"PRE_DISTRIBUTION", "POST_DISTRIBUTION"}:
                 return False
             families[kind] += 1
             if (
