@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 from collections import Counter
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict
 
 from core import analytics_engine, event_schema_migration
@@ -18,6 +19,7 @@ from core.jsonl_parser import iter_jsonl
 
 DEFAULT_WINDOW_HOURS = 24
 MAX_WINDOW_HOURS = 168
+MAX_INTERACTIVE_SOURCE_BYTES = 16 * 1024 * 1024
 
 _PUBLISH_RESULTS = frozenset(
     {
@@ -82,6 +84,24 @@ def publication_snapshot(
 
     start = now - window_hours * 3600
     source_path = path if path is not None else analytics_engine._DIST_LOG
+    # Admin Research is an interactive Telegram surface. A large append-only
+    # log cannot be scanned synchronously without potentially stalling polling.
+    # Refuse an unbounded scan rather than publish a partial-window rate.
+    try:
+        if Path(source_path).stat().st_size > MAX_INTERACTIVE_SOURCE_BYTES:
+            return _empty_snapshot(
+                hours=window_hours,
+                now=now,
+                reason="SOURCE_TOO_LARGE_FOR_INTERACTIVE_SCAN",
+            )
+    except FileNotFoundError:
+        return _empty_snapshot(
+            hours=window_hours, now=now, reason="DISTRIBUTION_LOG_NOT_FOUND"
+        )
+    except OSError:
+        return _empty_snapshot(
+            hours=window_hours, now=now, reason="DISTRIBUTION_LOG_UNREADABLE"
+        )
     results: Counter[str] = Counter()
     first_publication: Dict[str, float] = {}
     primary_rows = 0
@@ -116,7 +136,7 @@ def publication_snapshot(
                 continue
             data = record.get("data")
             outcome = data.get("publish_result") if isinstance(data, dict) else None
-            if outcome not in _PUBLISH_RESULTS:
+            if not isinstance(outcome, str) or outcome not in _PUBLISH_RESULTS:
                 invalid += 1
                 continue
             if outcome == "PUBLISHED":
