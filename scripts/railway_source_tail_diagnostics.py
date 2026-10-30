@@ -16,6 +16,9 @@ from typing import Any
 
 TAIL_BYTES = 512 * 1024
 _SOURCE_NAMES = ("engine", "distribution", "fsm", "market")
+_LEGACY_COMPAT_EVENT_TYPES = frozenset({
+    "decision", "signal_event", "tier_publish", "tier_reset", "signal_emitted",
+})
 _EVENT_TYPES = {
     "engine": frozenset({"decision_evaluated", "signal_execution_result"}),
     "distribution": frozenset({"route_publish_result", "signal_stage_visible"}),
@@ -102,6 +105,15 @@ def inspect_source(*, source: str, path: str | Path, now_ts: int) -> dict[str, A
             )
             return info
         tail = tail[newline + 1:]
+        if not tail.strip():
+            info = _unknown("NO_COMPLETE_ROW_IN_BOUNDED_SUFFIX")
+            info.update(
+                coverage=coverage,
+                size_mib=round(size / (1024 * 1024), 2),
+                over_16_mib=size > 16 * 1024 * 1024,
+                tail_read_bytes=width,
+            )
+            return info
 
     incomplete_last_line = bool(tail and not tail.endswith(b"\n"))
     lines = tail.split(b"\n")
@@ -135,8 +147,11 @@ def inspect_source(*, source: str, path: str | Path, now_ts: int) -> dict[str, A
             ts = _epoch(row.get("finalized_ts"))
         else:
             event_type = row.get("event_type")
-            is_primary = row.get("schema_version") == "3.0.0" and (
-                isinstance(event_type, str) and bool(event_type)
+            is_primary = (
+                row.get("schema_version") == "3.0.0"
+                and isinstance(event_type, str)
+                and bool(event_type)
+                and event_type not in _LEGACY_COMPAT_EVENT_TYPES
             )
             if is_primary:
                 # Header classification, NOT full canonical event validation.
@@ -162,7 +177,7 @@ def inspect_source(*, source: str, path: str | Path, now_ts: int) -> dict[str, A
                 recent += 1
 
     return {
-        "status": "OBSERVED_TAIL",
+        "status": "OBSERVED_TAIL" if parsed else "NO_VALID_JSON_OBJECT_IN_TAIL",
         "coverage": coverage,
         "size_mib": round(size / (1024 * 1024), 2),
         "over_16_mib": size > 16 * 1024 * 1024,
