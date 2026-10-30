@@ -1385,6 +1385,19 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         from core.admin_views import render_research_analytics_panel
         recent_events = _iter_recent_engine_events(limit=500)
         content = render_research_analytics_panel(recent_events)
+        # R-027: show observed, distinct primary-v3 OPEN_NOW publications
+        # without conflating route delivery with strategy decisions/outcomes.
+        # The Research role boundary above applies unchanged.
+        try:
+            from core import publication_evidence
+            snapshot = publication_evidence.publication_snapshot()
+            publication_text = publication_evidence.render_publication_summary(snapshot)
+        except Exception:
+            publication_text = (
+                "Observed OPEN_NOW Publications — trailing 24h UTC\n"
+                "Evidence: UNKNOWN (read-only publication source unavailable)"
+            )
+        content = content + "\n\n" + publication_text
         try:
             import os as _os
             report_path = _find_latest_report_json()
