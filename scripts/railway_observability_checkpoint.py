@@ -328,6 +328,28 @@ def collect_checkpoint(*, base_dir: Path, now_ts: int | None = None) -> dict[str
             "actual_freed_bytes": 0,
         }
 
+    # P0 Owner strategy-first acceptance: try exactly one isolated historical
+    # decision computation from the existing declared-Finnhub store. It never
+    # publishes, logs scores or market prices, writes outcomes, or reaches the
+    # live FSM/Signal Engine. A failure cannot prevent guarded Railway startup.
+    try:
+        from scripts.railway_finnhub_historical_strategy_probe import (
+            collect_historical_strategy_probe,
+        )
+        report["historical_strategy_probe"] = collect_historical_strategy_probe(
+            base_dir=Path(base_dir), now_ts=now,
+        )
+    except Exception:
+        report["historical_strategy_probe"] = {
+            "component": "finnhub_historical_strategy_probe",
+            "status": "HISTORICAL_EVALUATION_UNAVAILABLE",
+            "scope": "ONE_HISTORICAL_READ_ONLY_STRATEGY_CYCLE_NOT_LIVE",
+            "telegram_signals_published": 0,
+            "broker_trades_executed": 0,
+            "market_truth_outcomes_created": 0,
+            "fresh_market_data_proven": False,
+        }
+
     # Never echo the provider token/config body; only known code identifiers.
     candidate = str(os.getenv("MARKET_DATA_PROVIDER") or "").strip().upper()
     report["configured_provider_from_env"] = (
