@@ -358,3 +358,23 @@ def test_railway_readiness_accepts_finnhub_without_twelve_data_key(
     assert report["status"] == "ready"
     assert report["active_provider"] == "FINNHUB"
     assert report["effective_symbols"] == ["EUR/USD"]
+
+
+def test_preflight_accepts_compact_eurusd_without_broadening_finnhub_scope(
+    canonical_runtime_root: Path,
+    fresh_imports,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SHADOW_MODE", "true")
+    monkeypatch.setenv("MARKET_DATA_PROVIDER", "FINNHUB")
+    monkeypatch.setenv("FINNHUB_API_KEY", "offline-finnhub-key")
+    monkeypatch.delenv("TWELVE_DATA_API_KEY", raising=False)
+    _write_json(
+        canonical_runtime_root / "config" / "active_symbols.json",
+        {"symbols": ["EURUSD", "GBPUSD"]},
+    )
+
+    preflight = _fresh_preflight(fresh_imports)
+    report = preflight.run_startup_preflight(require_shadow_mode=True)
+    assert report["active_provider"] == "FINNHUB"
+    assert report["effective_symbols"] == ["EUR/USD"]

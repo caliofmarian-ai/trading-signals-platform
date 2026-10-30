@@ -108,8 +108,13 @@ def _validate_provider(active_symbols: Tuple[str, ...]) -> Dict[str, Any]:
         )
 
     if provider == market_data_provider_control.PROVIDER_FINNHUB:
-        required = set(market_data_provider_control.FINNHUB_EFFECTIVE_SYMBOLS)
-        effective = tuple(symbol for symbol in active_symbols if symbol in required)
+        # The admin's persisted symbol list may contain legacy compact EURUSD.
+        # Canonicalize only the effective Finnhub scope; do not alter that list.
+        effective = tuple(
+            symbol
+            for symbol in market_data_provider_control.FINNHUB_EFFECTIVE_SYMBOLS
+            if symbol in active_symbols or symbol.replace("/", "") in active_symbols
+        )
         if not effective:
             raise StartupPreflightError(
                 "FINNHUB startup requires EUR/USD in the active symbol universe"
