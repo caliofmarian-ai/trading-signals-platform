@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 import json
 
+import pytest
+
 
 def _row(ts: int, price: float = 1.1) -> dict:
     return {
@@ -46,13 +48,15 @@ def test_finnhub_exposes_recent_continuity_gap_without_fabricating_rows(tmp_path
     feed._last_price_ts = 600
     feed._stream_started = True
 
-    candles = feed.get_candles("EUR/USD", "M1")
+    # A live decision must not treat non-contiguous stored bars as consecutive.
+    # Gap classification remains fully visible through the health report.
+    with pytest.raises(module.FinnhubInsufficientHistory, match="1/2 real candles contiguous"):
+        feed.get_candles("EUR/USD", "M1")
     health = feed.health()
 
-    assert [candle["ts"] for candle in candles] == [600, 480, 420]
     assert health["candle_counts"]["M1"] == 3
     assert health["contiguous_candle_counts"] == {"M1": 1, "M5": 2}
-    assert health["history_ready"] is True
+    assert health["history_ready"] is False
     assert health["integrity_report"]["temporal_continuity_state"] == "GAPPED"
     assert health["integrity_report"]["gap_count"] == 1
 
@@ -78,7 +82,9 @@ def test_finnhub_reports_new_contiguous_segment_separately_from_older_gap(tmp_pa
     candles = feed.get_candles("EUR/USD", "M1")
     health = feed.health()
 
-    assert [candle["ts"] for candle in candles] == [600, 540, 420]
+    # Preserve gap truth in health, but expose only the newest contiguous
+    # real segment to a time-dependent strategy.
+    assert [candle["ts"] for candle in candles] == [600, 540]
     assert health["contiguous_candle_counts"] == {"M1": 2, "M5": 2}
     assert health["history_ready"] is True
     assert health["integrity_report"]["gap_count"] == 1
