@@ -50,10 +50,26 @@ def _trade(
         "result_at_expiry": outcome,
         "label_observation_ts": observed,
         "checkpoints": {
-            "mid_expiry": {"state": "OBSERVED"},
-            "post_1m": {"state": "OBSERVED"},
-            "post_3m": {"state": "OBSERVED"},
-            "post_5m": {"state": "OBSERVED"},
+            "mid_expiry": {
+                "state": "OBSERVED", "price": price,
+                "target_ts": open_ts + 150, "observed_ts": open_ts + 151,
+                "provider": provider,
+            },
+            "post_1m": {
+                "state": "OBSERVED", "price": price,
+                "target_ts": expiry + 60, "observed_ts": expiry + 61,
+                "provider": provider,
+            },
+            "post_3m": {
+                "state": "OBSERVED", "price": price,
+                "target_ts": expiry + 180, "observed_ts": expiry + 181,
+                "provider": provider,
+            },
+            "post_5m": {
+                "state": "OBSERVED", "price": price,
+                "target_ts": expiry + 300, "observed_ts": expiry + 301,
+                "provider": provider,
+            },
             "expiry": {
                 "state": "OBSERVED",
                 "price": price,
@@ -287,3 +303,14 @@ def test_claimed_finalized_missing_checkpoint_fails_closed(tmp_path: Path):
     result = _snapshot(tmp_path, [incomplete, missing_final_ts, _trade("REAL")])
     assert result["quality"]["invalid_rows"] == 2
     assert result["verified_finalized_trade_count"] == 1
+
+
+
+def test_finalized_missing_raw_post_checkpoint_evidence_is_invalid(tmp_path: Path):
+    forged = _trade("PARTIAL-POST")
+    forged["checkpoints"]["post_5m"].pop("price")
+    inconsistent = _trade("WRONG-POST-PROVIDER")
+    inconsistent["checkpoints"]["post_3m"]["provider"] = "TWELVE_DATA"
+    result = _snapshot(tmp_path, [forged, inconsistent, _trade("VALID")])
+    assert result["verified_finalized_trade_count"] == 1
+    assert result["quality"]["invalid_rows"] == 2
