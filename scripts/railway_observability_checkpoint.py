@@ -295,6 +295,22 @@ def collect_checkpoint(*, base_dir: Path, now_ts: int | None = None) -> dict[str
             "reason": "TAIL_INSPECTION_FAILED",
         }
 
+    # R-035: read only allowlisted warning/error codes and prior persisted
+    # runtime/provider state, explicitly separate from new process liveness.
+    try:
+        from scripts.railway_operational_blocker_diagnostics import (
+            collect_blocker_diagnostics,
+        )
+        report["operational_blockers"] = collect_blocker_diagnostics(
+            base_dir=Path(base_dir), now_ts=now,
+        )
+    except Exception:
+        report["operational_blockers"] = {
+            "scope": "ONE_SHOT_READ_ONLY_PREBOOT_BLOCKER_EVIDENCE",
+            "status": "UNKNOWN",
+            "reason": "BLOCKER_DIAGNOSTICS_FAILED",
+        }
+
     # Never echo the provider token/config body; only known code identifiers.
     candidate = str(os.getenv("MARKET_DATA_PROVIDER") or "").strip().upper()
     report["configured_provider_from_env"] = (
