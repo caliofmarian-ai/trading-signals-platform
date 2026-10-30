@@ -183,6 +183,8 @@ def compose_checkpoint(
             "status": cycle_status,
             "engine_status": _status(engine.get("status")),
             "distribution_status": _status(distribution.get("status")),
+            "engine_reason": _reason(engine.get("reason")),
+            "distribution_reason": _reason(distribution.get("reason")),
             "pre_open_visible_matched_pairs": (
                 _count(lifecycle.get("pre_to_open_visible_matched_pairs"))
                 if cycle_status != "UNKNOWN" else None
@@ -272,13 +274,33 @@ def collect_checkpoint(*, base_dir: Path, now_ts: int | None = None) -> dict[str
             path=fsm_path, now_ts=now, range_days=7
         )
     )
-    return compose_checkpoint(
+    report = compose_checkpoint(
         now_ts=now,
         publications=publications,
         lifecycle=lifecycle,
         market=market,
         focus=focus,
     )
+    # R-034: source tail diagnostics are bounded and explicitly PARTIAL when
+    # reading only a suffix. They do not change canonical 24h metrics.
+    try:
+        from scripts.railway_source_tail_diagnostics import collect_source_tails
+        report["source_diagnostics"] = collect_source_tails(
+            base_dir=Path(base_dir), now_ts=now,
+        )
+    except Exception:
+        report["source_diagnostics"] = {
+            "purpose": "BOUNDED_SUFFIX_DIAGNOSTIC_NOT_FULL_WINDOW_STATISTICS",
+            "status": "UNKNOWN",
+            "reason": "TAIL_INSPECTION_FAILED",
+        }
+
+    # Never echo the provider token/config body; only known code identifiers.
+    candidate = str(os.getenv("MARKET_DATA_PROVIDER") or "").strip().upper()
+    report["configured_provider_from_env"] = (
+        candidate if candidate in {"FINNHUB", "TWELVE_DATA"} else "UNKNOWN"
+    )
+    return report
 
 
 def emit_checkpoint(*, base_dir: Path, now_ts: int | None = None) -> None:
