@@ -46,6 +46,8 @@ def _required_env(name: str) -> str:
 
 def normalize_symbol(symbol: str) -> str:
     normalized = str(symbol or "").strip().upper().replace("_", "/")
+    if normalized == "EURUSD":
+        normalized = SUPPORTED_SYMBOL
     if normalized != SUPPORTED_SYMBOL:
         raise FinnhubConfigurationError(
             f"Finnhub foundation is restricted to {SUPPORTED_SYMBOL}; received {symbol!r}"
