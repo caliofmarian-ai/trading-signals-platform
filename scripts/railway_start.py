@@ -54,6 +54,10 @@ def main() -> int:
         reconcile_primary_admin_from_source(base_dir=base_dir)
         readiness_report(base_dir=base_dir)
         os.environ["RAILWAY_READINESS_EVALUATED"] = "1"
+        # R-033: one anonymous persisted-evidence checkpoint, after readiness
+        # and before live worker start. Never blocks the governed boot.
+        from scripts.railway_observability_checkpoint import emit_checkpoint
+        emit_checkpoint(base_dir=base_dir)
         send_control_notification("BOT STARTING", "BinaryBot Railway runtime passed initialization and readiness checks.")
 
         _install_telegram_ui_diagnostic_stream_routing()
