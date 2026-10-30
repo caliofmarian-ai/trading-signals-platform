@@ -109,12 +109,20 @@ def _canonical_row(row: Dict[str, Any]) -> Optional[tuple[Any, ...]]:
         return None
     # FINALIZED is authoritative only when all governed checkpoints resolved
     # with real observations; otherwise the record is not objective full truth.
-    if not all(
-        isinstance(checkpoints.get(key), dict)
-        and checkpoints[key].get("state") == "OBSERVED"
-        for key in ("mid_expiry", "expiry", "post_1m", "post_3m", "post_5m")
-    ):
-        return None
+    for key in ("mid_expiry", "expiry", "post_1m", "post_3m", "post_5m"):
+        cp = checkpoints.get(key)
+        if not isinstance(cp, dict) or cp.get("state") != "OBSERVED":
+            return None
+        cp_target = _number(cp.get("target_ts"))
+        cp_observed = _number(cp.get("observed_ts"))
+        if (
+            _number(cp.get("price")) is None
+            or cp_target is None
+            or cp_observed is None
+            or cp_observed < cp_target
+            or cp.get("provider") != provider
+        ):
+            return None
     price = _number(expiry.get("price"))
     target_ts = _number(expiry.get("target_ts"))
     observed_ts = _number(expiry.get("observed_ts"))
