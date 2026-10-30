@@ -72,7 +72,9 @@ def _source(
         "invalid_rows": 0,
         "historical_excluded_rows": 0,
         "out_of_window_rows": 0,
+        "duplicate_event_rows": 0,
     }
+    seen_event_ids: set[str] = set()
     try:
         if Path(path).stat().st_size > MAX_SOURCE_BYTES:
             info["reason"] = "SOURCE_TOO_LARGE_FOR_INTERACTIVE_SCAN"
@@ -101,6 +103,11 @@ def _source(
             ):
                 info["historical_excluded_rows"] += 1
                 continue
+            event_id = event.get("event_id")
+            if not isinstance(event_id, str) or not event_id.strip():
+                info["invalid_rows"] += 1
+                continue
+            event_id = event_id.strip()
             epoch_ms = event.get("ts_epoch_ms")
             if isinstance(epoch_ms, bool) or not isinstance(epoch_ms, int) or epoch_ms <= 0:
                 info["invalid_rows"] += 1
@@ -108,6 +115,10 @@ def _source(
             if not start_ms <= epoch_ms <= end_ms:
                 info["out_of_window_rows"] += 1
                 continue
+            if event_id in seen_event_ids:
+                info["duplicate_event_rows"] += 1
+                continue
+            seen_event_ids.add(event_id)
             if not consume(event):
                 info["invalid_rows"] += 1
                 continue
@@ -194,6 +205,7 @@ def build_funnel(
             if (
                 requested is not None
                 and requested == accepted
+                and stage == requested
                 and data.get("stage_handoff_ready") is True
                 and signal_id is not None
             ):
@@ -239,12 +251,18 @@ def build_funnel(
                 return False
             families[kind] += 1
             if result == "PUBLISHED":
+                transport = data.get("transport")
+                if not isinstance(transport, dict) or transport.get("ok") is not True:
+                    return False
                 published[stage].add(signal_id)
                 families["published_route_row"] += 1
             return True
 
         if kind == "signal_stage_visible":
             if data.get("visibility_result") != "PUBLISHED":
+                return False
+            ref = data.get("publication_evidence_ref")
+            if not isinstance(ref, str) or not ref.strip():
                 return False
             families[kind] += 1
             visible[stage].add(signal_id)
@@ -366,6 +384,10 @@ def render_funnel_summary(snapshot: Mapping[str, Any]) -> str:
     ]
     invalid = sum(int(x.get("invalid_rows") or 0) for x in (eng, dist))
     historic = sum(int(x.get("historical_excluded_rows") or 0) for x in (eng, dist))
-    if invalid or historic:
-        lines.append(f"Evidence quality: invalid {invalid}, historical excluded {historic}")
+    duplicate = sum(int(x.get("duplicate_event_rows") or 0) for x in (eng, dist))
+    if invalid or historic or duplicate:
+        lines.append(
+            f"Evidence quality: invalid {invalid}, historical excluded {historic}, "
+            f"duplicate events {duplicate}"
+        )
     return "\n".join(lines)
