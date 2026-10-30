@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from runtime.market_history_integrity import inspect_history
+from runtime.market_history_integrity import inspect_history, summarize_gap_distribution
 
 
 FINNHUB_WS_URL = "wss://ws.finnhub.io"
@@ -329,6 +329,7 @@ class FinnhubForexFeed:
                 "history_integrity_state": integrity["state"],
                 "history_continuity_state": integrity["temporal_continuity_state"],
                 "usable_real_history_and_fresh_tick": usable,
+                "history_gap_diagnostics": summarize_gap_distribution(self._candles),
                 "required_candles_each": self.minimum_candles,
                 "no_prices_or_trade_recommendations": True,
             }
