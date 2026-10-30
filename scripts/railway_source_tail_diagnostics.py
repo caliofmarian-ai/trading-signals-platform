@@ -53,6 +53,7 @@ def _unknown(reason: str) -> dict[str, Any]:
         "tail_utc_24h_header_rows": None,
         "tail_open_now_published_route_rows": None,
         "last_event_utc": None,
+        "last_target_event_utc": None,
         "invalid_tail_rows": None,
     }
 
@@ -123,6 +124,7 @@ def inspect_source(*, source: str, path: str | Path, now_ts: int) -> dict[str, A
 
     parsed = invalid = header_v3 = target_rows = recent = route_published = 0
     last_ts: float | None = None
+    last_target_ts: float | None = None
     for raw in lines:
         if not raw.strip():
             continue
@@ -173,6 +175,8 @@ def inspect_source(*, source: str, path: str | Path, now_ts: int) -> dict[str, A
 
         if ts is not None and ts <= now_ts + 300:
             last_ts = ts if last_ts is None else max(last_ts, ts)
+            if is_target:
+                last_target_ts = ts if last_target_ts is None else max(last_target_ts, ts)
             if now_ts - 86400 <= ts <= now_ts and is_target:
                 recent += 1
 
@@ -192,6 +196,9 @@ def inspect_source(*, source: str, path: str | Path, now_ts: int) -> dict[str, A
             route_published if source == "distribution" else None
         ),
         "last_event_utc": _utc(last_ts) if last_ts is not None else None,
+        "last_target_event_utc": (
+            _utc(last_target_ts) if last_target_ts is not None else None
+        ),
         "invalid_tail_rows": invalid + int(incomplete_last_line),
     }
 
