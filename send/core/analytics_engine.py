@@ -486,7 +486,17 @@ def recompute(now_ts: int) -> Dict[str, Any]:
 
 
 def get_symbol_ranking(range_days: int) -> List[Dict[str, Any]]:
-    return []
+    """Return objective, sample-ranked market segments without false win claims.
+
+    For explicit UNKNOWN/source-unavailable evidence, callers must use
+    market_outcome_evidence.build_market_snapshot() rather than treating
+    an empty list as a measured zero.
+    """
+    from core import market_outcome_evidence
+
+    return market_outcome_evidence.build_market_snapshot(
+        range_days=range_days, max_segments=100
+    )["segments"]
 
 
 def get_focus_history(range_days: int) -> Dict[str, Any]:
