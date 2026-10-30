@@ -174,3 +174,99 @@ def inspect_history(candles_by_timeframe: Mapping[str, List[Dict[str, Any]]]) ->
         "weekend_gap_count": sum(report["weekend_gap_count"] for report in reports.values()),
         "non_weekend_gap_count": sum(report["non_weekend_gap_count"] for report in reports.values()),
     }
+
+
+def summarize_gap_distribution(
+    candles_by_timeframe: Mapping[str, List[Dict[str, Any]]],
+    *,
+    max_rows_per_timeframe: int = 500,
+) -> Dict[str, Any]:
+    """Price-free, bounded explanation of market-history gaps.
+
+    This is only a diagnostic of persisted provider observations. It NEVER
+    manufactures market candles, declares the market open, changes the normal
+    fail-closed integrity contract, or returns raw OHLC prices or trade IDs.
+    The longest consecutive sequence helps distinguish sparse provider ticks
+    from one isolated recent discontinuity.
+    """
+    if (
+        isinstance(max_rows_per_timeframe, bool)
+        or not isinstance(max_rows_per_timeframe, int)
+        or not 1 <= max_rows_per_timeframe <= 500
+    ):
+        raise ValueError("max_rows_per_timeframe must be within 1..500")
+
+    summary: Dict[str, Any] = {}
+    for code, seconds in (("M1", 60), ("M5", 300)):
+        all_rows = candles_by_timeframe.get(code, [])
+        rows = all_rows[:max_rows_per_timeframe]
+        report = inspect_candles(rows, seconds)
+        gaps = report["gap_details"]
+        histogram = {"one": 0, "two_to_four": 0, "five_to_29": 0, "30_plus": 0}
+        for gap in gaps:
+            missing = gap["missing_intervals"]
+            if missing == 1:
+                histogram["one"] += 1
+            elif missing <= 4:
+                histogram["two_to_four"] += 1
+            elif missing <= 29:
+                histogram["five_to_29"] += 1
+            else:
+                histogram["30_plus"] += 1
+
+        if report["state"] != "VALID" or not rows:
+            newest_ts = None
+            oldest_ts = None
+            longest_streak = None
+            gap_to_head = None
+        else:
+            newest_ts = int(rows[0]["ts"])
+            oldest_ts = int(rows[-1]["ts"])
+            streak = 1
+            longest_streak = 1
+            for index in range(1, len(rows)):
+                if int(rows[index - 1]["ts"]) - int(rows[index]["ts"]) == seconds:
+                    streak += 1
+                else:
+                    longest_streak = max(longest_streak, streak)
+                    streak = 1
+            longest_streak = max(longest_streak, streak)
+            gap_to_head = None if not gaps else int(gaps[0]["newer_ts"])
+        summary[code] = {
+            "sample_bounded_rows": len(rows),
+            "sample_truncated": len(all_rows) > max_rows_per_timeframe,
+            "source_integrity_state": report["state"],
+            "newest_candle_ts": newest_ts,
+            "oldest_candle_ts": oldest_ts,
+            "head_contiguous_count": report["contiguous_head_count"],
+            "longest_contiguous_run": longest_streak,
+            "gap_count": report["gap_count"],
+            "weekend_gap_count": report["weekend_gap_count"],
+            "non_weekend_gap_count": report["non_weekend_gap_count"],
+            "total_non_weekend_missing_intervals": sum(
+                gap["missing_intervals"]
+                for gap in gaps
+                if gap["classification"] == "NON_WEEKEND_GAP"
+            ),
+            "total_weekend_missing_intervals": sum(
+                gap["missing_intervals"]
+                for gap in gaps
+                if gap["classification"] == "WEEKEND_DISCONTINUITY"
+            ),
+            "largest_non_weekend_gap_intervals": max(
+                (
+                    gap["missing_intervals"]
+                    for gap in gaps
+                    if gap["classification"] == "NON_WEEKEND_GAP"
+                ),
+                default=0,
+            ),
+            "gap_size_histogram": histogram,
+            "most_recent_gap_newer_ts": gap_to_head,
+        }
+    return {
+        "scope": "BOUNDED_STORED_REAL_CANDLE_TIMESTAMP_DIAGNOSTIC",
+        "no_market_session_inference": True,
+        "no_price_or_signal_content": True,
+        "timeframes": summary,
+    }
