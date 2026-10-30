@@ -208,3 +208,28 @@ def test_market_client_status_carries_stream_evidence_on_missing_history(
     assert status["market_data_stream_state"] == "SUBSCRIBED_WAITING_REAL_TICK"
     assert status["market_data_stream_connection_attempts"] == 1
     assert status["market_data_valid_trade_tick_count"] == 0
+
+
+def test_railway_evidence_is_bounded_price_free_and_not_trading_signal(
+    tmp_path, capsys
+):
+    module = importlib.import_module("runtime.finnhub_market_data")
+    feed = module.FinnhubForexFeed(
+        token="SENSITIVE-API-KEY",
+        store_path=tmp_path / "market.json",
+        clock=lambda: 1788120066,
+    )
+    feed._stream_state = "SUBSCRIBED_WAITING_REAL_TICK"
+    feed._subscription_state = "SENT_UNVERIFIED"
+    feed._emit_stream_observation("SUBSCRIBE_SENT_UNVERIFIED")
+    feed._emit_stream_observation("SUBSCRIBE_SENT_UNVERIFIED")
+    output = capsys.readouterr().out.strip().splitlines()
+    assert len(output) == 1
+    assert output[0].startswith("TSP_FINNHUB_STREAM_EVIDENCE ")
+    payload = json.loads(output[0].split(" ", 1)[1])
+    assert payload["event"] == "SUBSCRIBE_SENT_UNVERIFIED"
+    assert payload["valid_trade_tick_count"] == 0
+    assert payload["M5_observed_candles"] == 0
+    assert payload["no_prices_or_trade_recommendations"] is True
+    assert "SENSITIVE-API-KEY" not in output[0]
+    assert "open_now" not in output[0].lower()
