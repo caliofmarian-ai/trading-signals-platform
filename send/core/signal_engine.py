@@ -68,6 +68,75 @@ def _log_market_data_limited_warning(symbol: str, now_ts: int) -> None:
     _MARKET_DATA_LIMITED_SUPPRESSED_COUNT = 0
 
 
+# The market can remain closed/stale across thousands of two-second ticks.
+# Record the first observed cause, cause transitions and five-minute counts,
+# but not one persisted JSONL warning per tick. Keep market fail-closed.
+_MARKET_DATA_UNAVAILABLE_LOG_INTERVAL_SECONDS = 300
+_MARKET_DATA_UNAVAILABLE_LAST_LOG_TS: Optional[int] = None
+_MARKET_DATA_UNAVAILABLE_LAST_REASON_CODE: Optional[str] = None
+_MARKET_DATA_UNAVAILABLE_SUPPRESSED_COUNT = 0
+
+_UNAVAILABLE_CAUSE_CODES = frozenset({
+    "FinnhubInsufficientHistory",
+    "FinnhubMarketDataUnavailable",
+    "FinnhubStaleMarketData",
+    "FinnhubInvalidHistory",
+    "FinnhubConfigurationError",
+    "TwelveDataInsufficientHistory",
+    "TwelveDataMarketDataUnavailable",
+    "TwelveDataRateLimitError",
+})
+
+
+def _unavailable_reason_code(error: Exception) -> str:
+    # No raw exception payloads, provider URLs, API keys or timestamps in logs.
+    cause = getattr(error, "__cause__", None)
+    type_name = type(cause).__name__ if cause is not None else type(error).__name__
+    return type_name if type_name in _UNAVAILABLE_CAUSE_CODES else "OTHER_UNAVAILABLE"
+
+
+def _log_market_data_unavailable_warning(symbol: str, error: Exception, now_ts: int) -> None:
+    global _MARKET_DATA_UNAVAILABLE_LAST_LOG_TS
+    global _MARKET_DATA_UNAVAILABLE_LAST_REASON_CODE
+    global _MARKET_DATA_UNAVAILABLE_SUPPRESSED_COUNT
+
+    observed_ts = int(now_ts)
+    code = _unavailable_reason_code(error)
+    reason_key = f"{symbol}:{code}"
+    previous_ts = _MARKET_DATA_UNAVAILABLE_LAST_LOG_TS
+    same_reason = reason_key == _MARKET_DATA_UNAVAILABLE_LAST_REASON_CODE
+    if (
+        same_reason and previous_ts is not None
+        and 0 <= observed_ts - previous_ts < _MARKET_DATA_UNAVAILABLE_LOG_INTERVAL_SECONDS
+    ):
+        _MARKET_DATA_UNAVAILABLE_SUPPRESSED_COUNT += 1
+        return
+
+    context: Dict[str, Any] = {"symbol": symbol, "reason_code": code}
+    if _MARKET_DATA_UNAVAILABLE_SUPPRESSED_COUNT:
+        key = "suppressed_repeated_warnings" if same_reason else "previous_reason_suppressed_warnings"
+        context[key] = _MARKET_DATA_UNAVAILABLE_SUPPRESSED_COUNT
+
+    observability_logger.log_warning(
+        warn_type="MARKET_DATA_UNAVAILABLE",
+        message="Current market data is unavailable; no decision was produced",
+        context=context,
+        source={"module": "signal_engine", "function": "run_once"},
+    )
+    _MARKET_DATA_UNAVAILABLE_LAST_LOG_TS = observed_ts
+    _MARKET_DATA_UNAVAILABLE_LAST_REASON_CODE = reason_key
+    _MARKET_DATA_UNAVAILABLE_SUPPRESSED_COUNT = 0
+
+
+def _mark_market_data_unavailable_recovered() -> None:
+    global _MARKET_DATA_UNAVAILABLE_LAST_LOG_TS
+    global _MARKET_DATA_UNAVAILABLE_LAST_REASON_CODE
+    global _MARKET_DATA_UNAVAILABLE_SUPPRESSED_COUNT
+    _MARKET_DATA_UNAVAILABLE_LAST_LOG_TS = None
+    _MARKET_DATA_UNAVAILABLE_LAST_REASON_CODE = None
+    _MARKET_DATA_UNAVAILABLE_SUPPRESSED_COUNT = 0
+
+
 def _select_scan_symbols(symbols: List[str], watchlist: List[str], now_ts: int) -> tuple[List[str], set[str]]:
     """Prioritize focus every tick while preserving bounded wide-scan coverage.
 
@@ -534,6 +603,8 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
             candles_m5 = candle_adapter.normalize(raw_m5, symbol=symbol, timeframe="M5")
             candle_adapter.validate(candles_m1)
             candle_adapter.validate(candles_m5)
+            # Full M1/M5 recovery re-arms first-error evidence for next outage.
+            _mark_market_data_unavailable_recovered()
 
             evaluation = decide(
                 candles_m1=candles_m1,
@@ -599,12 +670,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                 _log_market_data_limited_warning(symbol, now_ts)
                 break
             if isinstance(exc, MarketDataUnavailableError):
-                observability_logger.log_warning(
-                    warn_type="MARKET_DATA_UNAVAILABLE",
-                    message="Current market data is unavailable; no decision was produced",
-                    context={"symbol": symbol, "reason": str(exc)},
-                    source={"module": "signal_engine", "function": "run_once"},
-                )
+                _log_market_data_unavailable_warning(symbol, exc, now_ts)
                 break
             observability_logger.log_error(
                 {
