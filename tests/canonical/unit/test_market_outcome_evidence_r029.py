@@ -200,7 +200,8 @@ def test_explicit_utc_open_time_window_no_future_or_silent_backfill(tmp_path: Pa
          _trade("FUTURE", open_ts=NOW + 1)],
     )
     assert result["verified_finalized_trade_count"] == 2
-    assert result["quality"]["out_of_window"] == 2
+    assert result["quality"]["out_of_window"] == 1
+    assert result["quality"]["future_evidence_excluded"] == 1
     assert result["window_start_utc"] == "2026-10-23T09:00:00Z"
 
 
