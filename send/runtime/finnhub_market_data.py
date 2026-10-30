@@ -300,6 +300,17 @@ class FinnhubForexFeed:
             if last is not None and 0 <= now_ts - last < 300:
                 return
             self._last_stream_evidence_emit_ts[event] = now_ts
+            integrity = inspect_history(self._candles)
+            head = integrity["contiguous_candle_counts"]
+            tick_age = None if self._last_price_ts is None else now_ts - int(self._last_price_ts)
+            usable = (
+                integrity["state"] == "VALID"
+                and int(head["M1"]) >= self.minimum_candles
+                and int(head["M5"]) >= self.minimum_candles
+                and self._valid_trade_tick_count > 0
+                and tick_age is not None
+                and 0 <= tick_age <= self.freshness_seconds
+            )
             record = {
                 "component": "finnhub_stream_readiness",
                 "event": event,
@@ -313,6 +324,11 @@ class FinnhubForexFeed:
                 "last_real_tick_ts": self._last_price_ts,
                 "M1_observed_candles": len(self._candles["M1"]),
                 "M5_observed_candles": len(self._candles["M5"]),
+                "M1_contiguous_head_count": int(head["M1"]),
+                "M5_contiguous_head_count": int(head["M5"]),
+                "history_integrity_state": integrity["state"],
+                "history_continuity_state": integrity["temporal_continuity_state"],
+                "usable_real_history_and_fresh_tick": usable,
                 "required_candles_each": self.minimum_candles,
                 "no_prices_or_trade_recommendations": True,
             }
@@ -411,17 +427,23 @@ class FinnhubForexFeed:
                 "Finnhub candle history failed integrity checks: "
                 f"hard_errors={integrity['hard_error_count']}"
             )
-        if len(candles) < self.minimum_candles:
+        # Do not feed an old segment across a weekend or silent-tick gap into
+        # temporal physics. A stored bar count is not a usable contiguous count.
+        contiguous_count = int(integrity["contiguous_candle_counts"].get(code, 0))
+        if contiguous_count < self.minimum_candles:
             raise FinnhubInsufficientHistory(
                 f"Finnhub {code} history is still collecting: "
-                f"{len(candles)}/{self.minimum_candles} real candles"
+                f"{contiguous_count}/{self.minimum_candles} real candles contiguous "
+                f"(stored={len(candles)})"
             )
         age_seconds = int(self.clock()) - int(last_price_ts)
         if age_seconds < 0 or age_seconds > self.freshness_seconds:
             raise FinnhubStaleMarketData(
                 f"Finnhub live price is stale: age={age_seconds}s, limit={self.freshness_seconds}s"
             )
-        return candles
+        # Return only the current consecutive real bars. Never synthesize bars
+        # or let an older disjoint interval influence the strategy indicators.
+        return candles[:contiguous_count]
 
     def health(self) -> Dict[str, Any]:
         with self._lock:
@@ -468,8 +490,12 @@ class FinnhubForexFeed:
                 integrity.get("contiguous_candle_counts", {})
             ),
             "minimum_candles": self.minimum_candles,
-            "history_ready": all(
-                value >= self.minimum_candles for value in counts.values()
+            "history_ready": (
+                integrity["state"] == "VALID"
+                and all(
+                    int(value) >= self.minimum_candles
+                    for value in integrity["contiguous_candle_counts"].values()
+                )
             ),
             "persistence_state": persistence_state,
             "store_load_state": load_state,
