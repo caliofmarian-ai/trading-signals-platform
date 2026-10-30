@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from itertools import count
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from core import lifecycle_funnel_evidence as funnel
 
 
 NOW = int(datetime(2026, 10, 30, 9, 0, tzinfo=timezone.utc).timestamp())
+_EVENT_ID = count(1)
 
 
 def _event(
@@ -22,6 +24,7 @@ def _event(
     data: dict | None = None,
 ) -> dict:
     row = {
+        "event_id": f"test-v3-{next(_EVENT_ID)}",
         "event_type": kind,
         "schema_version": version,
         "ts_epoch_ms": ts * 1000,
@@ -59,14 +62,15 @@ def _candidate(stage: str, *, sid: str = "S-A", available: bool = True, phase: s
 
 def _published(stage: str, *, sid: str = "S-A", result: str = "PUBLISHED") -> dict:
     return _event(
-        "route_publish_result", sid=sid, stage=stage, data={"publish_result": result}
+        "route_publish_result", sid=sid, stage=stage,
+        data={"publish_result": result, "transport": {"ok": result == "PUBLISHED"}},
     )
 
 
 def _visible(stage: str, *, sid: str = "S-A", ts: int = NOW - 100) -> dict:
     return _event(
         "signal_stage_visible", sid=sid, stage=stage, ts=ts,
-        data={"visibility_result": "PUBLISHED"},
+        data={"visibility_result": "PUBLISHED", "publication_evidence_ref": "v3-route-ev-1"},
     )
 
 
@@ -251,3 +255,99 @@ def test_invalid_windows_fail_closed(days):
 def test_invalid_time_fails_closed(now):
     with pytest.raises(ValueError):
         funnel.build_funnel(now_ts=now)
+
+
+
+def test_duplicate_event_id_is_suppressed_without_duplicate_decision_count(tmp_path: Path):
+    event = _decision("PRE")
+    result = _build(tmp_path, [event, dict(event)], [_published("PRE")])
+    assert result["sources"]["engine"]["duplicate_event_rows"] == 1
+    assert result["decision_kind_rows"]["PRE"] == 1
+    assert result["strategy_stage_signals"]["PRE"] == 1
+
+
+def test_missing_event_identity_and_contradictory_route_result_are_excluded(tmp_path: Path):
+    bad_decision = _decision("PRE")
+    bad_decision.pop("event_id")
+    contradicted = _published("OPEN_NOW")
+    contradicted["data"]["transport"]["ok"] = False
+    good = _published("CONFIRM")
+    result = _build(tmp_path, [bad_decision, _decision("CONFIRM")], [contradicted, good])
+    assert result["sources"]["engine"]["invalid_rows"] == 1
+    assert result["sources"]["distribution"]["invalid_rows"] == 1
+    assert result["published_route_signals"]["CONFIRM"] == 1
+    assert result["published_route_signals"]["OPEN_NOW"] == 0
+
+
+def test_unreferenced_visibility_is_invalid_not_external_proof(tmp_path: Path):
+    visible = _visible("PRE")
+    del visible["data"]["publication_evidence_ref"]
+    result = _build(tmp_path, [_decision("PRE")], [visible, _published("PRE")])
+    assert result["sources"]["distribution"]["invalid_rows"] == 1
+    assert result["visible_stage_signals"]["PRE"] is None
+    assert result["published_route_signals"]["PRE"] == 1
+
+
+def test_fsm_envelope_stage_must_match_accepted_handoff(tmp_path: Path):
+    fsm = _fsm("OPEN_NOW")
+    fsm["stage"] = "PRE"
+    result = _build(tmp_path, [fsm], [_published("OPEN_NOW")])
+    assert result["fsm_accepted_signals"]["OPEN_NOW"] == 0
+
+
+def test_get_funnel_public_api_uses_read_only_current_env_paths(tmp_path: Path, monkeypatch):
+    from core import analytics_engine
+
+    engine = _write(tmp_path / "current_engine.jsonl", [_decision("OPEN_NOW")])
+    dist = _write(tmp_path / "current_dist.jsonl", [_published("OPEN_NOW")])
+    monkeypatch.setenv("ENGINE_EVENTS_LOG", engine)
+    monkeypatch.setenv("DIST_EVENTS_LOG", dist)
+
+    result = analytics_engine.get_funnel(1)
+    assert result["status"] == "OBSERVED"
+    assert result["strategy_stage_signals"]["OPEN_NOW"] == 1
+    assert result["published_route_signals"]["OPEN_NOW"] == 1
+    assert result["market_win_rate_percent"] is None
+
+
+def test_research_renders_funnel_for_authorized_role(monkeypatch, tmp_path: Path):
+    import core
+    from core import admin_permissions, bot_service, publication_evidence
+    from core.role_constants import ROLE_OWNER
+
+    monkeypatch.setenv("ENGINE_EVENTS_LOG", _write(tmp_path / "engine.jsonl", [_decision("PRE")]))
+    monkeypatch.setenv("DIST_EVENTS_LOG", _write(tmp_path / "dist.jsonl", [_published("PRE")]))
+    monkeypatch.setattr(core, "lifecycle_funnel_evidence", funnel, raising=False)
+    monkeypatch.setattr(core, "publication_evidence", publication_evidence, raising=False)
+    monkeypatch.setattr(bot_service, "get_primary_role", lambda _id: ROLE_OWNER)
+    monkeypatch.setattr(
+        admin_permissions, "has_permission",
+        lambda _user_id, permission: permission == "admin.view",
+    )
+    monkeypatch.setattr(bot_service, "_iter_recent_engine_events", lambda limit=500: [])
+    response = bot_service._handle_admin_navigation_action(
+        "RESEARCH", 12345,
+        {"chat": {"id": -100999, "type": "supergroup"}, "from": {"id": 12345}},
+    )
+    assert "Lifecycle evidence — trailing 1d UTC" in response["text"]
+    assert "Strategy IDs: 1 / 0 / 0" in response["text"]
+    assert "Published route IDs: 1 / 0 / 0" in response["text"]
+
+
+def test_research_funnel_not_read_for_unauthorized_role(monkeypatch):
+    import core
+    from core import bot_service
+    from core.role_constants import ROLE_USER
+
+    monkeypatch.setattr(core, "lifecycle_funnel_evidence", funnel, raising=False)
+    monkeypatch.setattr(bot_service, "get_primary_role", lambda _id: ROLE_USER)
+
+    def forbidden(**kwargs):
+        raise AssertionError("Must not inspect Research funnel for unauthorized user")
+
+    monkeypatch.setattr(funnel, "build_funnel", forbidden)
+    response = bot_service._handle_admin_navigation_action(
+        "RESEARCH", 12345,
+        {"chat": {"id": -100999, "type": "supergroup"}, "from": {"id": 12345}},
+    )
+    assert response["text"] == "Access denied (missing panel permission)."
