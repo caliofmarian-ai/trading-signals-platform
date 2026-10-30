@@ -130,6 +130,7 @@ class FinnhubForexFeed:
         self._stream_last_failure_class: Optional[str] = None
         self._valid_trade_tick_count = 0
         self._last_stream_connected_ts: Optional[int] = None
+        self._last_stream_evidence_emit_ts: Dict[str, int] = {}
         self._load_store()
 
     def _connect(self):
@@ -251,6 +252,8 @@ class FinnhubForexFeed:
             changed = True
         if changed:
             self._persist_store()
+            if self._valid_trade_tick_count == 1:
+                self._emit_stream_observation("FIRST_REAL_TICK")
 
     def _upsert_tick(
         self, code: str, seconds: int, ts: int, price: float, volume: float
@@ -285,6 +288,40 @@ class FinnhubForexFeed:
             older["complete"] = True
         del candles[MAX_CANDLES:]
 
+    def _emit_stream_observation(self, event: str) -> None:
+        """One bounded Railway-only, price-free diagnostic per event / 5 minutes.
+
+        A socket connect/subscribe event is NEVER interpreted as received data.
+        This does not write historical files, bypass publishing or run new API requests.
+        """
+        now_ts = int(self.clock())
+        with self._lock:
+            last = self._last_stream_evidence_emit_ts.get(event)
+            if last is not None and 0 <= now_ts - last < 300:
+                return
+            self._last_stream_evidence_emit_ts[event] = now_ts
+            record = {
+                "component": "finnhub_stream_readiness",
+                "event": event,
+                "symbol": "EUR/USD",
+                "stream_state": self._stream_state,
+                "subscription_state": self._subscription_state,
+                "connection_attempts": self._stream_connection_attempts,
+                "failure_count": self._stream_failure_count,
+                "failure_class": self._stream_last_failure_class,
+                "valid_trade_tick_count": self._valid_trade_tick_count,
+                "last_real_tick_ts": self._last_price_ts,
+                "M1_observed_candles": len(self._candles["M1"]),
+                "M5_observed_candles": len(self._candles["M5"]),
+                "required_candles_each": self.minimum_candles,
+                "no_prices_or_trade_recommendations": True,
+            }
+        try:
+            print("TSP_FINNHUB_STREAM_EVIDENCE " + json.dumps(record, sort_keys=True), flush=True)
+        except Exception:
+            # A diagnostic print must never block market-data collection.
+            pass
+
     @staticmethod
     def _safe_transport_failure_class(exc: Exception) -> str:
         # Bounded allowlist: never propagate WebSocket exception messages/URLs
@@ -315,6 +352,7 @@ class FinnhubForexFeed:
                 with self._lock:
                     self._subscription_state = "SENT_UNVERIFIED"
                     self._stream_state = "SUBSCRIBED_WAITING_REAL_TICK"
+                self._emit_stream_observation("SUBSCRIBE_SENT_UNVERIFIED")
                 while not self._stop_event.is_set():
                     frame = socket.recv()
                     if frame == "" or frame == b"":
@@ -327,6 +365,7 @@ class FinnhubForexFeed:
                     self._stream_last_failure_class = self._safe_transport_failure_class(exc)
                     self._stream_state = "DISCONNECTED_RETRYING"
                     self._subscription_state = "UNVERIFIED_AFTER_DISCONNECT"
+                self._emit_stream_observation("STREAM_RETRYING")
                 if self._stop_event.wait(2.0):
                     return
             finally:
