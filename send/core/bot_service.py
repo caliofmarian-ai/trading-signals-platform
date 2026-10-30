@@ -1410,6 +1410,20 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
                 "Sources: UNKNOWN (read-only funnel unavailable)"
             )
         content = content + "\n\n" + funnel_text
+        # R-029: objective MARKET_TRUTH only; never mix user/operational
+        # outcomes with finalized price observations or claim profitability.
+        try:
+            from core import market_outcome_evidence
+            market_snapshot = market_outcome_evidence.build_market_snapshot(
+                range_days=7, max_segments=5
+            )
+            market_text = market_outcome_evidence.render_market_summary(market_snapshot)
+        except Exception:
+            market_text = (
+                "Objective market outcomes — finalized OPEN_NOW\n"
+                "Evidence: UNKNOWN (objective source unavailable)"
+            )
+        content = content + "\n\n" + market_text
         try:
             import os as _os
             report_path = _find_latest_report_json()
