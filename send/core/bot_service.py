@@ -737,6 +737,24 @@ def _format_surface(knowledge_key: str, title: str, body: str) -> str:
     return render_operational_page(knowledge_key, body, title=title)
 
 
+# Telegram sendMessage/editMessageText limit is 4096 characters after parsing.
+# Plain-text report pages are capped below that budget, measured in UTF-16
+# units for emoji/non-BMP compatibility. Never send a silently truncated report.
+_RESEARCH_TELEGRAM_TEXT_BUDGET = 3800
+
+
+def _bounded_research_page(title: str, body: str) -> str:
+    rendered = _format_surface("research_analytics", title, body)
+    if len(rendered.encode("utf-16-le")) // 2 <= _RESEARCH_TELEGRAM_TEXT_BUDGET:
+        return rendered
+    return _format_surface(
+        "research_analytics",
+        title,
+        "UNAVAILABLE (this report exceeds Telegram's message-size budget). "
+        "No partial data is shown; the missing output must not be read as zero.",
+    )
+
+
 def _surface_current_state(rendered_surface: str) -> str:
     marker = "\nCurrent state\n"
     text = str(rendered_surface or "")
@@ -951,6 +969,18 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
     if (
         telegram_admin_ui.is_distribution_subpage_action(action)
         and not telegram_admin_ui.panel_visible_for_role(role, "DISTRIBUTION")
+    ):
+        return {
+            "text": "Access denied (missing panel permission).",
+            "reply_markup": None,
+            _CALLBACK_RECOVERY_KEY: _RECOVERY_UNAUTHORIZED,
+        }
+
+    # Research report pages inherit the canonical RESEARCH panel role ceiling.
+    # A forged callback must be rejected before accessing any event/market log.
+    if (
+        telegram_admin_ui.is_research_subpage_action(action)
+        and not telegram_admin_ui.panel_visible_for_role(role, "RESEARCH")
     ):
         return {
             "text": "Access denied (missing panel permission).",
@@ -1380,62 +1410,20 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         }
 
     if action == "RESEARCH":
-        # Research & Analytics panel: performance summaries, analytics reports.
-        # Source: ADMIN_TREE_MAP_v2.0.0.md §6.6; ADMIN_CONTROL_SPEC_v2.0.0.md §10
+        # R-031: one short canonical Research overview, with four explicit
+        # on-demand read-only reports. Never concatenate all reports into one
+        # potentially oversized Telegram message or scan every log on open.
         from core.admin_views import render_research_analytics_panel
         recent_events = _iter_recent_engine_events(limit=500)
         content = render_research_analytics_panel(recent_events)
-        # R-027: show observed, distinct primary-v3 OPEN_NOW publications
-        # without conflating route delivery with strategy decisions/outcomes.
-        # The Research role boundary above applies unchanged.
-        try:
-            from core import publication_evidence
-            snapshot = publication_evidence.publication_snapshot()
-            publication_text = publication_evidence.render_publication_summary(snapshot)
-        except Exception:
-            publication_text = (
-                "Observed OPEN_NOW Publications — trailing 24h UTC\n"
-                "Evidence: UNKNOWN (read-only publication source unavailable)"
-            )
-        content = content + "\n\n" + publication_text
-        # R-028: correlated stage evidence is descriptive only. It never
-        # elevates strategic PRE/CONFIRM into Telegram delivery or market truth.
-        try:
-            from core import lifecycle_funnel_evidence
-            funnel_snapshot = lifecycle_funnel_evidence.build_funnel(range_days=1)
-            funnel_text = lifecycle_funnel_evidence.render_funnel_summary(funnel_snapshot)
-        except Exception:
-            funnel_text = (
-                "Lifecycle evidence — trailing 1d UTC\n"
-                "Sources: UNKNOWN (read-only funnel unavailable)"
-            )
-        content = content + "\n\n" + funnel_text
-        # R-029: objective MARKET_TRUTH only; never mix user/operational
-        # outcomes with finalized price observations or claim profitability.
-        try:
-            from core import market_outcome_evidence
-            market_snapshot = market_outcome_evidence.build_market_snapshot(
-                range_days=7, max_segments=5
-            )
-            market_text = market_outcome_evidence.render_market_summary(market_snapshot)
-        except Exception:
-            market_text = (
-                "Objective market outcomes — finalized OPEN_NOW\n"
-                "Evidence: UNKNOWN (objective source unavailable)"
-            )
-        content = content + "\n\n" + market_text
-        # R-030: historical focus observations come exclusively from primary-v3
-        # persisted FSM transition logs, never from current mutable watchlist.
-        try:
-            from core import focus_history_evidence
-            focus_snapshot = focus_history_evidence.build_focus_history(range_days=7)
-            focus_text = focus_history_evidence.render_focus_history(focus_snapshot)
-        except Exception:
-            focus_text = (
-                "FSM Focus / Watchlist History — read only\n"
-                "Evidence: UNKNOWN (FSM focus log unavailable)"
-            )
-        content = content + "\n\n" + focus_text
+        content += (
+            "\n\nSelect a report below to view its separately governed evidence:"
+            "\n- Published Signals: distinct route publications, not trades"
+            "\n- Signal Lifecycle: strategy / FSM / candidate / visible stages"
+            "\n- Market Outcomes: finalized objective market telemetry only"
+            "\n- Focus History: observed FSM watchlist changes only"
+            "\nUnavailable evidence is UNKNOWN, not a measured zero."
+        )
         try:
             import os as _os
             report_path = _find_latest_report_json()
@@ -1447,12 +1435,62 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         except Exception:
             markup = telegram_admin_ui.research_markup()
         return {
-            "text": _format_surface(
-                "research_analytics",
-                "📊 Research & Analytics",
-                content,
-            ),
+            "text": _bounded_research_page("📊 Research & Analytics", content),
             "reply_markup": markup,
+        }
+
+    if telegram_admin_ui.is_research_subpage_action(action):
+        # Already authorized through the Research panel ceiling and admin.view.
+        # Deliberately read just ONE bounded truth source per callback.
+        if action == "RESEARCH_PUBLICATIONS":
+            title = "📡 Published Signals"
+            try:
+                from core import publication_evidence
+                snapshot = publication_evidence.publication_snapshot()
+                body = publication_evidence.render_publication_summary(snapshot)
+            except Exception:
+                body = (
+                    "Observed OPEN_NOW Publications — trailing 24h UTC\n"
+                    "Evidence: UNKNOWN (publication source unavailable)"
+                )
+        elif action == "RESEARCH_LIFECYCLE":
+            title = "🔀 Signal Lifecycle"
+            try:
+                from core import lifecycle_funnel_evidence
+                snapshot = lifecycle_funnel_evidence.build_funnel(range_days=1)
+                body = lifecycle_funnel_evidence.render_funnel_summary(snapshot)
+            except Exception:
+                body = (
+                    "Lifecycle evidence — trailing 1d UTC\n"
+                    "Sources: UNKNOWN (lifecycle evidence unavailable)"
+                )
+        elif action == "RESEARCH_MARKET":
+            title = "📈 Market Outcomes"
+            try:
+                from core import market_outcome_evidence
+                snapshot = market_outcome_evidence.build_market_snapshot(
+                    range_days=7, max_segments=5
+                )
+                body = market_outcome_evidence.render_market_summary(snapshot)
+            except Exception:
+                body = (
+                    "Objective market outcomes — finalized OPEN_NOW\n"
+                    "Evidence: UNKNOWN (objective source unavailable)"
+                )
+        else:
+            title = "🧭 Focus History"
+            try:
+                from core import focus_history_evidence
+                snapshot = focus_history_evidence.build_focus_history(range_days=7)
+                body = focus_history_evidence.render_focus_history(snapshot)
+            except Exception:
+                body = (
+                    "FSM Focus / Watchlist History — read only\n"
+                    "Evidence: UNKNOWN (FSM focus log unavailable)"
+                )
+        return {
+            "text": _bounded_research_page(title, body),
+            "reply_markup": telegram_admin_ui.research_subpage_markup(action),
         }
 
     if action == "INTELLIGENCE":
