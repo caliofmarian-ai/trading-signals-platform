@@ -186,7 +186,7 @@ def test_research_panel_shows_read_only_publication_evidence(monkeypatch):
 
     # Other repository tests reload core modules; force the package attribute
     # used by the function-local import to point at the same instrumented module.
-    monkeypatch.setattr(core, "publication_evidence", publication_evidence)
+    monkeypatch.setattr(core, "publication_evidence", publication_evidence, raising=False)
     monkeypatch.setattr(bot_service, "get_primary_role", lambda _id: ROLE_OWNER)
     monkeypatch.setattr(
         admin_permissions,
