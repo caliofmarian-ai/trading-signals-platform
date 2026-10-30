@@ -312,3 +312,11 @@ def test_finnhub_personal_use_never_publishes_signals(
 
     assert published == []
     assert warnings[0]["warn_type"] == "FINNHUB_PERSONAL_USE_DISTRIBUTION_BLOCKED"
+
+
+def test_finnhub_accepts_compact_eurusd_alias_but_rejects_other_pairs():
+    module = importlib.import_module("runtime.finnhub_market_data")
+    assert module.normalize_symbol("EURUSD") == "EUR/USD"
+    assert module.normalize_symbol("EUR_USD") == "EUR/USD"
+    with pytest.raises(module.FinnhubConfigurationError, match="restricted"):
+        module.normalize_symbol("GBPUSD")
