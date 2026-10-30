@@ -632,9 +632,9 @@ def compute_signal_stats(signal_id: str) -> Dict[str, Any]:
                 # file may be interpreted as community feedback, but an
                 # explicitly different truth layer must never enter the tally.
                 if (
-                    record.get("truth_domain") not in {None, "COMMUNITY_TRUTH"}
-                    or record.get("truth_source") not in {None, "COMMUNITY_SELF_REPORT"}
-                    or record.get("event_type") not in {None, "user_outcome_record"}
+                    record.get("truth_domain") not in (None, "COMMUNITY_TRUTH")
+                    or record.get("truth_source") not in (None, "COMMUNITY_SELF_REPORT")
+                    or record.get("event_type") not in (None, "user_outcome_record")
                 ):
                     excluded_other_truth += 1
                     continue
