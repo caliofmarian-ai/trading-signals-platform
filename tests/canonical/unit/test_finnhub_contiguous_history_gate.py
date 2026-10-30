@@ -123,3 +123,28 @@ def test_invalid_ohlc_remains_fail_closed_before_contiguous_check(tmp_path):
     with pytest.raises(module.FinnhubInvalidHistory, match="integrity"):
         feed.get_candles("EURUSD", "M1")
     assert feed.health()["history_ready"] is False
+
+
+def test_observability_does_not_claim_live_ready_from_restored_history_alone(
+    tmp_path, capsys
+):
+    import json
+
+    _, feed = _feed(tmp_path)
+    feed._candles = {
+        "M1": [_bar(600, "M1"), _bar(540, "M1")],
+        "M5": [_bar(600, "M5"), _bar(300, "M5")],
+    }
+    # Raw stored history can be valid while the restarted process has not
+    # observed a single actual, new EUR/USD tick.
+    assert feed.health()["history_ready"] is True
+    feed._emit_stream_observation("SUBSCRIBE_SENT_UNVERIFIED")
+    out = capsys.readouterr().out.strip().splitlines()
+    assert len(out) == 1
+    message = json.loads(out[0].split(" ", 1)[1])
+    assert message["M1_contiguous_head_count"] == 2
+    assert message["M5_contiguous_head_count"] == 2
+    assert message["history_continuity_state"] == "CONTIGUOUS"
+    assert message["usable_real_history_and_fresh_tick"] is False
+    assert message["last_real_tick_ts"] is None
+    assert "open_now" not in out[0].lower()
