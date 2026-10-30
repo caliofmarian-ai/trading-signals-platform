@@ -307,6 +307,7 @@ class FinnhubForexFeed:
                 integrity["state"] == "VALID"
                 and int(head["M1"]) >= self.minimum_candles
                 and int(head["M5"]) >= self.minimum_candles
+                and self._valid_trade_tick_count > 0
                 and tick_age is not None
                 and 0 <= tick_age <= self.freshness_seconds
             )
