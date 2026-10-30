@@ -212,7 +212,7 @@ def test_research_panel_shows_read_only_publication_evidence(monkeypatch):
         },
     )
     response = bot_service._handle_admin_navigation_action(
-        "RESEARCH",
+        "RESEARCH_PUBLICATIONS",
         12345,
         {"chat": {"id": -100999, "type": "supergroup"}, "from": {"id": 12345}},
     )
@@ -234,7 +234,7 @@ def test_publication_evidence_inherits_existing_research_role_boundary(monkeypat
 
     monkeypatch.setattr(publication_evidence, "publication_snapshot", forbidden)
     response = bot_service._handle_admin_navigation_action(
-        "RESEARCH",
+        "RESEARCH_PUBLICATIONS",
         12345,
         {"chat": {"id": -100999, "type": "supergroup"}, "from": {"id": 12345}},
     )
