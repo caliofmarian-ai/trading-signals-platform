@@ -1375,7 +1375,7 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         "BILLING_SUPPORT",
         "BILLING_PROVIDERS",
         "BILLING_AUDIT",
-    }:
+    } or telegram_admin_ui.is_billing_case_detail_action(action):
         # TSP-BILL-09: billing/admin read surfaces live beneath Distribution.
         # Renderers consume persisted evidence only and never mutate billing truth.
         from core.billing_admin_views import (
@@ -1383,8 +1383,20 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             render_billing_overview,
             render_provider_status,
             render_subscriber_inventory,
-            render_support_queue,
+            render_support_queue_panel,
+            render_support_case_detail,
         )
+
+        if telegram_admin_ui.is_billing_case_detail_action(action):
+            token = action.partition(":")[2]
+            return {
+                "text": _format_surface(
+                    "billing_access",
+                    "🆘 Billing Support Case",
+                    render_support_case_detail(token),
+                ),
+                "reply_markup": telegram_admin_ui.billing_support_case_markup(token),
+            }
 
         if action == "BILLING_HOME":
             return {
@@ -1400,7 +1412,11 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
             content = render_subscriber_inventory()
         elif action == "BILLING_SUPPORT":
             title = "🆘 Billing Support Queue"
-            content = render_support_queue()
+            content, cases = render_support_queue_panel()
+            return {
+                "text": _format_surface("billing_access", title, content),
+                "reply_markup": telegram_admin_ui.billing_support_queue_markup(cases),
+            }
         elif action == "BILLING_PROVIDERS":
             title = "💳 Payment Providers"
             content = render_provider_status()
