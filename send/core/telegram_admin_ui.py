@@ -53,6 +53,7 @@ _BILLING_SUBPAGE_ACTIONS: frozenset[str] = frozenset({
 # R-031: Research is still one canonical root; these are strictly read-only
 # child pages that inherit the existing RESEARCH panel authorization.
 _RESEARCH_SUBPAGE_ACTIONS: frozenset[str] = frozenset({
+    "RESEARCH_STRATEGY",
     "RESEARCH_PUBLICATIONS",
     "RESEARCH_LIFECYCLE",
     "RESEARCH_MARKET",
@@ -165,6 +166,7 @@ CANONICAL_ADMIN_PARENT_MAP: dict[str, str] = {
     "BILLING_PROVIDERS": "BILLING_HOME",
     "BILLING_AUDIT": "BILLING_HOME",
     "RESEARCH": "HOME",
+    "RESEARCH_STRATEGY": "RESEARCH",
     "RESEARCH_PUBLICATIONS": "RESEARCH",
     "RESEARCH_LIFECYCLE": "RESEARCH",
     "RESEARCH_MARKET": "RESEARCH",
@@ -691,13 +693,14 @@ def research_markup(*, has_file: bool = False, filename: str = "") -> dict[str, 
     """
     rows: list[list[dict[str, str]]] = [
         [
+            _btn("📋 Strategy Decisions", "RESEARCH_STRATEGY"),
             _btn("📡 Published Signals", "RESEARCH_PUBLICATIONS"),
-            _btn("🔀 Signal Lifecycle", "RESEARCH_LIFECYCLE"),
         ],
         [
+            _btn("🔀 Signal Lifecycle", "RESEARCH_LIFECYCLE"),
             _btn("📈 Market Outcomes", "RESEARCH_MARKET"),
-            _btn("🧭 Focus History", "RESEARCH_FOCUS"),
         ],
+        [_btn("🧭 Focus History", "RESEARCH_FOCUS")],
     ]
     if has_file and filename:
         rows.append([_btn("📥 Download Report", f"FILE_DL:{DIR_KEY_RPT}:{filename}")])
