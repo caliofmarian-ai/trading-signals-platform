@@ -39,6 +39,34 @@ WIDE_SCAN_SLOT_SECONDS = 2
 WIDE_SCAN_CYCLE_SECONDS = 60
 _LAST_PARAM_ERROR_SIGNATURE: Optional[str] = None
 
+# Bound repeated HTTP 429 observability noise without changing the provider,
+# backoff, scan schedule, or fail-closed behavior. The first failure is always
+# emitted; subsequent failures are counted and summarized every five minutes.
+_MARKET_DATA_LIMITED_LOG_INTERVAL_SECONDS = 300
+_MARKET_DATA_LIMITED_LAST_LOG_TS: Optional[int] = None
+_MARKET_DATA_LIMITED_SUPPRESSED_COUNT = 0
+
+
+def _log_market_data_limited_warning(symbol: str, now_ts: int) -> None:
+    global _MARKET_DATA_LIMITED_LAST_LOG_TS, _MARKET_DATA_LIMITED_SUPPRESSED_COUNT
+    observed_ts = int(now_ts)
+    previous_ts = _MARKET_DATA_LIMITED_LAST_LOG_TS
+    if previous_ts is not None and 0 <= observed_ts - previous_ts < _MARKET_DATA_LIMITED_LOG_INTERVAL_SECONDS:
+        _MARKET_DATA_LIMITED_SUPPRESSED_COUNT += 1
+        return
+
+    context: Dict[str, Any] = {"symbol": symbol}
+    if _MARKET_DATA_LIMITED_SUPPRESSED_COUNT:
+        context["suppressed_repeated_warnings"] = _MARKET_DATA_LIMITED_SUPPRESSED_COUNT
+    observability_logger.log_warning(
+        warn_type="MARKET_DATA_LIMITED",
+        message="Twelve Data rate limit is active; skipping remaining symbols for this cycle",
+        context=context,
+        source={"module": "signal_engine", "function": "run_once"},
+    )
+    _MARKET_DATA_LIMITED_LAST_LOG_TS = observed_ts
+    _MARKET_DATA_LIMITED_SUPPRESSED_COUNT = 0
+
 
 def _select_scan_symbols(symbols: List[str], watchlist: List[str], now_ts: int) -> tuple[List[str], set[str]]:
     """Prioritize focus every tick while preserving bounded wide-scan coverage.
@@ -568,12 +596,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
 
         except Exception as exc:
             if isinstance(exc, MarketDataRateLimitError):
-                observability_logger.log_warning(
-                    warn_type="MARKET_DATA_LIMITED",
-                    message="Twelve Data rate limit is active; skipping remaining symbols for this cycle",
-                    context={"symbol": symbol},
-                    source={"module": "signal_engine", "function": "run_once"},
-                )
+                _log_market_data_limited_warning(symbol, now_ts)
                 break
             if isinstance(exc, MarketDataUnavailableError):
                 observability_logger.log_warning(
