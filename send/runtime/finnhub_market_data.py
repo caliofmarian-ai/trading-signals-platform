@@ -316,7 +316,11 @@ class FinnhubForexFeed:
                     self._subscription_state = "SENT_UNVERIFIED"
                     self._stream_state = "SUBSCRIBED_WAITING_REAL_TICK"
                 while not self._stop_event.is_set():
-                    self.ingest_message(socket.recv())
+                    frame = socket.recv()
+                    if frame == "" or frame == b"":
+                        # A clean close is not a market-data tick.
+                        raise ConnectionError("Finnhub stream closed")
+                    self.ingest_message(frame)
             except Exception as exc:
                 with self._lock:
                     self._stream_failure_count += 1
