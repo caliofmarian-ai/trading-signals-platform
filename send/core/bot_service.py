@@ -35,7 +35,6 @@ from core.admin_commands import (
     get_all_known_symbols,
     get_current_strategy_profile_observation,
     _load_active_symbols_observation,
-    _read_engine_events_observation,
     _find_latest_report_json,
     _iter_jsonl,
     ENGINE_EVENTS_PATH,
@@ -1410,19 +1409,17 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
         }
 
     if action == "RESEARCH":
-        # R-031: one short canonical Research overview, with four explicit
-        # on-demand read-only reports. Never concatenate all reports into one
-        # potentially oversized Telegram message or scan every log on open.
-        from core.admin_views import render_research_analytics_panel
-        recent_events = _iter_recent_engine_events(limit=500)
-        content = render_research_analytics_panel(recent_events)
-        content += (
-            "\n\nSelect a report below to view its separately governed evidence:"
+        # R-032: keep the canonical Research root independent of every
+        # possibly large observability file. Read one bounded source only
+        # after a separately authorized report detail button is selected.
+        content = (
+            "Select a report to inspect its independently governed evidence:"
+            "\n- Strategy Decisions: recent strategy evaluations and blockers"
             "\n- Published Signals: distinct route publications, not trades"
             "\n- Signal Lifecycle: strategy / FSM / candidate / visible stages"
             "\n- Market Outcomes: finalized objective market telemetry only"
             "\n- Focus History: observed FSM watchlist changes only"
-            "\nUnavailable evidence is UNKNOWN, not a measured zero."
+            "\nMissing source evidence is UNKNOWN, never a measured zero."
         )
         try:
             import os as _os
@@ -1442,7 +1439,19 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
     if telegram_admin_ui.is_research_subpage_action(action):
         # Already authorized through the Research panel ceiling and admin.view.
         # Deliberately read just ONE bounded truth source per callback.
-        if action == "RESEARCH_PUBLICATIONS":
+        if action == "RESEARCH_STRATEGY":
+            title = "📋 Strategy Decisions"
+            try:
+                from core.admin_views import render_research_analytics_panel
+                body = render_research_analytics_panel(
+                    _iter_recent_engine_events(limit=500)
+                )
+            except Exception:
+                body = (
+                    "Research & Analytics\n"
+                    "UNAVAILABLE (bounded engine evidence could not be read)"
+                )
+        elif action == "RESEARCH_PUBLICATIONS":
             title = "📡 Published Signals"
             try:
                 from core import publication_evidence
@@ -1632,12 +1641,79 @@ def _handle_admin_navigation_action(action: str, user_id: int, message: Dict[str
 def _build_status_snapshot() -> Dict[str, Any]:
     return build_status_snapshot()
 
+# Maximum bytes the interactive Strategy detail may inspect per request.
+# The other Research detail sources have their own 16 MiB source boundaries.
+_RESEARCH_STRATEGY_TAIL_MAX_BYTES = 8 * 1024 * 1024
+_RESEARCH_STRATEGY_TAIL_CHUNK_BYTES = 64 * 1024
+
+
 def _iter_recent_engine_events(limit: int = 50) -> Optional[list]:
-    """Return the most recent engine events (up to limit) from engine_events.jsonl."""
-    events = _read_engine_events_observation()
-    if events is None:
+    """Read the most recent complete engine JSONL records, bounded by bytes.
+
+    A large historical append-only engine log must not block the Telegram
+    poller merely to show a 500-event Strategy Decisions overview. Read from
+    the end, preserve stored event truth without migrating its schema, and
+    return None (UNKNOWN in UI) if the bounded window is incomplete/corrupt.
+    """
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
         return None
-    return events[-limit:] if len(events) > limit else events
+
+    try:
+        with open(ENGINE_EVENTS_PATH, "rb") as f:
+            original = os.fstat(f.fileno())
+            file_size = original.st_size
+            if file_size == 0:
+                return []
+            max_read = min(file_size, _RESEARCH_STRATEGY_TAIL_MAX_BYTES)
+            collected = b""
+            read_bytes = 0
+            # At least limit+1 newlines ensure a complete leading line can
+            # be discarded when the backward scan begins in the middle.
+            while read_bytes < max_read:
+                width = min(
+                    _RESEARCH_STRATEGY_TAIL_CHUNK_BYTES,
+                    max_read - read_bytes,
+                )
+                f.seek(file_size - read_bytes - width)
+                block = f.read(width)
+                if len(block) != width:
+                    return None
+                collected = block + collected
+                read_bytes += width
+                if collected.count(b"\n") >= limit + 1:
+                    break
+            after = os.fstat(f.fileno())
+            if (
+                after.st_size != original.st_size
+                or after.st_mtime_ns != original.st_mtime_ns
+                or after.st_ino != original.st_ino
+            ):
+                # A concurrent append/replacement cannot yield a complete
+                # stable evidence snapshot; do not infer a valid report.
+                return None
+
+        if read_bytes < file_size:
+            first_end = collected.find(b"\n")
+            if first_end < 0:
+                return None
+            collected = collected[first_end + 1:]
+            if collected.count(b"\n") < limit:
+                return None
+
+        recent = []
+        for raw_line in collected.splitlines()[-limit:]:
+            if not raw_line.strip():
+                continue
+            try:
+                row = json.loads(raw_line.decode("utf-8"))
+            except (UnicodeError, ValueError):
+                return None
+            if not isinstance(row, dict):
+                return None
+            recent.append(row)
+        return recent
+    except (OSError, ValueError, OverflowError):
+        return None
 
 
 _RETIRED_ADMIN_CALLBACKS: frozenset = frozenset({

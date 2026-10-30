@@ -421,6 +421,9 @@ def test_decision_and_intelligence_views_distinguish_missing_from_empty_logs(
 
     path = tmp_path / "engine_events.jsonl"
     monkeypatch.setattr(admin_commands, "ENGINE_EVENTS_PATH", str(path))
+    # R-032 reads a bounded engine tail through bot_service, while the older
+    # admin command reader still owns its separate compatibility surface.
+    monkeypatch.setattr(bot_service, "ENGINE_EVENTS_PATH", str(path))
 
     missing = admin_commands._decision_debug_observation()
     assert missing["availability"].startswith("UNAVAILABLE")
