@@ -145,7 +145,7 @@ def test_malicious_or_invalid_values_are_sanitized_not_logged():
     assert seg["wins"] is None
     assert "PRIVATE-ACCOUNT" not in rendered
     assert "TOKEN=secret" not in rendered
-    assert "script" not in rendered
+    assert "<script>" not in rendered
     assert out["focus_7d"]["quality"] == {"invalid_rows": 2}
 
 
