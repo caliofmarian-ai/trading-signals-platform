@@ -35,6 +35,25 @@ LAST_UPDATE_ID: Optional[int] = None
 _POLLER_LOCK = threading.Lock()
 _POLLER_STARTED = False
 
+# Only strictly read-only, already validated navigation can be acknowledged
+# before the potentially slow Telegram edit/send and persisted-state writes.
+# Payment, voting, mutations, malformed and recovery callbacks retain their
+# original post-processing acknowledgements and user-visible toasts.
+_FAST_ACK_OWNER_ADMIN_ACTIONS = frozenset({
+    "ADMIN_NAV:HOME",
+    "ADMIN_NAV:OPERATIONS",
+    "ADMIN_NAV:SYSHEALTH",
+    "ADMIN_NAV:SYMBOLS_COV",
+    "ADMIN_NAV:DECISION_VIS",
+    "ADMIN_NAV:DISTRIBUTION",
+    "ADMIN_NAV:RESEARCH",
+    "ADMIN_NAV:INTELLIGENCE",
+})
+_SLOW_CALLBACK_THRESHOLD_MS = 1500
+_SLOW_CALLBACK_REMINDER_SECONDS = 60.0
+_LAST_SLOW_CALLBACK_LOG_MONOTONIC = 0.0
+_SLOW_CALLBACK_LOG_LOCK = threading.Lock()
+
 # Heartbeat: timestamp of the last successful getUpdates call (or 0 if never).
 # Updated atomically by the poller thread; read by liveness checks.
 _POLLER_LAST_HEARTBEAT: float = 0.0
@@ -203,6 +222,78 @@ def poll_updates():
             })
 
             time.sleep(3)
+
+
+def _fast_ack_safe_for_navigation(update: Dict[str, Any]) -> bool:
+    """Fail closed: ACK early only known, non-mutating and current UI routes.
+
+    This is an optimization hint, not authorization: bot_service still checks
+    all permissions, context and generation before any rendering or mutation.
+    The conservative selection protects recovery, billing and voting toasts.
+    """
+    try:
+        cb = update.get("callback_query")
+        if not isinstance(cb, dict):
+            return False
+        data = cb.get("data")
+        message = cb.get("message")
+        actor = cb.get("from")
+        if not isinstance(data, str) or not isinstance(message, dict) or not isinstance(actor, dict):
+            return False
+        chat = message.get("chat")
+        if not isinstance(chat, dict):
+            return False
+        chat_id = int(chat["id"])
+        user_id = int(actor["id"])
+        if data in _FAST_ACK_OWNER_ADMIN_ACTIONS:
+            # No fast ACK for another role or a forged/out-of-context admin
+            # callback; the existing dispatcher must preserve its denial toast.
+            return bool(bot_service.is_owner(user_id)) and bool(
+                bot_service._can_use_admin_callback(message, user_id)
+            )
+        app = telegram_app_nav.parse_app_callback(data)
+        if not isinstance(app, dict) or app.get("action") not in {
+            telegram_app_nav.ACT_HELP, telegram_app_nav.ACT_STATUS,
+        }:
+            return False
+        generation = app.get("generation")
+        if not isinstance(generation, int) or generation <= 0:
+            return False  # Legacy generation-less buttons retain recovery semantics.
+        thread_id = message.get("message_thread_id")
+        return bool(telegram_app_nav.callback_generation_is_current(
+            chat_id=chat_id,
+            user_id=user_id,
+            callback_generation=generation,
+            thread_id=int(thread_id) if thread_id is not None else None,
+        ))
+    except (TypeError, ValueError, KeyError):
+        return False
+    except Exception:
+        # Non-critical preflight failure never prevents the governed callback.
+        return False
+
+
+def _report_slow_callback(*, fast_ack: bool, ack_elapsed_ms: int, handler_elapsed_ms: int, family: str) -> None:
+    """Emit bounded, identity-free performance telemetry only when slow."""
+    global _LAST_SLOW_CALLBACK_LOG_MONOTONIC
+    if max(ack_elapsed_ms, handler_elapsed_ms) < _SLOW_CALLBACK_THRESHOLD_MS:
+        return
+    now = time.monotonic()
+    with _SLOW_CALLBACK_LOG_LOCK:
+        if (now - _LAST_SLOW_CALLBACK_LOG_MONOTONIC) < _SLOW_CALLBACK_REMINDER_SECONDS:
+            return
+        _LAST_SLOW_CALLBACK_LOG_MONOTONIC = now
+    observability_logger.log_warning(
+        warn_type="telegram_callback_slow",
+        message="Callback processing exceeded the latency threshold",
+        context={
+            "callback_family": family,
+            "fast_ack": fast_ack,
+            "ack_elapsed_ms": min(max(0, ack_elapsed_ms), 60000),
+            "handler_elapsed_ms": min(max(0, handler_elapsed_ms), 60000),
+        },
+        source={"module": "telegram_updates", "function": "process_update"},
+    )
 
 
 def _ack_callback(callback_id: Any, text: str = "") -> None:
@@ -423,17 +514,40 @@ def process_update(update: Dict[str, Any]):
             _answer_callback_query(callback_id, result)
             return
 
+        callback_started = time.monotonic()
+        fast_ack = _fast_ack_safe_for_navigation(update)
+        ack_elapsed_ms = 0
+        if fast_ack:
+            # Dismiss Telegram spinner BEFORE UI rendering, file reads or sync
+            # storage. This never runs for billing, voting, mutation, unknown,
+            # unauthorized, malformed or stale-generation callbacks.
+            _ack_callback(callback_id)
+            ack_elapsed_ms = int((time.monotonic() - callback_started) * 1000)
+
+        handler_started = time.monotonic()
         result = bot_service.process_update(update)
-        # Acknowledge APP: and ADMIN_NAV: callbacks so Telegram dismisses the
-        # loading spinner. Recovery paths may add a short user-visible toast;
-        # all normal callbacks retain the empty acknowledgement. VOTE_
-        # callbacks are already acknowledged above by _answer_callback_query.
-        ack_text = (
-            str(result.get("callback_ack_text") or "")
-            if isinstance(result, dict)
-            else ""
+        handler_elapsed_ms = int((time.monotonic() - handler_started) * 1000)
+
+        if not fast_ack:
+            # Preserve existing recovery/denial toasts and governed callback
+            # ordering for all non-allowlisted routes.
+            ack_text = (
+                str(result.get("callback_ack_text") or "")
+                if isinstance(result, dict)
+                else ""
+            )
+            _ack_callback(callback_id, ack_text)
+            ack_elapsed_ms = int((time.monotonic() - callback_started) * 1000)
+
+        family = "APP" if isinstance(data, str) and data.startswith("APP:") else (
+            "ADMIN_NAV" if isinstance(data, str) and data.startswith("ADMIN_NAV:") else "OTHER"
         )
-        _ack_callback(callback_id, ack_text)
+        _report_slow_callback(
+            fast_ack=fast_ack,
+            ack_elapsed_ms=ack_elapsed_ms,
+            handler_elapsed_ms=handler_elapsed_ms,
+            family=family,
+        )
 
 
 def _answer_callback_query(callback_id: Any, result: Dict[str, Any]) -> None:
