@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0.0",
+  "authority": "EXTERNAL_EVIDENCE_ONLY",
+  "gate_states": [
+    "UNKNOWN",
+    "BLOCKED",
+    "APPROVED"
+  ],
+  "products": {
+    "BINARY_TRADING": {
+      "jurisdiction_scope": {
+        "status": "UNKNOWN",
+        "evidence_ref": "github:#168",
+        "reason_code": "TARGET_CLIENT_AND_JURISDICTION_SCOPE_NOT_APPROVED"
+      },
+      "product_eligibility": {
+        "status": "UNKNOWN",
+        "evidence_ref": "github:#168",
+        "reason_code": "QUALIFIED_LEGAL_CLASSIFICATION_REQUIRED"
+      },
+      "commercial_catalog": {
+        "status": "BLOCKED",
+        "evidence_ref": "github:#168",
+        "reason_code": "PAID_PRICING_AND_CRYPTO_POLICY_NOT_CONFIGURED"
+      },
+      "external_go_live_gate": {
+        "status": "BLOCKED",
+        "evidence_ref": "github:#168",
+        "reason_code": "SELLABLE_NO_WHILE_EXTERNAL_GATE_OPEN"
+      },
+      "providers": {
+        "REVOLUT_MERCHANT": {
+          "business_eligibility": {
+            "status": "UNKNOWN",
+            "evidence_ref": "github:#168",
+            "reason_code": "WRITTEN_BUSINESS_ELIGIBILITY_REQUIRED"
+          },
+          "provider_verification": {
+            "status": "UNKNOWN",
+            "evidence_ref": "github:#160",
+            "reason_code": "AUTHENTICATED_PROVIDER_VERIFICATION_REQUIRED"
+          }
+        },
+        "KUCOIN": {
+          "business_eligibility": {
+            "status": "UNKNOWN",
+            "evidence_ref": "github:#168",
+            "reason_code": "BUSINESS_ACCOUNT_AND_ASSET_POLICY_APPROVAL_REQUIRED"
+          },
+          "provider_verification": {
+            "status": "UNKNOWN",
+            "evidence_ref": "github:#161",
+            "reason_code": "AUTHENTICATED_PROVIDER_VERIFICATION_REQUIRED"
+          }
+        }
+      }
+    }
+  }
+}
