@@ -59,8 +59,11 @@ def _count(value: Any) -> int | None:
 
 
 def _timestamp(value: Any, now_ts: int) -> int | None:
-    result = _count(value)
-    return result if result and result <= now_ts + 300 else None
+    # Accept both epoch seconds and epoch milliseconds without reusing the
+    # small operational-count upper bound. Never accept booleans/future dates.
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value if value <= now_ts + 300 else None
 
 
 def _allowed(value: Any, names: frozenset[str]) -> str:
@@ -255,7 +258,6 @@ def inspect_provider_selection(*, path: str | Path) -> dict[str, Any]:
         "effective_selection_source": "PERSISTED_OWNER_SELECTION",
         "persisted_provider": provider,
         "persisted_mode": mode,
-        "selected_by_user_id": None,  # Explicitly never emit the source field.
     }
 
 
