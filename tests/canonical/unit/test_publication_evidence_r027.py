@@ -212,7 +212,9 @@ def test_research_panel_shows_read_only_publication_evidence(monkeypatch):
         12345,
         {"chat": {"id": -100999, "type": "supergroup"}, "from": {"id": 12345}},
     )
-    assert "Unique signals published: 2" in response["text"]
+    assert "Unique signals published: 2" in response["text"], (
+        "\n".join(response["text"].splitlines()[-18:])
+    )
     assert "Observed rolling average per hour: 0.08" in response["text"]
     assert "Market WIN/LOSS" in response["text"]
 
