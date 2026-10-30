@@ -180,9 +180,13 @@ def test_invalid_now_timestamp_fails_closed(bad_now):
 
 
 def test_research_panel_shows_read_only_publication_evidence(monkeypatch):
+    import core
     from core import admin_permissions, bot_service
     from core.role_constants import ROLE_OWNER
 
+    # Other repository tests reload core modules; force the package attribute
+    # used by the function-local import to point at the same instrumented module.
+    monkeypatch.setattr(core, "publication_evidence", publication_evidence)
     monkeypatch.setattr(bot_service, "get_primary_role", lambda _id: ROLE_OWNER)
     monkeypatch.setattr(
         admin_permissions,
