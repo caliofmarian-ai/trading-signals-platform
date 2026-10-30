@@ -26,6 +26,7 @@ def _read(tmp_path, monkeypatch, symbols=None, focus=None):
                     {"symbols": symbols if symbols is not None else ["EUR/USD"]})
     fsm = _write(root / "state" / "focus_state.json",
                  {"watchlist": focus if focus is not None else []})
+    monkeypatch.setenv("MARKET_DATA_PROVIDER", "TWELVE_DATA")
     monkeypatch.setenv("TWELVE_DATA_REST_REQUESTS_PER_MINUTE", "8")
     monkeypatch.setenv("TWELVE_DATA_REST_CACHE_SECONDS", "55")
     monkeypatch.setenv("TWELVE_DATA_STREAMING_ENABLED", "1")
