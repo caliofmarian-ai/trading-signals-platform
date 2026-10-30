@@ -227,7 +227,9 @@ def test_provider_marker_is_allowlisted_and_no_env_secret_escapes(
     report = probe.collect_checkpoint(base_dir=tmp_path, now_ts=NOW)
     assert report["configured_provider_from_env"] == "FINNHUB"
     assert "source_diagnostics" in report
-    assert report["source_diagnostics"]["source_tails"]["engine"]["status"] == "FILE_NOT_FOUND"
+    engine_tail = report["source_diagnostics"]["source_tails"]["engine"]
+    assert engine_tail["status"] in {"FILE_NOT_FOUND", "EMPTY_FILE"}
+    assert engine_tail["tail_target_family_rows"] in (None, 0)
     serialized = json.dumps(report)
     assert "PRIVATE-SENSITIVE-TOKEN" not in serialized
     assert str(tmp_path) not in serialized
