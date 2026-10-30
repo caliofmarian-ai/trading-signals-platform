@@ -59,6 +59,12 @@ def _select_scan_symbols(symbols: List[str], watchlist: List[str], now_ts: int) 
     return focus + selected_wide, focus_set
 
 
+def _canonical_provider_scope_symbol(symbol: str) -> str:
+    """Recognize the persisted EURUSD alias for Finnhub's EUR/USD-only scope."""
+    value = str(symbol or "").strip().upper().replace("_", "/")
+    return "EUR/USD" if value == "EURUSD" else value
+
+
 def _select_effective_scan_symbols(
     symbols: List[str],
     watchlist: List[str],
@@ -78,11 +84,11 @@ def _select_effective_scan_symbols(
     if provider_symbols is None:
         return _select_scan_symbols(symbols, watchlist, now_ts)
 
-    allowed = {str(item).strip().upper() for item in provider_symbols}
+    allowed = {_canonical_provider_scope_symbol(item) for item in provider_symbols}
     scoped = [
         symbol
         for symbol in symbols
-        if str(symbol).strip().upper().replace("_", "/") in allowed
+        if _canonical_provider_scope_symbol(symbol) in allowed
     ]
     scoped_set = set(scoped)
     focus = [symbol for symbol in watchlist if symbol in scoped_set]
@@ -477,11 +483,11 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
         )
 
     if provider_symbols is not None:
-        allowed = {str(item).strip().upper() for item in provider_symbols}
+        allowed = {_canonical_provider_scope_symbol(item) for item in provider_symbols}
         scan_symbols = [
             symbol
             for symbol in scan_symbols
-            if str(symbol).strip().upper().replace("_", "/") in allowed
+            if _canonical_provider_scope_symbol(symbol) in allowed
         ]
 
     for symbol in scan_symbols:
