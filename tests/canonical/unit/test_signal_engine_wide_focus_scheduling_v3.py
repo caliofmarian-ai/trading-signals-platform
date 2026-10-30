@@ -76,3 +76,26 @@ def test_unconstrained_provider_keeps_existing_multi_symbol_wide_schedule_exactl
             provider_symbols=None,
         )
         assert actual == expected
+
+
+def test_finnhub_scans_compact_persisted_eurusd_every_tick_without_expanding_scope():
+    for now_ts in (1_800_000_002, 1_800_000_004, 1_800_000_006):
+        selected, focus = _select_effective_scan_symbols(
+            ["EURUSD", "GBPUSD"],
+            [],
+            now_ts,
+            provider_symbols=["EUR/USD"],
+        )
+        assert selected == ["EURUSD"]
+        assert focus == set()
+
+
+def test_finnhub_preserves_focus_for_compact_eurusd_alias():
+    selected, focus = _select_effective_scan_symbols(
+        ["GBPUSD", "EURUSD"],
+        ["EURUSD"],
+        1_800_000_002,
+        provider_symbols=["EUR/USD"],
+    )
+    assert selected == ["EURUSD"]
+    assert focus == {"EURUSD"}
