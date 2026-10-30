@@ -300,6 +300,16 @@ class FinnhubForexFeed:
             if last is not None and 0 <= now_ts - last < 300:
                 return
             self._last_stream_evidence_emit_ts[event] = now_ts
+            integrity = inspect_history(self._candles)
+            head = integrity["contiguous_candle_counts"]
+            tick_age = None if self._last_price_ts is None else now_ts - int(self._last_price_ts)
+            usable = (
+                integrity["state"] == "VALID"
+                and int(head["M1"]) >= self.minimum_candles
+                and int(head["M5"]) >= self.minimum_candles
+                and tick_age is not None
+                and 0 <= tick_age <= self.freshness_seconds
+            )
             record = {
                 "component": "finnhub_stream_readiness",
                 "event": event,
@@ -313,6 +323,11 @@ class FinnhubForexFeed:
                 "last_real_tick_ts": self._last_price_ts,
                 "M1_observed_candles": len(self._candles["M1"]),
                 "M5_observed_candles": len(self._candles["M5"]),
+                "M1_contiguous_head_count": int(head["M1"]),
+                "M5_contiguous_head_count": int(head["M5"]),
+                "history_integrity_state": integrity["state"],
+                "history_continuity_state": integrity["temporal_continuity_state"],
+                "usable_real_history_and_fresh_tick": usable,
                 "required_candles_each": self.minimum_candles,
                 "no_prices_or_trade_recommendations": True,
             }
