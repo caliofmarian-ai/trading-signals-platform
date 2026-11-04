@@ -18,6 +18,7 @@ from typing import Any, Callable, Mapping
 from core import storage
 from core.decision_object import DecisionObject
 from core.v2_fsm_orchestrator import PersistentFSMResult
+from core.strategy_v2 import STRATEGY_VERSION, CANONICAL_SPEC
 
 
 PROTOCOL = "SHADOW_MODEL_TIME_RESEARCH_V1"
@@ -193,6 +194,7 @@ def _recover_locked(root: Path, now: float) -> None:
 
 def register_accepted_open(
     decision: DecisionObject, handoff: PersistentFSMResult, *, provider: str, now_ts: float,
+    parameter_bundle_sha256: str | None = None,
 ) -> dict:
     if not enabled():
         return {"status": "DISABLED", "registered": False}
@@ -214,6 +216,10 @@ def register_accepted_open(
     horizon = _number(decision.time.model_expiry) * 60.0
     if horizon > 86400:
         raise ValueError("research horizon exceeds its bound")
+    if parameter_bundle_sha256 is not None and (
+        not isinstance(parameter_bundle_sha256, str) or not _ID.fullmatch(parameter_bundle_sha256)
+    ):
+        raise ValueError("invalid research parameter provenance")
     record_id = sha256(f"{PROTOCOL}|{provider}|{decision.signal_id}".encode()).hexdigest()
     root = _root()
     with storage.with_lock("shadow_model_time_research", timeout_sec=0.2):
@@ -232,6 +238,8 @@ def register_accepted_open(
             "provider": provider, "symbol": "EUR/USD", "direction": decision.setup.direction,
             "created_ts": now, "horizon_seconds": horizon, "state": "WAITING_ENTRY",
             "decision_snapshot": decision.to_dict(), "fsm_transition_id": handoff.fsm_transition_id,
+            "parameter_bundle_sha256": parameter_bundle_sha256,
+            "strategy_version": STRATEGY_VERSION, "strategy_spec": CANONICAL_SPEC,
             "entry_sample": None, "expiry_sample": None, "outcome": None,
             "observation_policy": {"entry_deadline_seconds": MAX_ENTRY_DELAY_SECONDS,
                 "expiry_max_lateness_seconds": MAX_SAMPLE_DELAY_SECONDS,
@@ -327,6 +335,13 @@ def summary() -> dict:
         "authoritative_for_strategy_performance": False, "broker_executed": False,
         "execution_calibration_proven": False, "broker_quote_equivalence_proven": False,
         "horizon_source": "UNCALIBRATED_MODEL_TIME", "profitability_established": False}
+
+
+def snapshot_records() -> list[dict]:
+    """Bounded validated private input for separately governed research only."""
+    root = _root()
+    with storage.with_lock("shadow_model_time_research", timeout_sec=0.2):
+        return [_record(root, path.stem) for path in _files(root)]
 
 
 def persist_summary_status(value: dict, *, observed_at: float) -> None:

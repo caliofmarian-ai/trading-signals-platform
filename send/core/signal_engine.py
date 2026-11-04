@@ -17,6 +17,7 @@ from core.storage import config_path
 import importlib
 import json
 import time
+from hashlib import sha256
 from typing import Any, Dict, List, Optional
 
 from core import candle_adapter
@@ -63,7 +64,7 @@ def _load_execution_calibration(*, now_ts, provider, symbol, buffer_mode, params
     return result.calibration
 
 
-def _observe_shadow_research(decision, handoff) -> None:
+def _observe_shadow_research(decision, handoff, *, params=None) -> None:
     """Isolate private research failures from canonical signal execution."""
     if not shadow_research.enabled() or decision.kind != "OPEN_NOW":
         return
@@ -72,6 +73,9 @@ def _observe_shadow_research(decision, handoff) -> None:
         from runtime import market_client
         shadow_research.register_accepted_open(
             decision, handoff, provider=market_client.configured_provider(), now_ts=time.time(),
+            parameter_bundle_sha256=(sha256(json.dumps(
+                params, sort_keys=True, separators=(",", ":"), allow_nan=False,
+            ).encode("utf-8")).hexdigest() if params is not None else None),
         )
     except Exception as exc:
         now = int(time.time())
@@ -697,7 +701,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                 fsm_runtime.save_state(state)
 
             _log_fsm_handoff(decision, persistent_fsm)
-            _observe_shadow_research(decision, persistent_fsm)
+            _observe_shadow_research(decision, persistent_fsm, params=params)
 
             if decision.kind in ACTIONABLE_DECISION_KINDS:
                 execution = prepare_signal_execution(
