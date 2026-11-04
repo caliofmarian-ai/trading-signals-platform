@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import time
+import json
 from typing import Any, Callable, Dict, Optional
 
 from core import observability_logger
 from core import trade_temporal_telemetry
 from runtime import market_client
+from runtime import runtime_status
+from intelligence import shadow_model_time_research as shadow_research
 
 
 TELEMETRY_POLL_SECONDS = 1.0
@@ -160,4 +163,26 @@ def telemetry_market_loop(
                 message="Objective telemetry worker cycle failed closed",
                 context={"error": str(exc)},
             )
+        # This experiment has separate storage and labels. It cannot register
+        # canonical telemetry, supply execution calibration or publish a signal.
+        if shadow_research.enabled():
+            try:
+                research_result = shadow_research.run_cycle(
+                    active_provider=market_client.configured_provider(),
+                    now_ts=float(clock()), price_loader=market_client.get_latest_price_sample,
+                )
+                if research_result.get("changed"):
+                    research_summary = shadow_research.summary()
+                    runtime_status.update_status(shadow_model_time_research=research_summary)
+                    print("TSP_SHADOW_RESEARCH_EVIDENCE " + json.dumps({
+                        "component": "shadow_model_time_research", "observed_at": float(clock()),
+                        "summary": research_summary,
+                    }, sort_keys=True), flush=True)
+            except Exception as exc:
+                _warn_once_per_window(
+                    warning_cache, "shadow_research", now_ts=float(clock()),
+                    warn_type="SHADOW_RESEARCH_UNAVAILABLE",
+                    message="Private research failed closed; no market outcome was invented",
+                    context={"error_class": type(exc).__name__},
+                )
         sleep(float(poll_seconds))

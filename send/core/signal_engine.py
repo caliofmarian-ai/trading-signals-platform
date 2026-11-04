@@ -29,6 +29,7 @@ from core.strategy_v2 import decide
 from core.v2_fsm_orchestrator import advance_persistent_fsm, current_opportunity_signal_id
 from core import storage
 from state_store import state_store as runtime_state_store
+from intelligence import shadow_model_time_research as shadow_research
 
 
 ACTIVE_SYMBOLS_PATH = config_path("active_symbols.json")
@@ -38,6 +39,32 @@ EVENT_SCHEMA_VERSION = "3.0.0"
 WIDE_SCAN_SLOT_SECONDS = 2
 WIDE_SCAN_CYCLE_SECONDS = 60
 _LAST_PARAM_ERROR_SIGNATURE: Optional[str] = None
+_SHADOW_RESEARCH_LAST_WARNING_TS: Optional[int] = None
+
+
+def _observe_shadow_research(decision, handoff) -> None:
+    """Isolate private research failures from canonical signal execution."""
+    if not shadow_research.enabled() or decision.kind != "OPEN_NOW":
+        return
+    global _SHADOW_RESEARCH_LAST_WARNING_TS
+    try:
+        from runtime import market_client
+        shadow_research.register_accepted_open(
+            decision, handoff, provider=market_client.configured_provider(), now_ts=time.time(),
+        )
+    except Exception as exc:
+        now = int(time.time())
+        if _SHADOW_RESEARCH_LAST_WARNING_TS is None or now - _SHADOW_RESEARCH_LAST_WARNING_TS >= 300:
+            _SHADOW_RESEARCH_LAST_WARNING_TS = now
+            try:
+                observability_logger.log_warning(
+                    warn_type="SHADOW_RESEARCH_UNAVAILABLE",
+                    message="Private Model Time research is unavailable; production gates remain unchanged",
+                    context={"error_class": type(exc).__name__},
+                    source={"module": "signal_engine", "function": "_observe_shadow_research"},
+                )
+            except Exception:
+                pass
 
 # Bound repeated HTTP 429 observability noise without changing the provider,
 # backoff, scan schedule, or fail-closed behavior. The first failure is always
@@ -627,6 +654,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                 fsm_runtime.save_state(state)
 
             _log_fsm_handoff(decision, persistent_fsm)
+            _observe_shadow_research(decision, persistent_fsm)
 
             if decision.kind in ACTIONABLE_DECISION_KINDS:
                 execution = prepare_signal_execution(
