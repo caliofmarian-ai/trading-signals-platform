@@ -80,6 +80,18 @@ def read_status() -> Dict[str, Any]:
             }
     except Exception:
         pass
+    try:
+        from intelligence import shadow_gate_timebox_research
+        timebox_report = shadow_gate_timebox_research.read_summary_status()
+        if timebox_report is not None:
+            payload["shadow_gate_timebox_research"] = timebox_report
+            payload["shadow_gate_timebox_research_observation"] = {
+                "observed_at": timebox_report["evidence_cutoff_at"], "is_heartbeat": False,
+                "currently_enabled": shadow_gate_timebox_research.enabled(),
+                "source": "DERIVED_FIXED_WINDOW_RESEARCH_CACHE",
+            }
+    except Exception:
+        pass
     payload["strategy_auditor_env_presence"] = _strategy_auditor_env_presence()
     try:
         # Import the canonical R-019 status authority directly by module name.
