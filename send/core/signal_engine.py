@@ -33,6 +33,7 @@ from core.v2_fsm_orchestrator import advance_persistent_fsm, current_opportunity
 from core import storage
 from state_store import state_store as runtime_state_store
 from intelligence import shadow_model_time_research as shadow_research
+from intelligence import shadow_gate_timebox_research as timebox_research
 
 
 ACTIVE_SYMBOLS_PATH = config_path("active_symbols.json")
@@ -44,6 +45,7 @@ WIDE_SCAN_SLOT_SECONDS = 2
 WIDE_SCAN_CYCLE_SECONDS = 60
 _LAST_PARAM_ERROR_SIGNATURE: Optional[str] = None
 _SHADOW_RESEARCH_LAST_WARNING_TS: Optional[int] = None
+_TIMEBOX_RESEARCH_LAST_WARNING_TS: Optional[int] = None
 _LAST_CALIBRATION_STATE: Dict[str, Dict[str, Any]] = {}
 
 
@@ -62,6 +64,20 @@ def _load_execution_calibration(*, now_ts, provider, symbol, buffer_mode, params
         }, sort_keys=True), flush=True)
         _LAST_CALIBRATION_STATE[key] = summary
     return result.calibration
+
+
+def _observe_timebox_diagnostics(decision, handoff, execution_time, *, now_ts) -> None:
+    if not timebox_research.enabled():
+        return
+    global _TIMEBOX_RESEARCH_LAST_WARNING_TS
+    try:
+        timebox_research.observe_evaluation(decision, handoff, execution_time, now_ts=now_ts)
+    except Exception as exc:
+        if _TIMEBOX_RESEARCH_LAST_WARNING_TS is None or now_ts - _TIMEBOX_RESEARCH_LAST_WARNING_TS >= 60:
+            _TIMEBOX_RESEARCH_LAST_WARNING_TS = now_ts
+            print("TSP_GATE_TIMEBOX_DIAGNOSTICS_UNAVAILABLE " + json.dumps({
+                "observed_at": now_ts, "error_class": type(exc).__name__,
+            }, sort_keys=True), flush=True)
 
 
 def _observe_shadow_research(decision, handoff, *, params=None) -> None:
@@ -702,6 +718,8 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
 
             _log_fsm_handoff(decision, persistent_fsm)
             _observe_shadow_research(decision, persistent_fsm, params=params)
+            _observe_timebox_diagnostics(decision, persistent_fsm, evaluation.execution_time,
+                                         now_ts=time.time())
 
             if decision.kind in ACTIONABLE_DECISION_KINDS:
                 execution = prepare_signal_execution(

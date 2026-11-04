@@ -38,7 +38,8 @@ def _targets() -> dict:
 
 def enabled() -> bool:
     return (os.getenv("SHADOW_GATE_SWEEP_RESEARCH_ENABLED", "").strip().lower()
-            in {"1", "true", "yes", "on"}) and source.enabled()
+            in {"1", "true", "yes", "on"}) and source.enabled() and not source._on(
+                "SHADOW_GATE_TIMEBOX_RESEARCH_ENABLED")
 
 
 def threshold(level: int) -> float:
@@ -80,7 +81,9 @@ def _read(path: Path) -> dict:
 
 
 def _save(path: Path, value: dict) -> None:
-    if len(json.dumps(value, allow_nan=False).encode("utf-8")) > MAX_BYTES:
+    # Account for the exact pretty-printed bytes produced by atomic storage,
+    # otherwise a report can pass this check and exceed the bounded reader.
+    if len((json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")) > MAX_BYTES:
         raise ValueError("research state exceeds its bound")
     storage.save_json_atomic(str(path), value)
 

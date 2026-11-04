@@ -10,6 +10,7 @@ from runtime import market_client
 from runtime import runtime_status
 from intelligence import shadow_model_time_research as shadow_research
 from intelligence import shadow_gate_sweep_research as gate_research
+from intelligence import shadow_gate_timebox_research as timebox_research
 
 
 TELEMETRY_POLL_SECONDS = 1.0
@@ -114,6 +115,8 @@ def telemetry_market_loop(
     warning_cache: Dict[str, float] = {}
     pending_research_status = None
     refresh_gate_research = True
+    last_timebox_update = None
+    timebox_finished = False
     try:
         recovery = trade_temporal_telemetry.recover_after_restart(int(clock()))
         if recovery.get("evidence_gap_count"):
@@ -211,4 +214,36 @@ def telemetry_market_loop(
                     message="Private gate research is unavailable; its ledger will be retried",
                     context={"error_class": type(exc).__name__},
                 )
+        # The Owner's short test has a fixed wall-clock deadline, even with no
+        # accepted OPEN, no source changes, a restart or an interrupted feed.
+        timebox_now = float(clock())
+        if timebox_research.enabled() and not timebox_finished and (
+            last_timebox_update is None
+            or timebox_now - last_timebox_update >= timebox_research.REPORT_INTERVAL_SECONDS
+            or timebox_now >= timebox_research.DEADLINE
+        ):
+            try:
+                short_report = timebox_research.update(
+                    now_ts=timebox_now, price_loader=market_client.get_latest_price_sample,
+                    active_provider=market_client.configured_provider(),
+                )
+                if short_report.get("status") != "BEFORE_REQUEST_WINDOW":
+                    print("TSP_GATE_TIMEBOX_RESEARCH_EVIDENCE " + json.dumps({
+                        "component": "shadow_gate_timebox_research", "observed_at": timebox_now,
+                        "summary": timebox_research.evidence_summary(short_report),
+                    }, sort_keys=True), flush=True)
+                timebox_finished = short_report.get("status") in {"TIMEBOX_COMPLETE", "EXPIRED_BEFORE_ACTIVATION"}
+                last_timebox_update = timebox_now
+            except Exception as exc:
+                _warn_once_per_window(
+                    warning_cache, "gate_timebox", now_ts=timebox_now,
+                    warn_type="SHADOW_GATE_TIMEBOX_UNAVAILABLE",
+                    message="Fixed-window gate research is unavailable; no result was invented",
+                    context={"error_class": type(exc).__name__},
+                )
+                if last_timebox_update is None or timebox_now - last_timebox_update >= 60:
+                    print("TSP_GATE_TIMEBOX_UNAVAILABLE " + json.dumps({
+                        "observed_at": timebox_now, "error_class": type(exc).__name__,
+                    }, sort_keys=True), flush=True)
+                    last_timebox_update = timebox_now
         sleep(float(poll_seconds))
