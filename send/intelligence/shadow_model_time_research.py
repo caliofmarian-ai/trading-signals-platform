@@ -27,6 +27,7 @@ MAX_SAMPLE_AGE_SECONDS = 2.0
 MAX_PENDING = 256
 MAX_RECORD_FILES = 10000
 MAX_RECORD_BYTES = 128 * 1024
+MAX_SUMMARY_STATUS_BYTES = 8 * 1024
 _ID = re.compile(r"[0-9a-f]{64}\Z")
 _RECOVERED: set[str] = set()
 
@@ -326,3 +327,68 @@ def summary() -> dict:
         "authoritative_for_strategy_performance": False, "broker_executed": False,
         "execution_calibration_proven": False, "broker_quote_equivalence_proven": False,
         "horizon_source": "UNCALIBRATED_MODEL_TIME", "profitability_established": False}
+
+
+def persist_summary_status(value: dict, *, observed_at: float) -> None:
+    """Retain the derived observation outside the shared, racy status snapshot.
+
+    This cache owns no outcome truth. Its timestamp is an observation time,
+    not a heartbeat or proof that the worker is currently alive.
+    """
+    payload = {"protocol": PROTOCOL, "observed_at": _number(observed_at),
+               "is_heartbeat": False, "summary": value}
+    if not _valid_summary_status(payload):
+        raise ValueError("invalid research summary status")
+    if len(json.dumps(payload).encode("utf-8")) > MAX_SUMMARY_STATUS_BYTES:
+        raise ValueError("research summary status exceeds its bound")
+    storage.save_json_atomic(storage.state_path("shadow_research_summary.json"), payload)
+
+
+def _valid_summary_status(value: Any) -> bool:
+    if (not isinstance(value, dict)
+        or set(value) != {"protocol", "observed_at", "is_heartbeat", "summary"}
+        or value.get("protocol") != PROTOCOL or value.get("is_heartbeat") is not False):
+        return False
+    _number(value.get("observed_at"))
+    item = value.get("summary")
+    expected = {"protocol", "enabled", "truth_domain", "status", "outcomes", "pending",
+                "decisive_sample", "hypothetical_win_rate_percent", "horizon_source",
+                "authoritative_for_strategy_performance", "broker_executed",
+                "execution_calibration_proven", "broker_quote_equivalence_proven", "profitability_established"}
+    if (not isinstance(item, dict) or set(item) != expected
+        or item.get("protocol") != PROTOCOL or type(item.get("enabled")) is not bool
+        or item.get("truth_domain") != "HYPOTHETICAL_RESEARCH"
+        or item.get("horizon_source") != "UNCALIBRATED_MODEL_TIME"
+        or any(item.get(k) is not False for k in (
+            "authoritative_for_strategy_performance", "broker_executed",
+            "execution_calibration_proven", "broker_quote_equivalence_proven", "profitability_established"))):
+        return False
+    counts = item.get("outcomes")
+    if (not isinstance(counts, dict) or set(counts) != {"WIN", "LOSS", "DRAW", "UNKNOWN"}
+        or any(type(n) is not int or n < 0 for n in counts.values())
+        or sum(counts.values()) > MAX_RECORD_FILES
+        or type(item.get("pending")) is not int or not 0 <= item["pending"] <= MAX_PENDING
+        or type(item.get("decisive_sample")) is not int
+        or item["decisive_sample"] != counts["WIN"] + counts["LOSS"]
+        or item.get("status") != ("OBSERVED" if sum(counts.values()) else "NO_COMPLETED_OBSERVATIONS")):
+        return False
+    rate = item.get("hypothetical_win_rate_percent")
+    decisive = item["decisive_sample"]
+    return (rate is None if decisive == 0 else
+            type(rate) in {int, float} and math.isfinite(rate)
+            and math.isclose(rate, 100.0 * counts["WIN"] / decisive, abs_tol=1e-9))
+
+
+def read_summary_status() -> dict | None:
+    path = Path(storage.state_path("shadow_research_summary.json"))
+    if path.is_symlink():
+        return None
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_SUMMARY_STATUS_BYTES + 1)
+        if len(raw) > MAX_SUMMARY_STATUS_BYTES:
+            return None
+        value = json.loads(raw)
+        return value if _valid_summary_status(value) else None
+    except (OSError, ValueError, TypeError):
+        return None

@@ -34,6 +34,7 @@ from core import params_loader as _params_loader
 from core import observability_logger
 from core import storage as _storage
 from core import market_data_provider_control as _provider_control
+from core.jsonl_tail import read_tail as _read_jsonl_tail
 from core.operational_snapshot import build_status_snapshot
 
 CONFIG_DIR = _storage.root_path("config")
@@ -1050,20 +1051,19 @@ def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
     for subdir in ["config", "observability", "outcomes", "analytics", "analytics/reports", "docs", "audit", "snapshots"]:
         dir_inventory[subdir] = os.path.isdir(os.path.join(base, subdir))
 
-    recent_engine: List[Any] = []
-    recent_admin: List[Any] = []
-    for record in _iter_jsonl(ENGINE_EVENTS_PATH):
-        recent_engine.append(record)
-    for record in _iter_jsonl(ADMIN_EVENTS_PATH):
-        recent_admin.append(record)
-    recent_engine = recent_engine[-AUDIT_MAX_LINES_PER_FILE:]
-    recent_admin = recent_admin[-AUDIT_MAX_LINES_PER_FILE:]
-
-    recent_errors: List[Any] = []
+    # The private audit must not load years of history merely to return 50 rows.
+    # A wider, separately described window keeps rare execution attempts visible
+    # among frequent decision rejections; it is not a complete-history census.
+    engine_window = _read_jsonl_tail(ENGINE_EVENTS_PATH, limit=5000)
+    admin_window = _read_jsonl_tail(ADMIN_EVENTS_PATH, limit=AUDIT_MAX_LINES_PER_FILE)
     error_log = os.path.join(OBS_DIR, "error_events.jsonl")
-    for record in _iter_jsonl(error_log):
-        recent_errors.append(record)
-    recent_errors = recent_errors[-AUDIT_MAX_LINES_PER_FILE:]
+    error_window = _read_jsonl_tail(error_log, limit=AUDIT_MAX_LINES_PER_FILE)
+    engine_records = engine_window["records"]
+    recent_engine = engine_records[-AUDIT_MAX_LINES_PER_FILE:]
+    recent_admin = admin_window["records"]
+    recent_errors = error_window["records"]
+    execution_events = [row for row in engine_records
+                        if row.get("event_type") == "signal_execution_result"]
 
     config_summary: Dict[str, Any] = {}
     try:
@@ -1091,6 +1091,18 @@ def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
         "recent_engine_events": recent_engine,
         "recent_admin_events": recent_admin,
         "recent_errors": recent_errors,
+        "recent_signal_execution_events": execution_events[-AUDIT_MAX_LINES_PER_FILE:],
+        "source_windows": {
+            "engine": engine_window["metadata"],
+            "admin": admin_window["metadata"],
+            "errors": error_window["metadata"],
+            "signal_execution": {
+                **engine_window["metadata"],
+                "matching_records_in_window": len(execution_events),
+                "export_limit": AUDIT_MAX_LINES_PER_FILE,
+                "absence_is_not_complete_history_proof": True,
+            },
+        },
         "NOTE": "Secret values are never included. Presence matrix shows existence only.",
     }
 
