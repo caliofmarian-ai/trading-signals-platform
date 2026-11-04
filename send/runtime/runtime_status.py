@@ -54,6 +54,20 @@ def _strategy_auditor_env_presence() -> Dict[str, bool]:
 
 def read_status() -> Dict[str, Any]:
     payload = dict(_read_status_file())
+    try:
+        from intelligence import shadow_model_time_research
+        research_observation = shadow_model_time_research.read_summary_status()
+        if research_observation is not None:
+            payload["shadow_model_time_research"] = research_observation["summary"]
+            payload["shadow_model_time_research_observation"] = {
+                "observed_at": research_observation["observed_at"],
+                "is_heartbeat": False,
+                "source": "DERIVED_RESEARCH_SUMMARY_CACHE",
+                "currently_enabled": shadow_model_time_research.enabled(),
+            }
+    except Exception:
+        # Missing/invalid derived evidence is not a zero sample or a disabled worker.
+        pass
     payload["strategy_auditor_env_presence"] = _strategy_auditor_env_presence()
     try:
         # Import the canonical R-019 status authority directly by module name.

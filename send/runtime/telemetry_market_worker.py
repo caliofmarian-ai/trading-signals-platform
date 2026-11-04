@@ -111,6 +111,7 @@ def telemetry_market_loop(
         raise ValueError("poll_seconds must be positive")
 
     warning_cache: Dict[str, float] = {}
+    pending_research_status = None
     try:
         recovery = trade_temporal_telemetry.recover_after_restart(int(clock()))
         if recovery.get("evidence_gap_count"):
@@ -173,11 +174,16 @@ def telemetry_market_loop(
                 )
                 if research_result.get("changed"):
                     research_summary = shadow_research.summary()
+                    pending_research_status = (research_summary, float(clock()))
+                if pending_research_status is not None:
+                    research_summary, observed_at = pending_research_status
+                    shadow_research.persist_summary_status(research_summary, observed_at=observed_at)
                     runtime_status.update_status(shadow_model_time_research=research_summary)
                     print("TSP_SHADOW_RESEARCH_EVIDENCE " + json.dumps({
-                        "component": "shadow_model_time_research", "observed_at": float(clock()),
+                        "component": "shadow_model_time_research", "observed_at": observed_at,
                         "summary": research_summary,
                     }, sort_keys=True), flush=True)
+                    pending_research_status = None
             except Exception as exc:
                 _warn_once_per_window(
                     warning_cache, "shadow_research", now_ts=float(clock()),

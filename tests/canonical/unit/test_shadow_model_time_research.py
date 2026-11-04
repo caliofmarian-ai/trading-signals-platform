@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 from dataclasses import replace
 from pathlib import Path
 
@@ -60,6 +61,62 @@ def _cycle(research, stamp, sample=None, provider="FINNHUB"):
 
 def _records(research):
     return [json.loads(p.read_text()) for p in (research._root() / "records").glob("*.json")]
+
+
+def test_summary_observation_survives_unrelated_shared_status_write(research):
+    from runtime import runtime_status
+    value = research.summary()
+    research.persist_summary_status(value, observed_at=1063)
+    runtime_status.write_status("running", "unrelated write")
+    payload = runtime_status.read_status()
+    assert payload["shadow_model_time_research"] == value
+    assert payload["shadow_model_time_research_observation"] == {
+        "observed_at": 1063.0, "is_heartbeat": False,
+        "source": "DERIVED_RESEARCH_SUMMARY_CACHE", "currently_enabled": True,
+    }
+
+
+@pytest.mark.parametrize("field,value", [
+    ("broker_executed", True), ("truth_domain", "MARKET_TRUTH"),
+    ("price", 1.23), ("decisive_sample", 3), ("hypothetical_win_rate_percent", 80),
+    ("pending", True), ("pending", 257), ("outcomes", {"WIN": -1, "LOSS": 0, "DRAW": 0, "UNKNOWN": 0}),
+])
+def test_invalid_or_private_summary_cache_is_rejected(research, field, value):
+    summary = copy.deepcopy(research.summary())
+    summary[field] = value
+    with pytest.raises(ValueError):
+        research.persist_summary_status(summary, observed_at=1063)
+    assert research.read_summary_status() is None
+
+
+def test_cached_rate_keeps_draw_unknown_outside_decisive_denominator(research):
+    value = research.summary()
+    value.update(status="OBSERVED", outcomes={"WIN": 2, "LOSS": 1, "DRAW": 4, "UNKNOWN": 5},
+                 decisive_sample=3, hypothetical_win_rate_percent=200/3)
+    research.persist_summary_status(value, observed_at=1063)
+    assert research.read_summary_status()["summary"] == value
+    value["hypothetical_win_rate_percent"] = 200/12
+    with pytest.raises(ValueError):
+        research.persist_summary_status(value, observed_at=1063)
+
+
+def test_missing_oversized_and_malformed_cache_are_unknown(research):
+    path = Path(research.storage.state_path("shadow_research_summary.json"))
+    assert research.read_summary_status() is None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for raw in (b'[]', b'{', b'x' * (research.MAX_SUMMARY_STATUS_BYTES + 1)):
+        path.write_bytes(raw)
+        assert research.read_summary_status() is None
+
+
+def test_cached_observation_does_not_claim_current_activation(research, monkeypatch):
+    from runtime import runtime_status
+    research.persist_summary_status(research.summary(), observed_at=1063)
+    monkeypatch.setenv("SHADOW_MODEL_TIME_RESEARCH_ENABLED", "false")
+    payload = runtime_status.read_status()
+    assert payload["shadow_model_time_research"]["enabled"] is True  # At observation time.
+    assert payload["shadow_model_time_research_observation"]["currently_enabled"] is False
+    assert payload["shadow_model_time_research_observation"]["is_heartbeat"] is False
 
 
 @pytest.mark.parametrize(("direction", "price", "outcome"), [
@@ -218,3 +275,33 @@ def test_index_write_failure_is_recovered_on_the_next_cycle(research, monkeypatc
     monkeypatch.setattr(research, "_save_index", original)
     _cycle(research, 1063, _sample(1063))
     assert _records(research)[0]["state"] == "WAITING_EXPIRY"
+
+
+def test_worker_retries_derived_status_after_transient_failure(research, monkeypatch, capsys):
+    from runtime import telemetry_market_worker as worker
+    monkeypatch.setattr(worker, "run_telemetry_cycle", lambda **kwargs: {})
+    monkeypatch.setattr(worker.trade_temporal_telemetry, "recover_after_restart", lambda _now: {})
+    monkeypatch.setattr(worker.market_client, "configured_provider", lambda: "FINNHUB")
+    monkeypatch.setattr(worker.observability_logger, "log_warning", lambda **kwargs: None)
+    original = research.persist_summary_status
+    attempts = []
+
+    def transient(value, *, observed_at):
+        attempts.append(observed_at)
+        if len(attempts) == 1:
+            raise OSError("temporary derived status write failure")
+        original(value, observed_at=observed_at)
+
+    monkeypatch.setattr(research, "persist_summary_status", transient)
+    sleeps = []
+
+    def stop_after_retry(_seconds):
+        sleeps.append(1)
+        if len(sleeps) == 2:
+            raise SystemExit
+
+    with pytest.raises(SystemExit):
+        worker.telemetry_market_loop(clock=lambda: 1063, sleep=stop_after_retry)
+    assert attempts == [1063.0, 1063.0]
+    assert research.read_summary_status()["observed_at"] == 1063
+    assert capsys.readouterr().out.count("TSP_SHADOW_RESEARCH_EVIDENCE") == 1
