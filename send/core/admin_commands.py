@@ -975,7 +975,8 @@ def handle_diagnose(user_id: int) -> str:
 
     incidents: List[str] = []
     error_log = os.path.join(OBS_DIR, "error_events.jsonl")
-    for record in _iter_jsonl(error_log):
+    incident_window = _read_jsonl_tail(error_log, limit=AUDIT_MAX_LINES_PER_FILE)
+    for record in incident_window["records"]:
         msg = ""
         if isinstance(record, dict):
             d = record.get("data") or record
@@ -1005,7 +1006,10 @@ def handle_diagnose(user_id: int) -> str:
         "",
         f"Files: {file_status}",
     ]
-    if recent_incidents:
+    if incident_window["metadata"]["status"] != "OK":
+        lines.append("")
+        lines.append("Incident log unavailable: " + incident_window["metadata"].get("reason", "SOURCE_READ_FAILED"))
+    elif recent_incidents:
         lines.append("")
         lines.append("Recent incidents:")
         for inc in recent_incidents:
@@ -1055,6 +1059,11 @@ def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
     # A wider, separately described window keeps rare execution attempts visible
     # among frequent decision rejections; it is not a complete-history census.
     engine_window = _read_jsonl_tail(ENGINE_EVENTS_PATH, limit=5000)
+    # FSM transitions have their own canonical sink. They are not present in
+    # engine_events, and actionable execution attempts cannot explain a PRE
+    # closed by a non-actionable REJECT or by lifecycle maintenance.
+    fsm_path = os.getenv("FSM_EVENTS_LOG") or os.path.join(OBS_DIR, "fsm_events.jsonl")
+    fsm_window = _read_jsonl_tail(fsm_path, limit=5000)
     admin_window = _read_jsonl_tail(ADMIN_EVENTS_PATH, limit=AUDIT_MAX_LINES_PER_FILE)
     error_log = os.path.join(OBS_DIR, "error_events.jsonl")
     error_window = _read_jsonl_tail(error_log, limit=AUDIT_MAX_LINES_PER_FILE)
@@ -1064,6 +1073,16 @@ def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
     recent_errors = error_window["records"]
     execution_events = [row for row in engine_records
                         if row.get("event_type") == "signal_execution_result"]
+    fsm_events = [row for row in fsm_window["records"]
+                  if row.get("event_type") == "fsm_transition"]
+    # Keep rare real state changes separate from repeated reject_seen,
+    # cooldown_active and duplicate observations. Preserve original envelopes
+    # and identities; this is a bounded export, not a reconstructed lifecycle.
+    lifecycle_events = [row for row in fsm_events
+                        if isinstance(row.get("data"), dict)
+                        and isinstance(row["data"].get("prev_state"), str)
+                        and isinstance(row["data"].get("new_state"), str)
+                        and row["data"]["prev_state"] != row["data"]["new_state"]]
 
     config_summary: Dict[str, Any] = {}
     try:
@@ -1092,14 +1111,25 @@ def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
         "recent_admin_events": recent_admin,
         "recent_errors": recent_errors,
         "recent_signal_execution_events": execution_events[-AUDIT_MAX_LINES_PER_FILE:],
+        "recent_fsm_events": fsm_events[-AUDIT_MAX_LINES_PER_FILE:],
+        "recent_fsm_lifecycle_events": lifecycle_events[-AUDIT_MAX_LINES_PER_FILE:],
         "source_windows": {
             "engine": engine_window["metadata"],
+            "fsm": fsm_window["metadata"],
             "admin": admin_window["metadata"],
             "errors": error_window["metadata"],
             "signal_execution": {
                 **engine_window["metadata"],
                 "matching_records_in_window": len(execution_events),
                 "export_limit": AUDIT_MAX_LINES_PER_FILE,
+                "absence_is_not_complete_history_proof": True,
+            },
+            "fsm_lifecycle": {
+                **fsm_window["metadata"],
+                "selection": "FSM_TRANSITION_WITH_DISTINCT_PRIOR_AND_RESULTING_STATE",
+                "matching_records_in_window": len(lifecycle_events),
+                "export_limit": AUDIT_MAX_LINES_PER_FILE,
+                "export_truncated": len(lifecycle_events) > AUDIT_MAX_LINES_PER_FILE,
                 "absence_is_not_complete_history_proof": True,
             },
         },

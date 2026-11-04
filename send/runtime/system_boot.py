@@ -408,9 +408,9 @@ def start_system() -> bool | None:
         telegram_thread.start()
     scheduler_thread.start()
     auditor_boot = _start_strategy_auditor_thread()
-    runtime_status.write_status(
-        "running",
-        "BinaryBot runtime running",
+    runtime_status.update_status(
+        phase="running",
+        message="BinaryBot runtime running",
         telegram_enabled=telegram_enabled,
         telegram_polling_started=telegram_enabled,
         engine_tick_seconds=ENGINE_TICK_SECONDS,
