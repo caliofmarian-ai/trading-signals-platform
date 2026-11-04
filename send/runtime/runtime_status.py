@@ -18,28 +18,33 @@ def _read_status_file() -> Dict[str, Any]:
 
 
 def write_status(phase: str, message: str, **extra: Any) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
-        "phase": str(phase),
-        "message": str(message),
-        "pid": int(os.getpid()),
-        "updated_ts": int(time.time()),
-    }
-    payload.update(extra)
-    storage.save_json_atomic(status_path(), payload)
-    return payload
+    with storage.with_lock("runtime_status"):
+        payload: Dict[str, Any] = {
+            "phase": str(phase),
+            "message": str(message),
+            "pid": int(os.getpid()),
+            "updated_ts": int(time.time()),
+        }
+        payload.update(extra)
+        storage.save_json_atomic(status_path(), payload)
+        return payload
 
 
 def update_status(**changes: Any) -> Dict[str, Any]:
-    payload = _read_status_file()
-    if not isinstance(payload, dict):
-        payload = {}
-    payload.setdefault("phase", "unknown")
-    payload.setdefault("message", "")
-    payload.setdefault("pid", int(os.getpid()))
-    payload.update(changes)
-    payload["updated_ts"] = int(time.time())
-    storage.save_json_atomic(status_path(), payload)
-    return payload
+    # Atomic replacement alone does not make read/modify/write atomic. A
+    # worker holding a STARTING snapshot could overwrite the boot thread's
+    # RUNNING status. Serialize the whole transaction across all writers.
+    with storage.with_lock("runtime_status"):
+        payload = _read_status_file()
+        if not isinstance(payload, dict):
+            payload = {}
+        payload.setdefault("phase", "unknown")
+        payload.setdefault("message", "")
+        payload.setdefault("pid", int(os.getpid()))
+        payload.update(changes)
+        payload["updated_ts"] = int(time.time())
+        storage.save_json_atomic(status_path(), payload)
+        return payload
 
 
 def _strategy_auditor_env_presence() -> Dict[str, bool]:

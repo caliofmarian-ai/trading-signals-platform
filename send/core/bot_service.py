@@ -2085,7 +2085,12 @@ def process_update(update: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                         back_button_callback=app_back_cb,
                     )
                 else:
-                    response_text, reply_markup = _render_panel_for_command(text, user_id, owner_private=owner_private)
+                    # The dispatcher accepted the normalized command above.
+                    # Pass that same command to the admin parser, retaining
+                    # arguments (including filename case) verbatim.
+                    parts = text.split(maxsplit=1)
+                    admin_text = cmd + (" " + parts[1] if len(parts) > 1 else "")
+                    response_text, reply_markup = _render_panel_for_command(admin_text, user_id, owner_private=owner_private)
                 # Handle file-path return signals
                 if response_text.startswith("__FILE_PATH__:"):
                     file_path = response_text[len("__FILE_PATH__:"):]
