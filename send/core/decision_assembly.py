@@ -7,6 +7,7 @@ from hashlib import sha256
 from typing import Any, Iterator, Mapping, Optional
 
 from .decision_object import (
+    ACTIONABLE_DECISION_KINDS,
     DecisionObject,
     RejectContext,
     SetupContext,
@@ -158,15 +159,17 @@ def assemble_decision(
     })
     kind = _decision_kind(scoring)
     normalized_timeframe = timeframe.strip().upper()
-    signal_id = (
-        opportunity_signal_id.strip() if opportunity_signal_id is not None else _stable_signal_id(
-            symbol=market.symbol,
-            timeframe=normalized_timeframe,
-            candle_ts=market.evaluated_ts,
+    signal_id = None
+    if kind in ACTIONABLE_DECISION_KINDS:
+        signal_id = (
+            opportunity_signal_id.strip()
+            if opportunity_signal_id is not None
+            else _stable_signal_id(
+                symbol=market.symbol,
+                timeframe=normalized_timeframe,
+                candle_ts=market.evaluated_ts,
+            )
         )
-        if kind in {"PRE", "CONFIRM", "OPEN_NOW"}
-        else None
-    )
     return DecisionObject(
         kind=kind,
         signal_id=signal_id,
