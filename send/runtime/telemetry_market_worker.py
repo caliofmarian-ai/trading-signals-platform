@@ -9,6 +9,7 @@ from core import trade_temporal_telemetry
 from runtime import market_client
 from runtime import runtime_status
 from intelligence import shadow_model_time_research as shadow_research
+from intelligence import shadow_gate_sweep_research as gate_research
 
 
 TELEMETRY_POLL_SECONDS = 1.0
@@ -112,6 +113,7 @@ def telemetry_market_loop(
 
     warning_cache: Dict[str, float] = {}
     pending_research_status = None
+    refresh_gate_research = True
     try:
         recovery = trade_temporal_telemetry.recover_after_restart(int(clock()))
         if recovery.get("evidence_gap_count"):
@@ -173,6 +175,7 @@ def telemetry_market_loop(
                     now_ts=float(clock()), price_loader=market_client.get_latest_price_sample,
                 )
                 if research_result.get("changed"):
+                    refresh_gate_research = True
                     research_summary = shadow_research.summary()
                     pending_research_status = (research_summary, float(clock()))
                 if pending_research_status is not None:
@@ -189,6 +192,23 @@ def telemetry_market_loop(
                     warning_cache, "shadow_research", now_ts=float(clock()),
                     warn_type="SHADOW_RESEARCH_UNAVAILABLE",
                     message="Private research failed closed; no market outcome was invented",
+                    context={"error_class": type(exc).__name__},
+                )
+        # A passive research ledger; no gate value is returned to strategy/FSM.
+        # Retain the refresh request on failure, independently of source status.
+        if gate_research.enabled() and refresh_gate_research:
+            try:
+                gate_summary = gate_research.update(now_ts=float(clock()))
+                print("TSP_GATE_SWEEP_RESEARCH_EVIDENCE " + json.dumps({
+                    "component": "shadow_gate_sweep_research", "observed_at": float(clock()),
+                    "summary": gate_research.evidence_summary(gate_summary),
+                }, sort_keys=True), flush=True)
+                refresh_gate_research = False
+            except Exception as exc:
+                _warn_once_per_window(
+                    warning_cache, "gate_research", now_ts=float(clock()),
+                    warn_type="SHADOW_GATE_SWEEP_UNAVAILABLE",
+                    message="Private gate research is unavailable; its ledger will be retried",
                     context={"error_class": type(exc).__name__},
                 )
         sleep(float(poll_seconds))

@@ -68,6 +68,18 @@ def read_status() -> Dict[str, Any]:
     except Exception:
         # Missing/invalid derived evidence is not a zero sample or a disabled worker.
         pass
+    try:
+        from intelligence import shadow_gate_sweep_research
+        gate_observation = shadow_gate_sweep_research.read_summary_status()
+        if gate_observation is not None:
+            payload["shadow_gate_sweep_research"] = gate_observation["summary"]
+            payload["shadow_gate_sweep_research_observation"] = {
+                "observed_at": gate_observation["observed_at"], "is_heartbeat": False,
+                "source": "DERIVED_RESEARCH_SUMMARY_CACHE",
+                "currently_enabled": shadow_gate_sweep_research.enabled(),
+            }
+    except Exception:
+        pass
     payload["strategy_auditor_env_presence"] = _strategy_auditor_env_presence()
     try:
         # Import the canonical R-019 status authority directly by module name.
