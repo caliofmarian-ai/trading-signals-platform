@@ -337,6 +337,9 @@ def test_post_distribution_emitted_requires_publication_evidence(
     execution = SimpleNamespace(
         execution_attempt_id="attempt-post-v3",
         setup_correlation_id="cycle-post-v3",
+        decision_id="decision-post-v3",
+        decision_audit_id="decision-audit-post-v3",
+        fsm_transition_id="fsm-post-v3",
         stage_handoff_ready=True,
         trade_execution_ready=False,
         execution_time_available=False,
@@ -373,4 +376,7 @@ def test_post_distribution_emitted_requires_publication_evidence(
     assert post[0]["data"]["execution_outcome"] == "EMITTED"
     assert post[0]["data"]["destination_state"] == "PUBLISHED"
     assert post[0]["execution_attempt_id"] == "attempt-post-v3"
+    assert post[0]["decision_id"] == "decision-post-v3"
+    assert post[0]["decision_audit_id"] == "decision-audit-post-v3"
+    assert post[0]["data"]["fsm_handoff"]["fsm_transition_id"] == "fsm-post-v3"
     assert post[0]["data"]["publication_evidence"]["published"][0]["event_id"] == "route-result-1"

@@ -380,6 +380,8 @@ def _log_decision_evaluated(evaluation, buffer_mode: str) -> None:
         })
     correlation: Dict[str, Any] = {
         "setup_correlation_id": evaluation.cycle_id,
+        "decision_id": decision.decision_id,
+        "decision_audit_id": decision.decision_audit_id,
         "signal_id": decision.signal_id,
         "symbol": decision.setup.symbol,
         "timeframe": decision.setup.timeframe,
@@ -455,6 +457,8 @@ def _log_fsm_handoff(decision, persistent_fsm) -> None:
         },
         correlation={
             "setup_correlation_id": decision.setup.cycle_id,
+            "decision_id": decision.decision_id,
+            "decision_audit_id": decision.decision_audit_id,
             "signal_id": decision.signal_id,
             "symbol": decision.setup.symbol,
             "timeframe": decision.setup.timeframe,
@@ -467,7 +471,15 @@ def _log_fsm_handoff(decision, persistent_fsm) -> None:
 def _log_signal_execution(decision, persistent_fsm, execution) -> None:
     decision_dict = decision.to_dict()
     data = execution.to_event_data()
+    # The evidence projection includes lineage, but the strict event contract
+    # owns these identities in the envelope, not signal_execution_result.data.
+    correlation = {
+        field: data.pop(field)
+        for field in ("setup_correlation_id", "decision_id", "decision_audit_id", "execution_attempt_id")
+    }
+    transition_id = data.pop("fsm_transition_id")
     data["fsm_handoff"] = {
+        "fsm_transition_id": transition_id,
         "requested_stage": persistent_fsm.requested_stage,
         "accepted_stage": persistent_fsm.accepted_stage,
         "signal_id": persistent_fsm.signal_id,
@@ -485,8 +497,7 @@ def _log_signal_execution(decision, persistent_fsm, execution) -> None:
         "signal_execution_result",
         data,
         correlation={
-            "execution_attempt_id": execution.execution_attempt_id,
-            "setup_correlation_id": execution.setup_correlation_id,
+            **correlation,
             "signal_id": decision.signal_id,
             "symbol": decision.setup.symbol,
             "timeframe": decision.setup.timeframe,
@@ -533,6 +544,7 @@ def _log_post_distribution(decision, persistent_fsm, execution, summary: Dict[st
         "destination_state": destination_state,
         "candidate_schema_version": execution.candidate.schema_version if execution.candidate is not None else None,
         "fsm_handoff": {
+            "fsm_transition_id": execution.fsm_transition_id,
             "requested_stage": persistent_fsm.requested_stage,
             "accepted_stage": persistent_fsm.accepted_stage,
             "signal_id": persistent_fsm.signal_id,
@@ -556,6 +568,8 @@ def _log_post_distribution(decision, persistent_fsm, execution, summary: Dict[st
         correlation={
             "execution_attempt_id": execution.execution_attempt_id,
             "setup_correlation_id": execution.setup_correlation_id,
+            "decision_id": execution.decision_id,
+            "decision_audit_id": execution.decision_audit_id,
             "signal_id": decision.signal_id,
             "symbol": decision.setup.symbol,
             "timeframe": decision.setup.timeframe,
