@@ -156,6 +156,36 @@ def test_existing_fsm_opportunity_identity_survives_later_candles(
     assert decision.signal_id == "sig-v2-existing-opportunity"
 
 
+@pytest.mark.parametrize("kind", ["REJECT", "NO_SIGNAL"])
+def test_nonactionable_decision_drops_existing_opportunity_identity(
+    canonical_runtime_root: Path, kind: str,
+) -> None:
+    from core.fsm_decision_adapter import interpret_decision
+
+    market, corridor, time, scoring = _stack(canonical_runtime_root)
+    if kind == "REJECT":
+        market = replace(market, context=replace(market.context, noise_context="UNSTABLE"))
+        scoring = evaluate_score(market, corridor, time, _params(canonical_runtime_root))
+    else:
+        scoring = replace(
+            scoring, context=replace(scoring.context, tier="BELOW_PRE"),
+            eligible=True, hard_blockers=(),
+        )
+
+    decision = assemble_decision(
+        market, corridor, time, scoring,
+        timeframe="M1", cycle_id=f"later-{kind.lower()}",
+        opportunity_signal_id="sig-v2-existing-opportunity",
+    )
+
+    assert decision.kind == kind
+    assert decision.signal_id is None
+    assert decision.to_dict()["signal_id"] is None
+    assert interpret_decision(decision).signal_handoff_ready is False
+    if kind == "REJECT":
+        assert "MARKET_NOISE_UNSTABLE" in decision.reject.hard_blockers
+
+
 @pytest.mark.parametrize(
     ("tier", "expected"),
     [

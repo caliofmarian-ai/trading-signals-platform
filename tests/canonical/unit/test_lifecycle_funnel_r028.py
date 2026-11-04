@@ -298,6 +298,7 @@ def test_fsm_envelope_stage_must_match_accepted_handoff(tmp_path: Path):
 def test_get_funnel_public_api_uses_read_only_current_env_paths(tmp_path: Path, monkeypatch):
     from core import analytics_engine
 
+    monkeypatch.setattr(funnel.time, "time", lambda: NOW)
     engine = _write(tmp_path / "current_engine.jsonl", [_decision("OPEN_NOW")])
     dist = _write(tmp_path / "current_dist.jsonl", [_published("OPEN_NOW")])
     monkeypatch.setenv("ENGINE_EVENTS_LOG", engine)
@@ -315,6 +316,7 @@ def test_research_renders_funnel_for_authorized_role(monkeypatch, tmp_path: Path
     from core import admin_permissions, bot_service, publication_evidence
     from core.role_constants import ROLE_OWNER
 
+    monkeypatch.setattr(funnel.time, "time", lambda: NOW)
     monkeypatch.setenv("ENGINE_EVENTS_LOG", _write(tmp_path / "engine.jsonl", [_decision("PRE")]))
     monkeypatch.setenv("DIST_EVENTS_LOG", _write(tmp_path / "dist.jsonl", [_published("PRE")]))
     monkeypatch.setattr(core, "lifecycle_funnel_evidence", funnel, raising=False)

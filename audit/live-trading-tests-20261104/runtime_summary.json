@@ -1,0 +1,63 @@
+{
+  "observed_at_utc": "2026-11-04T06:05:15Z",
+  "production_source_sha": "5f5e468a0e6ce1e20406f4e76ebcb308d0ed13fd",
+  "production_deployment_status": "SUCCESS",
+  "production_service_online": true,
+  "raw_audit_sha256": "31a1bf6a81fba5781b38adef1dc5a159a65bf71d2caf0f115c71289fba6909a4",
+  "runtime": {
+    "phase": "running",
+    "telegram_polling_started": true,
+    "engine_tick_seconds": 2,
+    "shadow_mode": true,
+    "recovery_state": "HEALTHY",
+    "market_data_provider": "FINNHUB",
+    "market_data_state": "READY",
+    "market_data_age_seconds": 1,
+    "market_data_freshness_limit_seconds": 10,
+    "market_data_minimum_candles": 201,
+    "market_data_history_ready": true,
+    "market_data_stream_state": "RECEIVING_REAL_TICKS",
+    "market_data_subscription_state": "REAL_TICK_CONFIRMED",
+    "market_data_valid_trade_tick_count": 166663,
+    "market_data_persistence_state": "ACTIVE",
+    "strategy_evaluation_count": 47592,
+    "last_strategy_decision_kind": "REJECT"
+  },
+  "real_candle_counts": {
+    "M1": 500,
+    "M5": 500
+  },
+  "contiguous_head_counts": {
+    "M1": 417,
+    "M5": 500
+  },
+  "bounded_recent_engine_sample": {
+    "rows": 50,
+    "first_at": "2026-11-04T06:03:00.476Z",
+    "last_at": "2026-11-04T06:04:53.615Z",
+    "decision_kinds": {
+      "REJECT": 50
+    }
+  },
+  "bounded_recent_error_sample": {
+    "rows": 50,
+    "first_at": "2026-11-04T05:20:36.479Z",
+    "last_at": "2026-11-04T06:03:12.472Z",
+    "messages": {
+      "non-actionable decisions must not expose signal_id": 49,
+      "Callback processing exceeded the latency threshold": 1
+    }
+  },
+  "local_regression": {
+    "tests": "1788",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "46.739"
+  },
+  "production_fix_verification": "PENDING_NOT_DEPLOYED",
+  "live_nonowner_role_acceptance": "NOT_RUN_NO_CONTROLLED_NONOWNER_IDENTITIES",
+  "live_signal_delivery": "NOT_VERIFIED_EXISTING_FINNHUB_GATE_PRESERVED",
+  "objective_live_outcome_quality": "NOT_VERIFIED",
+  "broker_execution": "DISABLED_OBSERVED_IN_TELEGRAM_DIAGNOSTICS"
+}
