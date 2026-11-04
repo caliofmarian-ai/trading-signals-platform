@@ -131,6 +131,7 @@ class FinnhubForexFeed:
         self._valid_trade_tick_count = 0
         self._last_stream_connected_ts: Optional[int] = None
         self._last_stream_evidence_emit_ts: Dict[str, int] = {}
+        self._recovery_after_tick_ms: Optional[int] = None
         self._load_store()
 
     def _connect(self):
@@ -227,6 +228,7 @@ class FinnhubForexFeed:
         if not isinstance(rows, list):
             return
         changed = False
+        first_trade_seen = False
         for row in rows:
             if not isinstance(row, dict) or row.get("s") != self.finnhub_symbol:
                 continue
@@ -241,6 +243,7 @@ class FinnhubForexFeed:
             with self._lock:
                 if self._last_tick_ms is not None and tick_ms < self._last_tick_ms:
                     continue
+                first_trade_seen = first_trade_seen or self._valid_trade_tick_count == 0
                 self._last_tick_ms = tick_ms
                 self._last_price_ts = tick_ms // 1000
                 for code, seconds in (("M1", 60), ("M5", 300)):
@@ -252,8 +255,19 @@ class FinnhubForexFeed:
             changed = True
         if changed:
             self._persist_store()
-            if self._valid_trade_tick_count == 1:
-                self._emit_stream_observation("FIRST_REAL_TICK")
+            stream_event = "FIRST_REAL_TICK" if first_trade_seen else None
+            with self._lock:
+                # A reconnect/subscribe alone is not recovery. Require a quote
+                # newer than the previous session and fresh at observation.
+                # Leave the boundary pending after duplicate/stale/future data.
+                if (self._recovery_after_tick_ms is not None
+                    and self._last_tick_ms is not None
+                    and self._last_tick_ms > self._recovery_after_tick_ms
+                    and 0 <= int(self.clock()) - int(self._last_price_ts) <= self.freshness_seconds):
+                    stream_event = "REAL_TICK_RESUMED"
+                    self._recovery_after_tick_ms = None
+            if stream_event is not None:
+                self._emit_stream_observation(stream_event)
 
     def _upsert_tick(
         self, code: str, seconds: int, ts: int, price: float, volume: float
@@ -289,15 +303,17 @@ class FinnhubForexFeed:
         del candles[MAX_CANDLES:]
 
     def _emit_stream_observation(self, event: str) -> None:
-        """One bounded Railway-only, price-free diagnostic per event / 5 minutes.
+        """Bounded Railway-only, price-free state-change observations.
 
         A socket connect/subscribe event is NEVER interpreted as received data.
         This does not write historical files, bypass publishing or run new API requests.
+        Ordinary diagnostics are throttled to one per event / five minutes.
+        Recovery is emitted once per subscription, including rapid reconnects.
         """
         now_ts = int(self.clock())
         with self._lock:
             last = self._last_stream_evidence_emit_ts.get(event)
-            if last is not None and 0 <= now_ts - last < 300:
+            if event != "REAL_TICK_RESUMED" and last is not None and 0 <= now_ts - last < 300:
                 return
             self._last_stream_evidence_emit_ts[event] = now_ts
             integrity = inspect_history(self._candles)
@@ -314,6 +330,9 @@ class FinnhubForexFeed:
             record = {
                 "component": "finnhub_stream_readiness",
                 "event": event,
+                "observed_at": now_ts,
+                "price_age_seconds": tick_age,
+                "freshness_limit_seconds": self.freshness_seconds,
                 "symbol": "EUR/USD",
                 "stream_state": self._stream_state,
                 "subscription_state": self._subscription_state,
@@ -369,6 +388,7 @@ class FinnhubForexFeed:
                 with self._lock:
                     self._subscription_state = "SENT_UNVERIFIED"
                     self._stream_state = "SUBSCRIBED_WAITING_REAL_TICK"
+                    self._recovery_after_tick_ms = self._last_tick_ms
                 self._emit_stream_observation("SUBSCRIBE_SENT_UNVERIFIED")
                 while not self._stop_event.is_set():
                     frame = socket.recv()
