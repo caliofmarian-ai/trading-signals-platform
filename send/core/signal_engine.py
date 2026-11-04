@@ -15,6 +15,7 @@ def update_symbol_replacement_score(symbol: str, score: float, now_ts: int):
 from core.storage import config_path
 
 import importlib
+import json
 import time
 from typing import Any, Dict, List, Optional
 
@@ -23,6 +24,7 @@ from core import distribution_router_v3 as distribution_router
 from core import fsm_runtime
 from core import observability_logger
 from core import runtime_param_gate
+from core import runtime_execution_calibration
 from core.decision_object import ACTIONABLE_DECISION_KINDS
 from core.signal_execution_gate import prepare_signal_execution
 from core.strategy_v2 import decide
@@ -35,11 +37,30 @@ from intelligence import shadow_model_time_research as shadow_research
 ACTIVE_SYMBOLS_PATH = config_path("active_symbols.json")
 SETTINGS_PATH = config_path("admin_settings.json")
 ALGO_PARAMS_PATH = config_path("algo_params.json")
+EXECUTION_CALIBRATION_PATH = config_path("execution_calibration.json")
 EVENT_SCHEMA_VERSION = "3.0.0"
 WIDE_SCAN_SLOT_SECONDS = 2
 WIDE_SCAN_CYCLE_SECONDS = 60
 _LAST_PARAM_ERROR_SIGNATURE: Optional[str] = None
 _SHADOW_RESEARCH_LAST_WARNING_TS: Optional[int] = None
+_LAST_CALIBRATION_STATE: Dict[str, Dict[str, Any]] = {}
+
+
+def _load_execution_calibration(*, now_ts, provider, symbol, buffer_mode, params):
+    result = runtime_execution_calibration.load_runtime_execution_calibration(
+        EXECUTION_CALIBRATION_PATH, now_ts=now_ts, provider=provider, symbol=symbol,
+        buffer_mode=buffer_mode, params=params,
+    )
+    summary = result.summary()
+    key = f"{provider}:{symbol}:{buffer_mode}"
+    if _LAST_CALIBRATION_STATE.get(key) != summary:
+        # Public-scope/status-only operational evidence; never print calibration
+        # values, governance references, raw config or exception text.
+        print("TSP_EXECUTION_CALIBRATION_EVIDENCE " + json.dumps({
+            "observed_at": now_ts, "provider": provider, "symbol": symbol, "summary": summary,
+        }, sort_keys=True), flush=True)
+        _LAST_CALIBRATION_STATE[key] = summary
+    return result.calibration
 
 
 def _observe_shadow_research(decision, handoff) -> None:
@@ -633,6 +654,13 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
             # Full M1/M5 recovery re-arms first-error evidence for next outage.
             _mark_market_data_unavailable_recovered()
 
+            execution_calibration = _load_execution_calibration(
+                now_ts=now_ts,
+                provider=market_client.configured_provider(),
+                symbol=_canonical_provider_scope_symbol(symbol),
+                buffer_mode=buffer_mode,
+                params=params,
+            )
             evaluation = decide(
                 candles_m1=candles_m1,
                 candles_m5=candles_m5,
@@ -643,6 +671,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                     "decision_timeframe": "M1",
                     "opportunity_signal_id": current_opportunity_signal_id(state, symbol),
                 },
+                execution_calibration=execution_calibration,
             )
             decision = evaluation.decision
 
