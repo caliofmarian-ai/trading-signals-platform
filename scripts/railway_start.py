@@ -59,6 +59,11 @@ def main() -> int:
         from scripts.railway_observability_checkpoint import emit_checkpoint
         emit_checkpoint(base_dir=base_dir)
         send_control_notification("BOT STARTING", "BinaryBot Railway runtime passed initialization and readiness checks.")
+        from core import owner_signal_delivery
+        try:
+            owner_signal_delivery.send_activation_receipt()
+        except Exception:
+            print("TSP_OWNER_DELIVERY_ACTIVATION_UNAVAILABLE", flush=True)
 
         _install_telegram_ui_diagnostic_stream_routing()
         from runtime.system_boot import start_system

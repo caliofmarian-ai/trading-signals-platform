@@ -1100,6 +1100,8 @@ def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
     except Exception:
         config_summary["error"] = "unable to load"
 
+    from core import owner_signal_delivery
+
     artifact = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "generator": f"user_id={user_id}",
@@ -1107,6 +1109,7 @@ def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
         "runtime_status": {k: v for k, v in status.items() if k not in {"token", "secret"}},
         "directory_inventory": dir_inventory,
         "config_summary": config_summary,
+        "owner_timing_calibration_evidence": owner_signal_delivery.audit_evidence(user_id),
         "recent_engine_events": recent_engine,
         "recent_admin_events": recent_admin,
         "recent_errors": recent_errors,
