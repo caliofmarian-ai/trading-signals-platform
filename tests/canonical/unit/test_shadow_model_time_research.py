@@ -141,6 +141,56 @@ def test_real_post_decision_samples_form_only_hypothetical_labels(research, dire
     assert research.summary()["hypothetical_win_rate_percent"] == (None if outcome == "DRAW" else 100.0 if outcome == "WIN" else 0.0)
 
 
+def test_private_export_validates_quotes_and_does_not_mutate_source(research):
+    _register(research)
+    _cycle(research, 1063, _sample(1063, 1.1))
+    _cycle(research, 1183, _sample(1183, 1.2))
+    path = next((research._root() / "records").glob("*.json"))
+    row = json.loads(path.read_text())
+    row["unexpected_secret"] = "never-export-this"
+    row["entry_sample"]["unexpected_secret"] = "never-export-this"
+    path.write_text(json.dumps(row))
+    before = {str(p): p.read_bytes() for p in research._root().rglob("*") if p.is_file()}
+    value = research.private_calibration_evidence()
+    assert value["status"] == "VALIDATED_PRIVATE_RESEARCH"
+    assert value["validated_record_count"] == 1
+    item = value["records"][0]
+    assert item["outcome"] == "WIN" and item["entry_sample"]["observed_ts"] == 1063
+    assert item["expiry_sample"]["observed_ts"] == item["expiry_ts"] == 1183
+    assert item["horizon_seconds"] == 120
+    assert "never-export-this" not in json.dumps(value)
+    assert "decision_snapshot" not in json.dumps(value)
+    assert value["execution_calibration_proven"] is False
+    assert before == {str(p): p.read_bytes() for p in research._root().rglob("*") if p.is_file()}
+    row["outcome"] = "LOSS"
+    path.write_text(json.dumps(row))
+    assert research.private_calibration_evidence()["status"] == "SOURCE_UNAVAILABLE_OR_INVALID"
+    assert research.private_calibration_evidence()["records"] == []
+
+
+def test_private_export_is_bounded_and_rejects_symlinks(research):
+    directory = research._root() / "records"
+    directory.mkdir(parents=True)
+    empty = research.private_calibration_evidence()
+    assert empty["validated_record_count"] == 0
+    for i in range(129):
+        (directory / (f"{i:064x}" + ".json")).write_text("{}")
+    assert research.private_calibration_evidence()["status"] == "INVENTORY_BOUND_EXCEEDED"
+    for path in directory.iterdir():
+        path.unlink()
+    (directory / ("0" * 64 + ".json")).symlink_to(directory.parent / "unrelated.json")
+    assert research.private_calibration_evidence()["status"] == "SOURCE_UNAVAILABLE_OR_INVALID"
+
+
+def test_private_export_reader_cannot_exceed_remaining_byte_budget(research):
+    _register(research)
+    path = next((research._root() / "records").glob("*.json"))
+    budget = [10]
+    with pytest.raises(ValueError):
+        research._record(research._root(), path.stem, read_budget=budget)
+    assert budget[0] == -1  # At most the bound plus one overflow sentinel.
+
+
 @pytest.mark.parametrize("sample", [
     _sample(1063, provider="TWELVE_DATA"), _sample(1063, symbol="GBP/USD"),
     _sample(1063, source="HISTORICAL_CANDLE"), _sample(1065), _sample(1059),

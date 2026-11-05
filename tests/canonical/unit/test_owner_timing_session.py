@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from types import SimpleNamespace
 
+import pytest
+
 
 def _prepare(monkeypatch):
     monkeypatch.setenv("OWNER_SIGNAL_DELIVERY_ENABLED", "true")
@@ -87,3 +89,36 @@ def test_session_opt_in_and_safe_identity_are_required(canonical_runtime_root, m
     _observe(module, 1000)
     assert module.summary(now_ts=1001) is None
     assert not list((canonical_runtime_root / "analytics").glob("owner_timing_sessions/*"))
+
+
+@pytest.mark.parametrize("samples,p50,p95", [
+    ([], None, None),
+    ([.07], .07, .07),
+    ([.082255, .078538], .078538, .082255),
+    ([.078538, .091372, .06053, .082255, .054034], .078538, .091372),
+    ([value / 100 for value in range(1, 21)], .10, .19),
+])
+def test_observed_transport_percentiles_use_consistent_nearest_rank(
+    canonical_runtime_root, monkeypatch, samples, p50, p95,
+):
+    module = _prepare(monkeypatch)
+    _observe(module, 1000)
+    for index, duration in enumerate(samples):
+        module.observe_receipt({"stage": "PRE", "api_request_seconds": duration}, now_ts=1001+index)
+    report = module.summary(now_ts=1100)
+    assert report["api_timing_percentile_method"] == "NEAREST_RANK"
+    assert report["api_timing_sample_scope"] == "LAST_512_SUCCESSFUL_PRIVATE_DELIVERIES"
+    assert report["api_timing_sample_count"] == len(samples)
+    assert report["api_request_p50_seconds"] == p50
+    assert report["api_request_p95_seconds"] == p95
+    if samples:
+        assert report["api_request_p95_seconds"] >= report["api_request_p50_seconds"]
+
+
+@pytest.mark.parametrize("invalid", [True, float("nan"), float("inf"), -.01, "0.1"])
+def test_invalid_transport_evidence_never_produces_a_latency_claim(monkeypatch, invalid):
+    module = _prepare(monkeypatch)
+    state = module._new(1000, "a"*64)
+    state["api_request_seconds"] = [invalid]
+    with pytest.raises(ValueError, match="INVALID_TIMING_SAMPLES"):
+        module._summary(state, 1001)

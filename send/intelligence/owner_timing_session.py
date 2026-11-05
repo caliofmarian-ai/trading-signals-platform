@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -102,7 +103,18 @@ def observe_receipt(evidence: dict[str, Any], *, now_ts: float) -> None:
 
 
 def _summary(state: dict[str, Any], now_ts: float) -> dict[str, Any]:
-    times = sorted(state["api_request_seconds"])
+    samples = state["api_request_seconds"]
+    if (not isinstance(samples, list) or len(samples) > 512
+        or any(isinstance(value, bool) or not isinstance(value, (int, float))
+               or not math.isfinite(value) or value < 0 for value in samples)):
+        raise ValueError("INVALID_TIMING_SAMPLES")
+    times = sorted(samples)
+    # Use one empirical nearest-rank convention for both percentiles. The
+    # previous mixed indexes could put p95 below p50 with two observations,
+    # and understate the observed tail for small samples.
+    def percentile(fraction: float) -> float | None:
+        return times[math.ceil(fraction * len(times)) - 1] if times else None
+
     return {
         **{k: state[k] for k in ("protocol", "started_ts", "deadline_ts", "evaluations",
                                 "decision_kinds", "blockers", "fsm_accepted_stage_evaluations",
@@ -111,8 +123,10 @@ def _summary(state: dict[str, Any], now_ts: float) -> dict[str, Any]:
                                 "baseline_changed", "activity_gate_model")},
         "status": ("COMPLETE" if now_ts >= state["deadline_ts"] else "PAUSED_BASELINE_CHANGED" if state["baseline_changed"] else "OBSERVING"),
         "api_timing_sample_count": len(times),
-        "api_request_p50_seconds": times[len(times)//2] if times else None,
-        "api_request_p95_seconds": times[min(len(times)-1, int((len(times)-1)*.95))] if times else None,
+        "api_timing_percentile_method": "NEAREST_RANK",
+        "api_timing_sample_scope": "LAST_512_SUCCESSFUL_PRIVATE_DELIVERIES",
+        "api_request_p50_seconds": percentile(.50),
+        "api_request_p95_seconds": percentile(.95),
         "execution_calibration_proven": False, "parameters_changed": False,
         "broker_executed": False, "phone_receipt_proven": False,
     }
