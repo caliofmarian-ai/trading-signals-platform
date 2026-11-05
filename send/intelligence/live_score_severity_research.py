@@ -53,8 +53,13 @@ def _read(path: Path) -> dict | None:
         raise ValueError("SEVERITY_EVIDENCE_TOO_LARGE")
     value = json.loads(raw)
     json.dumps(value, allow_nan=False)
-    if (not isinstance(value, dict) or value.get("protocol") != PROTOCOL
-        or [row.get("level") for row in value.get("levels", [])] != list(LEVELS)
+    if not isinstance(value, dict):
+        raise ValueError("INVALID_SEVERITY_EVIDENCE")
+    levels = value.get("levels")
+    if (value.get("protocol") != PROTOCOL
+        or not isinstance(levels, list) or len(levels) != len(LEVELS)
+        or any(not isinstance(row, dict) for row in levels)
+        or [row.get("level") for row in levels] != list(LEVELS)
         or type(value.get("baseline_changed")) is not bool
         or not 0 < value["started_ts"] < value["deadline_ts"]
         or value["deadline_ts"] - value["started_ts"] != DURATION_SECONDS):

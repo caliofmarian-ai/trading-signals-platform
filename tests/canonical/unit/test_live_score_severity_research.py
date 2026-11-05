@@ -99,11 +99,14 @@ def test_research_opt_ins_and_source_scope_are_required(canonical_runtime_root, 
     assert module.summary(now_ts=1001) is None
 
 
-def test_corrupt_research_is_not_reset_and_failure_cannot_escape_engine_hook(canonical_runtime_root, monkeypatch, capsys):
+@pytest.mark.parametrize("corruption", ["protocol", "levels"])
+def test_corrupt_research_is_not_reset_and_failure_cannot_escape_engine_hook(canonical_runtime_root, monkeypatch, capsys, corruption):
     module, evaluation, params = _prepare(canonical_runtime_root, monkeypatch)
     path = module._path()
     path.parent.mkdir(parents=True)
-    path.write_text('{"protocol":"corrupt"}')
+    value = module._new(params, evaluation, 1000, "SMALL")
+    value[corruption] = "corrupt" if corruption == "protocol" else ["corrupt"]
+    path.write_text(json.dumps(value))
     before = path.read_bytes()
     from core import signal_engine
     signal_engine._observe_score_severity(evaluation, params, now_ts=1000, provider="FINNHUB", buffer_mode="SMALL")
