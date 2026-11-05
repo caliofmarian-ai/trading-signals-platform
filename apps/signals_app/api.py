@@ -271,7 +271,9 @@ def create_app(directory: Path | None = None, *, public_url: str | None = None,
     @app.get("/api/admin")
     def dashboard(request: Request):
         owner(request)
-        return {"metrics":service.metrics(),"status":service.status(),"canonical":canonical.manifest()}
+        from .source import snapshot
+        return {"metrics":service.metrics(),"status":service.status(),"canonical":canonical.manifest(),
+                "source":snapshot(store)}
 
     @app.post("/api/admin/invites")
     async def invite(request: Request):

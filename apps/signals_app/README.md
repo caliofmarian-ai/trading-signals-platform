@@ -46,9 +46,9 @@ No source prices are invented. Paid checkout is unavailable when source prices a
 
 ## Signal engine and transport
 
-The default app deployment serves the app with its engine disabled. Its empty view explicitly reports that the live source is not connected. Do not label an HTTP health check as live signal acceptance.
+The engine is disabled by default. The dedicated app service can enable it independently and select a subset of the existing market catalog with `SIGNALS_APP_SYMBOLS` (default `EUR/USD`). Its own engine/config/state directories live on the app volume. Do not label an HTTP health check or a running loop as live signal acceptance.
 
-To run the existing engine in an **independent process**, configure a member-distribution-capable existing market provider and set `SIGNALS_APP_ENGINE_ENABLED=1` **on the app service only**. The child seeds its own engine/config/state directories, imports `send/core/signal_engine.py`, and replaces only its own in-memory router boundary with the APP transport. It never starts `system_boot`, Telegram polling, or a broker worker. It clears Telegram credentials/destinations from its own environment before imports. The app transport preserves the existing Finnhub personal-use restriction and rejects member distribution for unsupported providers.
+To run the existing engine in an **independent process**, configure a member-distribution-capable existing market provider and set `SIGNALS_APP_ENGINE_ENABLED=1` **on the app service only**. The child seeds its own engine/config/state directories, imports `send/core/signal_engine.py`, and replaces only its own in-memory router boundary with the APP transport. It never starts `system_boot`, Telegram polling, or a broker worker. It clears Telegram credentials/destinations from its own environment before imports. The app transport preserves the existing Finnhub personal-use restriction and rejects member distribution for unsupported providers. A provider credential can be referenced from the existing Railway service without reading it into the browser or APK. This does not switch or redeploy the Telegram service.
 
 An alternative trusted source may POST an existing-engine candidate to `/api/internal/signals`, with `Authorization: Bearer SIGNALS_APP_INGEST_TOKEN`:
 
@@ -59,6 +59,8 @@ An alternative trusted source may POST an existing-engine candidate to `/api/int
 This is an abbreviated shape, not a valid signal. Actual input must contain the complete shared SignalEvent, FSM transition, decision and execution references. Candidates must already have passed the existing upstream FSM/execution gate. Never expose this machine credential in the Android/browser client. APP events and counters are app-local, and do not claim Telegram delivery. `OPEN_NOW` expiry is copied exactly from Execution Time, never Model Time; replayed/history entries do not receive a new entry deadline. Signal stages are immutable and deduplicated per channel/signal/stage. Daily entry limits and London reset timing come from existing channel configuration.
 
 Independent engine instances share source logic but are **not proven to emit identical live sequences**: live data timing, calibration and persisted state must also be reconciled. No production parity is claimed until tested with actual provider data and devices.
+
+Source readiness requires both a recent real market-data success and a completed existing-engine evaluation. A loop heartbeat, stale persisted health, missing history or a rate-limited provider cannot produce a healthy indicator. The owner Overview shows market/source status, last data/evaluation timestamps, current-process evaluation count, last decision kind and whether Execution Time calibration evidence exists. This diagnostic does not relax any strategy/FSM/execution gate. Missing calibration remains missing evidence; no synthetic signals are published to prove a connection.
 
 ## Notifications, outcomes and Telegram control
 
@@ -85,6 +87,7 @@ Use a dedicated service, its own volume at `/app-data`, and the feature branch c
 | `SIGNALS_APP_SETUP_TOKEN` | Private, single-use owner bootstrap key |
 | `SIGNALS_APP_INGEST_TOKEN` | Private machine source key, at least 32 characters |
 | `SIGNALS_APP_ENGINE_ENABLED` | `0` by default; only `1` starts the isolated engine |
+| `SIGNALS_APP_SYMBOLS` | Comma-separated subset of the existing market catalog; default `EUR/USD` |
 | `SIGNALS_APP_ANDROID_SHA256` | Comma-separated signing-certificate SHA-256 fingerprints for Digital Asset Links |
 | `PORT` | HTTP listener, default 8765 |
 

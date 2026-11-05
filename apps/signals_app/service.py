@@ -162,10 +162,10 @@ class AppService:
                 "period":"ALL_RECORDED_HISTORY", "strategy_changes":"NONE"}
 
     def status(self) -> dict:
-        tick = self.store.meta("last_engine_tick", 0)
-        age = int(time.time())-tick if tick else None
-        return {"engine_state": "OBSERVING" if age is not None and age < 15 else
-                self.store.meta("engine_state","NOT_CONNECTED"),
-                "last_engine_tick":tick or None,
+        from .source import snapshot
+        source = snapshot(self.store)
+        return {"engine_state": source["state"], "source_reason": source["reason"],
+                "last_engine_tick":source["heartbeat_at"],
+                "last_market_data_at":source["last_market_data_at"],
                 "last_signal_at":self.store.meta("last_signal_at"),
                 "transport":"APP", "telegram_modified":False}

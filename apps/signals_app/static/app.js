@@ -79,7 +79,7 @@ async function navigate() {
   if (page === 'analysis') await loadAnalysis();
 }
 function renderStatus(status) {
-  const labels = {OBSERVING:'Engine observing',NOT_CONNECTED:'Source not connected',PROVIDER_CONFIGURATION_REQUIRED:'Source setup needed',EVIDENCE_UNAVAILABLE:'Evidence unavailable'};
+  const labels = {OBSERVING:'Market data connected',NOT_CONNECTED:'Source not connected',STARTING:'Connecting market source',SOURCE_WARMING:'Collecting market history',SOURCE_UNAVAILABLE:'Market source unavailable',SOURCE_LIMITED:'Market source limit',PROVIDER_CONFIGURATION_REQUIRED:'Source setup needed',EVIDENCE_UNAVAILABLE:'Evidence unavailable'};
   $('connection-text').textContent = labels[status?.engine_state] || 'Source not connected';
   $('connection-dot').classList.toggle('good',status?.engine_state === 'OBSERVING');
 }
@@ -113,7 +113,7 @@ async function loadSignals(older = false) {
     else currentRows = rows;
     const feedKey = page+':'+channel+':'+currentRows.map(row => row.seq).join(',');
     if (feedKey !== lastFeedKey) {
-      if (!currentRows.length) empty('A little space before the next signal.',data.status.engine_state === 'NOT_CONNECTED' || data.status.engine_state === 'PROVIDER_CONFIGURATION_REQUIRED' ? 'The app is ready. Live signals will appear after its independent data source is connected.' : 'No published signals have arrived in this channel yet. The strategy determines when a setup is ready.');
+      if (!currentRows.length) empty('A little space before the next signal.',data.status.engine_state === 'OBSERVING' ? 'Market data is connected. No published signal has met the strategy and timing requirements yet.' : 'The market connection is not ready to publish signals. Its current status appears above.');
       else $('signal-list').innerHTML = currentRows.map(signalCard).join('');
       lastFeedKey = feedKey;
     }
@@ -136,6 +136,7 @@ function countdowns() {
 async function loadAnalysis() {
   try {
     const data = await api('/api/admin'), m = data.metrics;
+    renderSource(data.source);
     const metrics = [['App members',m.members,'Registered application accounts'],['Entry signals',m.stages.OPEN_NOW || 0,'Unique published OPEN NOW signals'],['Market win rate',m.market_win_rate == null ? '—' : (m.market_win_rate*100).toFixed(1)+'%',m.settled_market_sample+' objective settled results'],['Personal reports',Object.values(m.community_reports).reduce((a,b)=>a+b,0),'Self-reports, separate from market evidence']];
     $('metrics').innerHTML = metrics.map(([title,value,note]) => `<div class="metric"><span class="eyebrow">${safe(title)}</span><b>${safe(value)}</b><small>${safe(note)}</small></div>`).join('');
     const max = Math.max(1,...Object.values(m.stages));
@@ -143,6 +144,28 @@ async function loadAnalysis() {
     $('canonical-info').innerHTML = `<dt>Canonical source files</dt><dd>${data.canonical.canonical_files}</dd><dt>Strategy source</dt><dd>Existing Binary Strategy V2 engine</dd><dt>Canonical fingerprint</dt><dd class="canonical-hash">${safe(data.canonical.canonical_sha256)}</dd><dt>Telegram command connection</dt><dd>Not connected</dd>`;
     renderStatus(data.status);
   } catch (error) { notice(error.message,true); }
+}
+function renderSource(source) {
+  if (!source) return;
+  const descriptions = {
+    NOT_CONNECTED:['Source not connected','The market source has not started.'],
+    STARTING:['Connecting market source','The app is starting its independent market connection.'],
+    OBSERVING:['Market data connected','The existing strategy is evaluating received market data. Signals appear only after its publication requirements pass.'],
+    SOURCE_WARMING:['Collecting market history','The source needs more real market history before it can evaluate a setup.'],
+    SOURCE_LIMITED:['Provider limit reached','The source is waiting for the provider to allow more requests.'],
+    SOURCE_UNAVAILABLE:['Market source unavailable','Current market data or completed strategy evaluations could not be verified.'],
+    PROVIDER_CONFIGURATION_REQUIRED:['Source setup needed','The market provider configuration needs attention.']
+  };
+  const [title,summary] = descriptions[source.state] || descriptions.SOURCE_UNAVAILABLE;
+  $('source-title').textContent = title; $('source-summary').textContent = summary;
+  const rows = [['Provider',source.provider ? source.provider.replace('_',' ') : 'Not configured'],
+    ['Markets',source.symbols?.join(', ') || 'Not configured'],
+    ['Completed evaluations',number(source.evaluations)],
+    ['Latest evaluation',source.last_evaluation_at ? dateTime(source.last_evaluation_at) : 'None recorded'],
+    ['Latest market data',source.last_market_data_at ? dateTime(source.last_market_data_at) : 'None received'],
+    ['Last decision',source.last_decision?.replaceAll('_',' ') || 'None recorded'],
+    ['Execution timing',source.execution_timing_available ? 'Calibration available' : 'Awaiting calibration evidence']];
+  $('source-info').innerHTML = rows.map(([label,value]) => `<dt>${safe(label)}</dt><dd>${safe(value)}</dd>`).join('');
 }
 async function claimSubscription(token) {
   await api('/api/claim',{method:'POST',body:JSON.stringify({token})});
@@ -226,7 +249,7 @@ window.addEventListener('hashchange',() => navigate().catch(error => notice(erro
 document.addEventListener('visibilitychange',() => { if (!document.hidden) loadSignals(); });
 setInterval(() => { if (!document.hidden) loadSignals(); },2000);
 setInterval(countdowns,1000);
-setInterval(async () => { if (session && !document.hidden) { try { await refreshSession(); } catch (error) { if (error.status === 401) authScreen(); } } },30000);
+setInterval(async () => { if (session && !document.hidden) { try { await refreshSession(); if (page === 'analysis') await loadAnalysis(); } catch (error) { if (error.status === 401) authScreen(); } } },30000);
 async function boot() {
   if (nativeAndroid) ['install-auth','install-side','install-account'].forEach(id => $(id).hidden = true);
   if (location.hash.startsWith('#claim=')) { claimToken = urlCode(location.href); history.replaceState(null,'','/#subscription'); }
