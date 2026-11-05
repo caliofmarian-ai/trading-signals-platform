@@ -25,6 +25,9 @@ PROTOCOL = "LIVE_SCORE_SEVERITY_RESEARCH_V1"
 DURATION_SECONDS = 7200
 MAX_BYTES = 1024 * 1024
 STAGES = ("PRE", "CONFIRM", "OPEN_NOW")
+PAIRS = {"pre_to_confirm_seconds": ("PRE", "CONFIRM"),
+         "confirm_to_open_seconds": ("CONFIRM", "OPEN_NOW"),
+         "pre_to_open_seconds": ("PRE", "OPEN_NOW")}
 
 
 def _path() -> Path | None:
@@ -82,6 +85,12 @@ def _read(path: Path) -> dict | None:
                 or any(type(x) not in {int, float} or not math.isfinite(x) or x < 0 for x in gaps.values())
                 or not math.isclose(gaps["pre_to_open_seconds"], gaps["pre_to_confirm_seconds"] + gaps["confirm_to_open_seconds"])):
                 raise ValueError("INVALID_SEVERITY_TIMING_EVIDENCE")
+        pairs = row["stage_pair_gap_samples"]
+        if (not isinstance(pairs, dict) or set(pairs) != set(PAIRS)
+            or any(not isinstance(samples, list) or len(samples) > 32
+                   or any(type(x) not in {int, float} or not math.isfinite(x) or not 0 <= x <= DURATION_SECONDS
+                          for x in samples) for samples in pairs.values())):
+            raise ValueError("INVALID_SEVERITY_PAIR_TIMING")
     return value
 
 
@@ -101,6 +110,7 @@ def _new(params, evaluation, now: float, buffer_mode: str) -> dict:
                         "evaluations": 0, "decision_kinds": {}, "blockers": {},
                         "fsm_reason_families": {}, "accepted_unique_stages": {},
                         "complete_ordered_chains": 0, "stage_gap_samples": [],
+                        "stage_pair_gap_samples": {name: [] for name in PAIRS},
                         "fsm_state": default_fsm_state(), "opportunities": {}}
                        for level in LEVELS]}
 
@@ -115,9 +125,11 @@ def _summary(state: dict, now: float) -> dict:
             "provider": "FINNHUB", "symbol": "EUR/USD", "buffer_mode": state["buffer_mode"],
             "levels": [{key: row[key] for key in (
                 "level", "score_thresholds", "evaluations", "decision_kinds", "blockers",
-                "fsm_reason_families", "accepted_unique_stages", "complete_ordered_chains", "stage_gap_samples"
+                "fsm_reason_families", "accepted_unique_stages", "complete_ordered_chains", "stage_gap_samples",
+                "stage_pair_gap_samples"
             )} for row in state["levels"]],
             "stage_gap_sample_scope": "LAST_32_COMPLETE_RESEARCH_CHAINS_PER_LEVEL",
+            "stage_pair_gap_sample_scope": "LAST_32_FIRST_ACCEPTED_STAGE_PAIRS_PER_LEVEL_INCLUDING_INCOMPLETE_CHAINS",
             "actual_telegram_publications": 0, "broker_executed": False,
             "execution_calibration_proven": False, "production_parameters_changed": False,
             "automatic_selection_allowed": False,
@@ -140,6 +152,10 @@ def _observe_accepted_stage(row, decision, handoff, now_ts: float) -> None:
         if stage not in stages:
             stages[stage] = now_ts
             row["accepted_unique_stages"][stage] = row["accepted_unique_stages"].get(stage, 0) + 1
+            for name, (before, after) in PAIRS.items():
+                if stage == after and before in stages and stages[before] <= now_ts:
+                    row["stage_pair_gap_samples"][name] = (
+                        row["stage_pair_gap_samples"][name] + [now_ts - stages[before]])[-32:]
             if all(key in stages for key in STAGES) and stages["PRE"] <= stages["CONFIRM"] <= stages["OPEN_NOW"]:
                 row["complete_ordered_chains"] += 1
                 gaps = {"pre_to_confirm_seconds": stages["CONFIRM"] - stages["PRE"],

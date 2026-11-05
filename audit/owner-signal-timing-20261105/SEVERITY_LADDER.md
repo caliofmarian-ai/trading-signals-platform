@@ -55,6 +55,10 @@ Parameter, strategy/spec or buffer-mode drift pauses the complete comparison.
 All score requests, blockers and FSM reason families are counted separately.
 First accepted research stages are deduplicated per opportunity; complete
 ordered PRE/CONFIRM/OPEN chains retain bounded timing-gap samples. The private
+projection also retains the latest 32 first-accepted PRE→CONFIRM, CONFIRM→OPEN
+and PRE→OPEN intervals separately, including incomplete lifecycle chains. A
+missing later stage is not imputed as zero seconds or discarded from counts.
+The private
 ledger retains at most 128 recent identities per level and the latest 32 full
 chains' gaps; aggregate counters continue. At most 1 MiB is read/written.
 Only an aggregate projection, with no identities or quotes, enters runtime

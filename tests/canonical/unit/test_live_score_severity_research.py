@@ -150,8 +150,14 @@ def test_real_fsm_chain_times_are_unique_and_separate_from_publication(canonical
         assert handoff.stage_handoff_ready and handoff.accepted_stage == stage
         module._observe_accepted_stage(row, decision, handoff, stamp)
         module._observe_accepted_stage(row, decision, handoff, stamp + .1)
+        if stage == "CONFIRM":
+            assert row["complete_ordered_chains"] == 0
+            assert row["stage_pair_gap_samples"]["pre_to_confirm_seconds"] == [4]
     assert row["accepted_unique_stages"] == {"PRE": 1, "CONFIRM": 1, "OPEN_NOW": 1}
     assert row["complete_ordered_chains"] == 1
+    assert row["stage_pair_gap_samples"] == {"pre_to_confirm_seconds": [4],
+                                             "confirm_to_open_seconds": [35],
+                                             "pre_to_open_seconds": [39]}
     assert row["stage_gap_samples"] == [{"pre_to_confirm_seconds": 4,
                                          "confirm_to_open_seconds": 35,
                                          "pre_to_open_seconds": 39}]
