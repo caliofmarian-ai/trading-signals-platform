@@ -29,7 +29,8 @@ def test_all_live_levels_reuse_canonical_evidence_without_mutating_production(ca
     report = module.summary(now_ts=1001)
     assert report["status"] == "OBSERVING" and len(report["levels"]) == 21
     assert all(row["evaluations"] == 1 for row in report["levels"])
-    assert report["levels"][14]["decision_kinds"] == {evaluation.decision.kind: 1}
+    expected_kind = "PRE" if evaluation.decision.kind in module.STAGES else evaluation.decision.kind
+    assert report["levels"][14]["decision_kinds"] == {expected_kind: 1}
     assert report["actual_telegram_publications"] == 0 and report["broker_executed"] is False
     assert report["automatic_selection_allowed"] is False
     assert evaluation.decision.to_dict() == original and params == parameters
@@ -54,12 +55,112 @@ def test_fast_projection_matches_full_canonical_pipeline_at_every_level(canonica
         candidate = copy.deepcopy(params)
         candidate["score_thresholds"] = row["score_thresholds"]
         full = decide(m1, m5, candidate, cycle_id="live-grid-test", buffer_mode="SMALL")
-        handoff = advance_persistent_fsm(default_fsm_state(), full.decision, now_ts=1000)
-        assert row["decision_kinds"] == {full.decision.kind: 1}
+        from core.decision_assembly import assemble_decision
+        requested = assemble_decision(full.market, full.corridor, full.time, full.scoring,
+            timeframe="M1", cycle_id="live-grid-test", maximum_stage="PRE")
+        handoff = advance_persistent_fsm(default_fsm_state(), requested, now_ts=1000)
+        assert row["decision_kinds"] == {requested.kind: 1}
         assert row["fsm_reason_families"] == {handoff.reason_family: 1}
         assert row["blockers"] == dict(Counter(full.decision.reject.hard_blockers))
         expected = {handoff.accepted_stage: 1} if handoff.stage_handoff_ready else {}
         assert row["accepted_unique_stages"] == expected
+
+
+def test_permissive_scores_request_complete_ordered_chain_before_paper_entry(canonical_runtime_root, monkeypatch):
+    module, evaluation, params = _prepare(canonical_runtime_root, monkeypatch)
+    from dataclasses import replace
+    from core.v2_fsm_orchestrator import advance_persistent_fsm
+    from state_store.state_store import default_fsm_state
+    from tests.canonical.unit.test_shadow_model_time_research import _opportunity, _sample
+    # A READY, high-scoring opportunity does not need a broker or execution
+    # calibration to go through all research stages and produce paper evidence.
+    opening, _ = _opportunity()
+    row = module._new(params, evaluation, 1000, "SMALL")["levels"][0]
+    fsm = default_fsm_state()
+    for stamp, expected in ((1062, "PRE"), (1064, "CONFIRM"), (1070, "CONFIRM"), (1092, "OPEN_NOW")):
+        maximum = module._maximum_stage(row, fsm, "EUR/USD", stamp, "BUY")
+        assert maximum == expected
+        # Stage capping in assembly uses identical score/structure/time; this
+        # fixture supplies a ready score directly so every stage is affordable.
+        decision = replace(opening, kind=maximum)
+        handoff = advance_persistent_fsm(fsm, decision, now_ts=stamp)
+        fsm = handoff.next_state
+        module._observe_accepted_stage(row, decision, handoff, stamp)
+    assert row["complete_ordered_chains"] == 1
+    assert row["stage_gap_samples"][0]["pre_to_open_seconds"] == 30
+    assert len(row["paper_trades"]["trades"]) == 1
+    assert module._maximum_stage(row, fsm, "EUR/USD", 1100, "SELL") == "PRE"
+    row.update(evaluations=4, decision_kinds={"PRE": 1, "CONFIRM": 2, "OPEN_NOW": 1},
+               fsm_reason_families={"STAGE_ACCEPTED": 3, "DUPLICATE": 1})
+    state = module._new(params, evaluation, 1000, "SMALL")
+    state["levels"][0] = row
+    module._save(module._path(), state)
+    module.advance_paper_trades(now_ts=1093, active_provider="FINNHUB", price_loader=lambda _: _sample(1093))
+    module.advance_paper_trades(now_ts=1213, active_provider="FINNHUB", price_loader=lambda _: _sample(1213, 1.2))
+    report = module.summary(now_ts=1214)
+    assert report["levels"][0]["paper_trades"]["outcomes"]["WIN"] == 1
+    assert report["actual_telegram_publications"] == 0
+
+
+def test_paper_expiry_settles_after_collection_closes_and_survives_reload(canonical_runtime_root, monkeypatch):
+    module, evaluation, params = _prepare(canonical_runtime_root, monkeypatch)
+    from tests.canonical.unit.test_shadow_model_time_research import _opportunity, _sample
+    state = module._new(params, evaluation, 1000, "SMALL")
+    decision, handoff = _opportunity(candle_ts=8100)
+    assert module.paper.register(state["levels"][0]["paper_trades"], decision, handoff, now_ts=8190)
+    module._save(module._path(), state)
+    module.advance_paper_trades(now_ts=8191, active_provider="FINNHUB", price_loader=lambda _: _sample(8191))
+    assert module.summary(now_ts=8201)["status"] == "SETTLING"
+    module = importlib.reload(module)
+    module.advance_paper_trades(now_ts=8311, active_provider="FINNHUB", price_loader=lambda _: _sample(8311, 1.2))
+    report = module.summary(now_ts=8312)
+    assert report["status"] == "COMPLETE"
+    assert report["levels"][0]["evaluations"] == 0
+    assert report["levels"][0]["paper_trades"]["outcomes"]["WIN"] == 1
+
+
+def test_stage_ceiling_never_promotes_or_changes_default_strategy_evidence(canonical_runtime_root, monkeypatch):
+    module, evaluation, params = _prepare(canonical_runtime_root, monkeypatch)
+    from core.decision_assembly import assemble_decision
+    original = evaluation.decision.to_dict()
+    capped = assemble_decision(evaluation.market, evaluation.corridor, evaluation.time,
+        evaluation.scoring, timeframe="M1", cycle_id=evaluation.cycle_id, maximum_stage="PRE")
+    assert capped.score == evaluation.decision.score
+    assert capped.reject == evaluation.decision.reject
+    assert capped.time == evaluation.decision.time
+    assert evaluation.decision.to_dict() == original
+    expected = "PRE" if evaluation.decision.kind in module.STAGES else evaluation.decision.kind
+    assert capped.kind == expected
+    with pytest.raises(ValueError):
+        assemble_decision(evaluation.market, evaluation.corridor, evaluation.time,
+            evaluation.scoring, timeframe="M1", cycle_id=evaluation.cycle_id, maximum_stage="INVALID")
+
+
+def test_full_canonical_pipeline_at_all_levels_produces_paper_outcomes_without_calibration(canonical_runtime_root, monkeypatch):
+    module, evaluation, params = _prepare(canonical_runtime_root, monkeypatch)
+    from tests.canonical.unit.test_shadow_model_time_research import _sample
+    assert evaluation.execution_time.available is False
+    assert evaluation.decision.kind == "OPEN_NOW"
+    now = evaluation.market.evaluated_ts + 1
+    for stamp in (now, now + 2, now + 30):
+        module.observe(evaluation, params, now_ts=stamp, provider="FINNHUB", buffer_mode="SMALL")
+    report = module.summary(now_ts=now + 31)
+    permissive = report["levels"][0]
+    assert permissive["accepted_unique_stages"] == {"PRE": 1, "CONFIRM": 1, "OPEN_NOW": 1}
+    assert permissive["paper_trades"]["registered"] == 1
+    horizon = evaluation.time.context.model_expiry * 60
+    assert permissive["paper_trades"]["horizon_seconds_counts"] == {str(horizon): 1}
+    calls = []
+    def price_loader(symbol):
+        calls.append(symbol)
+        return _sample(now + 31)
+    module.advance_paper_trades(now_ts=now + 31, active_provider="FINNHUB", price_loader=price_loader)
+    assert calls == ["EUR/USD"]  # One shared cached sample across all 21 levels.
+    endpoint = now + 31 + horizon
+    module.advance_paper_trades(now_ts=endpoint, active_provider="FINNHUB", price_loader=lambda _: _sample(endpoint, 1.2))
+    final = module.summary(now_ts=endpoint + 1)
+    assert final["levels"][0]["paper_trades"]["outcomes"]["WIN"] == 1
+    assert final["levels"][20]["paper_trades"]["registered"] == 0
 
 
 def test_research_window_survives_restart_and_cannot_recount_same_observation(canonical_runtime_root, monkeypatch):

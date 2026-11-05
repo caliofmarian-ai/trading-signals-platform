@@ -183,6 +183,19 @@ def telemetry_market_loop(
             )
         if shadow_research.enabled():
             try:
+                from intelligence import live_score_severity_research
+                live_score_severity_research.advance_paper_trades(
+                    now_ts=float(clock()), active_provider=market_client.configured_provider(),
+                    price_loader=market_client.get_latest_price_sample,
+                )
+            except Exception as exc:
+                _warn_once_per_window(
+                    warning_cache, "score_severity_paper", now_ts=float(clock()),
+                    warn_type="SCORE_SEVERITY_PAPER_UNAVAILABLE",
+                    message="Paper observation is unavailable; no outcome was invented",
+                    context={"error_class": type(exc).__name__},
+                )
+            try:
                 research_result = shadow_research.run_cycle(
                     active_provider=market_client.configured_provider(),
                     now_ts=float(clock()), price_loader=market_client.get_latest_price_sample,
