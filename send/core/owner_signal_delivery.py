@@ -192,6 +192,12 @@ def audit_evidence(user_id: int) -> dict[str, Any]:
         result["model_time_research_evidence"] = shadow_model_time_research.private_calibration_evidence()
         from intelligence import live_score_severity_research
         result["live_score_severity_research"] = live_score_severity_research.summary(now_ts=time.time())
+        from intelligence import execution_expiry_calibration
+        try:
+            result["execution_expiry_calibration"] = execution_expiry_calibration.summary(now_ts=time.time())
+        except (OSError, ValueError, TypeError, KeyError):
+            result["execution_expiry_calibration"] = {"status":"SOURCE_UNAVAILABLE_OR_INVALID",
+                "execution_calibration_proven":False, "broker_executed":False}
         path = _timing_path()
         result["delivery_timing"] = _read_object(path, MAX_TIMING_BYTES) if path.exists() else {"opportunities": {}}
         from core import market_data_provider_control, runtime_param_gate

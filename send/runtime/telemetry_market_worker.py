@@ -183,6 +183,19 @@ def telemetry_market_loop(
             )
         if shadow_research.enabled():
             try:
+                from intelligence import execution_expiry_calibration
+                execution_expiry_calibration.advance(
+                    now_ts=float(clock()), active_provider=market_client.configured_provider(),
+                    price_loader=market_client.get_latest_price_sample,
+                )
+            except Exception as exc:
+                _warn_once_per_window(
+                    warning_cache, "execution_expiry_calibration", now_ts=float(clock()),
+                    warn_type="EXECUTION_EXPIRY_CALIBRATION_UNAVAILABLE",
+                    message="Expiry calibration observations are unavailable; production gates are unchanged",
+                    context={"error_class":type(exc).__name__},
+                )
+            try:
                 from intelligence import live_score_severity_research
                 live_score_severity_research.advance_paper_trades(
                     now_ts=float(clock()), active_provider=market_client.configured_provider(),
