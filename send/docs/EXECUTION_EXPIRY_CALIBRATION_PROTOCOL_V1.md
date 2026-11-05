@@ -19,6 +19,9 @@ sample validator, ten-second entry deadline and two-second post-expiry sample
 tolerance. Never interpolate, backfill, round expiry or treat missing quotes as
 losses. Quote gaps become UNKNOWN. Prices and identifiers stay in private state;
 logs contain only scope, counters, timing quantiles and readiness summaries.
+Entry-quote delay and expiry-quote delay have separate quantiles. Paired candidate
+outcome counters use unique entry experiments, without multiplying shared levels;
+these descriptive counters never select an expiry or claim held-out validation.
 
 Identical direction/open timestamp/model/adjusted-time/source entries occurring
 at multiple severity levels share one experiment and quote set. Level membership

@@ -264,6 +264,8 @@ def analyze(state, *, now_ts):
     report = {"protocol": PROTOCOL, "truth_domain": "HYPOTHETICAL_RESEARCH", "observed_at": now_ts,
               "status": "WAITING_FIRST_COMPLETE_CHAIN", "bias_grid": list(BIASES),
               "unique_entry_experiments": 0, "pending": 0, "levels": [],
+              "observed_entry_quotes":0, "finalized_entry_experiments":0,
+              "entry_quote_delay_seconds":_quantiles([]), "paired_expiry_observations":[],
               "readiness_policy": {"minimum_train_decisive": MIN_TRAIN, "minimum_validation_decisive": MIN_VALIDATION,
                                    "fixed_train_entries":TRAIN_ENTRIES, "fixed_holdout_entries":HOLDOUT_ENTRIES,
                                    "target_win_rate": TARGET_WIN_RATE,
@@ -282,6 +284,16 @@ def analyze(state, *, now_ts):
                   pending=sum(r["state"] != "FINAL" for r in records),
                   capacity_rejections=state["capacity_rejections"],
                   status="CAPACITY_REACHED" if len(records) >= MAX_RECORDS else "COLLECTING")
+    report["observed_entry_quotes"] = sum(r["entry"] is not None for r in records)
+    report["finalized_entry_experiments"] = sum(r["state"] == "FINAL" for r in records)
+    report["entry_quote_delay_seconds"] = _quantiles([
+        r["entry"]["observed_ts"]-r["created_ts"] for r in records if r["entry"] is not None])
+    report["paired_expiry_observations"] = [{"pressure_bias":bias, **_counts(records,index),
+        "pending":sum(r["candidates"][index]["outcome"] == "PENDING" for r in records),
+        "expiry_quote_delay_seconds":_quantiles([
+            r["candidates"][index]["quote"]["observed_ts"]-r["entry"]["observed_ts"]-r["candidates"][index]["horizon_seconds"]
+            for r in records if r["candidates"][index]["quote"] is not None])}
+        for index,bias in enumerate(BIASES)]
     for level in range(21):
         rows = sorted((r for r in records if str(level) in r["levels"]), key=lambda r:r["created_ts"])
         independent, next_entry = [], 0.0

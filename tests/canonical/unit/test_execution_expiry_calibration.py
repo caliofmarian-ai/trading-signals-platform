@@ -52,6 +52,10 @@ def test_paired_expiries_are_predeclared_exact_and_observed(calibration):
     assert report["execution_calibration_proven"] is False
     assert report["levels"][0]["training_selected_bias"] is None
     assert report["levels"][0]["timing_seconds"]["pre_to_open"]["p95"]==35
+    assert report["observed_entry_quotes"]==1 and report["finalized_entry_experiments"]==1
+    assert report["entry_quote_delay_seconds"]["p95"]==1
+    assert report["paired_expiry_observations"][1]["losses"]==1
+    assert report["paired_expiry_observations"][1]["expiry_quote_delay_seconds"]["p95"]==0
 
 
 def test_shared_level_entries_are_not_multiplied(calibration):
@@ -60,6 +64,7 @@ def test_shared_level_entries_are_not_multiplied(calibration):
     _capture(module,params,[_entry(level=0)])
     report=module.summary(now_ts=1001)
     assert report["unique_entry_experiments"]==1
+    assert all(r["pending"]==1 for r in report["paired_expiry_observations"])
     assert [r["unique_entries"] for r in report["levels"][:4]]==[1,1,1,0]
 
 
