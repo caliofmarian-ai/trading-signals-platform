@@ -11,6 +11,7 @@ import json
 import math
 import time
 from pathlib import Path
+from statistics import NormalDist
 
 from core import storage
 from intelligence import shadow_model_time_research as quotes
@@ -25,6 +26,7 @@ TRAIN_ENTRIES = 60
 HOLDOUT_ENTRIES = 60
 TARGET_WIN_RATE = 0.80
 MAX_UNKNOWN_FRACTION = 0.10
+VALIDATION_Z = NormalDist().inv_cdf(1 - 0.05 / (2 * 21))
 REPORT_SECONDS = 60
 _last_report: dict[str, int] = {}
 
@@ -226,10 +228,9 @@ def advance(*, now_ts, active_provider, price_loader):
     return None
 
 
-def _wilson(wins, n):
+def _wilson(wins, n, *, z=1.959963984540054):
     if n == 0:
         return None
-    z = 1.959963984540054
     proportion = wins / n
     return max(0.0, (proportion + z*z/(2*n) - z*math.sqrt(proportion*(1-proportion)/n + z*z/(4*n*n))) / (1 + z*z/n))
 
@@ -265,7 +266,9 @@ def analyze(state, *, now_ts):
               "unique_entry_experiments": 0, "pending": 0, "levels": [],
               "readiness_policy": {"minimum_train_decisive": MIN_TRAIN, "minimum_validation_decisive": MIN_VALIDATION,
                                    "fixed_train_entries":TRAIN_ENTRIES, "fixed_holdout_entries":HOLDOUT_ENTRIES,
-                                   "target_win_rate": TARGET_WIN_RATE, "minimum_validation_wilson_95_lower": TARGET_WIN_RATE,
+                                   "target_win_rate": TARGET_WIN_RATE,
+                                   "minimum_validation_familywise_95_lower": TARGET_WIN_RATE,
+                                   "multiple_level_correction":"BONFERRONI_21_LEVELS_FIXED_HOLDOUT",
                                    "maximum_unknown_fraction": MAX_UNKNOWN_FRACTION,
                                    "split": "CHRONOLOGICAL_NONOVERLAPPING_TRAIN_THEN_UNTOUCHED_HOLDOUT"},
               "execution_calibration_proven": False, "automatic_activation_allowed": False,
@@ -294,6 +297,8 @@ def analyze(state, *, now_ts):
         eligible = [i for i,c in enumerate(train_counts) if training_complete and c["decisive"] >= MIN_TRAIN and c["unknown_fraction"] <= MAX_UNKNOWN_FRACTION]
         selected = max(eligible,key=lambda i:(train_counts[i]["wilson_95_lower"],-BIASES[i])) if eligible else None
         validation = _counts(holdout,selected) if selected is not None else None
+        if validation is not None:
+            validation["familywise_95_lower"] = _wilson(validation["wins"],validation["decisive"],z=VALIDATION_Z)
         selected_bias = BIASES[selected] if selected is not None else None
         delta, violations = None, None
         if selected is not None:
@@ -309,7 +314,7 @@ def analyze(state, *, now_ts):
         passed = bool(len(holdout) == HOLDOUT_ENTRIES and all(r["state"] == "FINAL" for r in holdout)
                       and validation and validation["decisive"] >= MIN_VALIDATION
                       and validation["unknown_fraction"] <= MAX_UNKNOWN_FRACTION
-                      and validation["wilson_95_lower"] >= TARGET_WIN_RATE and violations == 0)
+                      and validation["familywise_95_lower"] >= TARGET_WIN_RATE and violations == 0)
         if not training_complete:
             status = "COLLECTING_TRAINING"
         elif selected is None:

@@ -40,9 +40,11 @@ Require complete finalization, at least 30 decisive WIN/LOSS samples per split,
 and at most 10% UNKNOWN among eligible observed/unknown results. Select the
 candidate on training Wilson 95% lower bound, breaking ties toward less pressure.
 Report READY_FOR_REVIEW only when the fixed holdout's Wilson lower bound reaches
-the Owner's 80% target. DRAW, INFEASIBLE and missing data are separately counted.
+the Owner's 80% target, using a Bonferroni correction across the 21 tested levels
+for 95% familywise confidence. The candidate is selected on training, not by
+testing all six against holdout. DRAW, INFEASIBLE and missing data are separately counted.
 This policy is declared for this experiment, not claimed to be a pre-existing
-canonical sample-size rule. Wilson describes binomial sampling uncertainty;
+canonical sample-size rule. Wilson is an approximate binomial confidence bound;
 regime dependence and Finnhub-versus-future-broker quote differences remain.
 
 A proposal derives CONFIRM tolerance from the maximum observed training difference
