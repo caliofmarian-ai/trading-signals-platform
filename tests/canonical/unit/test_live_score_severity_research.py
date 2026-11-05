@@ -37,7 +37,7 @@ def test_all_live_levels_reuse_canonical_evidence_without_mutating_production(ca
     for path, raw in source_files.items():
         assert open(path, "rb").read() == raw
     new_files = [p for p in canonical_runtime_root.rglob("*") if p.is_file() and str(p) not in source_files]
-    assert len(new_files) == 1 and "live_score_severity_research" in str(new_files[0])
+    assert len(new_files) == 1 and "live_score_severity_continuous" in str(new_files[0])
     output = capsys.readouterr().out
     assert "TSP_LIVE_SCORE_SEVERITY" in output and "fsm_state" not in output
     assert "opportunities" not in output and "sig-v2-" not in output
@@ -102,7 +102,7 @@ def test_permissive_scores_request_complete_ordered_chain_before_paper_entry(can
     assert report["actual_telegram_publications"] == 0
 
 
-def test_paper_expiry_settles_after_collection_closes_and_survives_reload(canonical_runtime_root, monkeypatch):
+def test_paper_expiry_settles_across_old_deadline_and_survives_reload(canonical_runtime_root, monkeypatch):
     module, evaluation, params = _prepare(canonical_runtime_root, monkeypatch)
     from tests.canonical.unit.test_shadow_model_time_research import _opportunity, _sample
     state = module._new(params, evaluation, 1000, "SMALL")
@@ -110,11 +110,11 @@ def test_paper_expiry_settles_after_collection_closes_and_survives_reload(canoni
     assert module.paper.register(state["levels"][0]["paper_trades"], decision, handoff, now_ts=8190)
     module._save(module._path(), state)
     module.advance_paper_trades(now_ts=8191, active_provider="FINNHUB", price_loader=lambda _: _sample(8191))
-    assert module.summary(now_ts=8201)["status"] == "SETTLING"
+    assert module.summary(now_ts=8201)["status"] == "OBSERVING"
     module = importlib.reload(module)
     module.advance_paper_trades(now_ts=8311, active_provider="FINNHUB", price_loader=lambda _: _sample(8311, 1.2))
     report = module.summary(now_ts=8312)
-    assert report["status"] == "COMPLETE"
+    assert report["status"] == "OBSERVING" and report["deadline_ts"] is None
     assert report["levels"][0]["evaluations"] == 0
     assert report["levels"][0]["paper_trades"]["outcomes"]["WIN"] == 1
 
@@ -163,20 +163,23 @@ def test_full_canonical_pipeline_at_all_levels_produces_paper_outcomes_without_c
     assert final["levels"][20]["paper_trades"]["registered"] == 0
 
 
-def test_research_window_survives_restart_and_cannot_recount_same_observation(canonical_runtime_root, monkeypatch):
+def test_continuous_observation_survives_days_and_cannot_recount_same_observation(canonical_runtime_root, monkeypatch):
     module, evaluation, params = _prepare(canonical_runtime_root, monkeypatch)
     module.observe(evaluation, params, now_ts=1000, provider="FINNHUB", buffer_mode="SMALL")
     module = importlib.reload(module)
-    for stamp in (1000, 999, 1001, 8200, 9000):
+    for stamp in (1000, 999, 1001, 8200, 9000, 100000, 200000):
         module.observe(evaluation, params, now_ts=stamp, provider="FINNHUB", buffer_mode="SMALL")
-    report = module.summary(now_ts=9001)
-    assert report["status"] == "COMPLETE"
-    assert report["started_ts"] == 1000 and report["deadline_ts"] == 8200
-    assert all(row["evaluations"] == 2 for row in report["levels"])
-    frozen = module._path().read_bytes()
-    params["score_thresholds"]["PRE"] = 69
-    module.observe(evaluation, params, now_ts=10000, provider="FINNHUB", buffer_mode="MEDIUM")
-    assert module._path().read_bytes() == frozen  # Later changes cannot poison a closed comparison.
+    report = module.summary(now_ts=200001)
+    assert report["status"] == "OBSERVING" and report["operating_mode"] == "CONTINUOUS"
+    assert report["started_ts"] == 1000 and report["deadline_ts"] is None
+    assert report["automatic_stop_at"] is None
+    assert all(row["evaluations"] == 6 for row in report["levels"])
+    path = module._path()
+    monkeypatch.delenv("OWNER_TIMING_SESSION_ID")
+    module = importlib.reload(module)
+    assert module._path() == path
+    module.observe(evaluation, params, now_ts=200002, provider="FINNHUB", buffer_mode="SMALL")
+    assert all(row["evaluations"] == 7 for row in module.summary(now_ts=200003)["levels"])
 
 
 @pytest.mark.parametrize("drift", ["params", "buffer"])
@@ -187,7 +190,7 @@ def test_baseline_change_pauses_every_level_without_new_window(canonical_runtime
         params["score_thresholds"]["PRE"] = 69
     module.observe(evaluation, params, now_ts=1001, provider="FINNHUB", buffer_mode="MEDIUM" if drift == "buffer" else "SMALL")
     report = module.summary(now_ts=1002)
-    assert report["status"] == "PAUSED_BASELINE_CHANGED" and report["deadline_ts"] == 8200
+    assert report["status"] == "PAUSED_BASELINE_CHANGED" and report["deadline_ts"] is None
     assert all(row["evaluations"] == 1 for row in report["levels"])
 
 

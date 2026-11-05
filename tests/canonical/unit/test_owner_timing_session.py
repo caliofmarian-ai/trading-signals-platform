@@ -23,15 +23,16 @@ def _observe(module, now, *, kind="REJECT", stage=None, params="a"*64):
     )
 
 
-def test_two_hour_deadline_survives_reimport_and_preserves_real_zeroes(canonical_runtime_root, monkeypatch):
+def test_continuous_monitor_survives_reimport_and_preserves_real_zeroes(canonical_runtime_root, monkeypatch):
     module = _prepare(monkeypatch)
     _observe(module, 1000)
     module = importlib.reload(module)
     _observe(module, 1050)
     _observe(module, 8200)
     report = module.summary(now_ts=8200)
-    assert report["started_ts"] == 1000 and report["deadline_ts"] == 8200
-    assert report["status"] == "COMPLETE" and report["evaluations"] == 2
+    assert report["started_ts"] == 1000 and report["deadline_ts"] is None
+    assert report["status"] == "OBSERVING" and report["evaluations"] == 3
+    assert report["operating_mode"] == "CONTINUOUS" and report["automatic_stop_at"] is None
     assert report["private_published_stages"] == {}
     assert report["api_request_p50_seconds"] is None
     assert report["execution_calibration_proven"] is False
@@ -46,7 +47,7 @@ def test_internal_stage_acceptance_is_separate_from_actual_delivery(canonical_ru
     module.observe_receipt({"stage": "PRE", "api_request_seconds": .25}, now_ts=1002)
     module.observe_receipt({"stage": "OPEN_NOW", "api_request_seconds": .5}, now_ts=8200)
     report = module.summary(now_ts=8200)
-    assert report["private_published_stages"] == {"PRE": 1}
+    assert report["private_published_stages"] == {"PRE": 1, "OPEN_NOW": 1}
     assert report["api_request_p50_seconds"] == .25
 
 
@@ -57,11 +58,11 @@ def test_parameter_drift_pauses_without_renewing_or_auto_promoting(canonical_run
     _observe(module, 1002)
     report = module.summary(now_ts=1003)
     assert report["status"] == "PAUSED_BASELINE_CHANGED" and report["evaluations"] == 1
-    assert report["deadline_ts"] == 8200
+    assert report["deadline_ts"] is None
     assert report["parameters_changed"] is False and report["broker_executed"] is False
 
 
-def test_progress_and_final_notifications_have_no_duplicate_slots(canonical_runtime_root, monkeypatch):
+def test_progress_notifications_continue_beyond_two_hours_without_duplicate_slots(canonical_runtime_root, monkeypatch):
     module = _prepare(monkeypatch)
     publisher = importlib.import_module("core.telegram_publisher")
     sent = []
@@ -72,19 +73,25 @@ def test_progress_and_final_notifications_have_no_duplicate_slots(canonical_runt
     first = module.report_if_due(now_ts=1900)
     assert first["notification_api_accepted"] is True
     assert module.report_if_due(now_ts=1901) is None
-    final = module.report_if_due(now_ts=8200)
-    assert final["status"] == "COMPLETE"
+    ongoing = module.report_if_due(now_ts=8200)
+    assert ongoing["status"] == "OBSERVING"
     assert module.report_if_due(now_ts=9000) is None
-    assert len(sent) == 3 and all(r["chat_id"] == 123456789 for r in sent)
+    assert module.report_if_due(now_ts=9100)["status"] == "OBSERVING"
+    assert len(sent) == 4 and all(r["chat_id"] == 123456789 for r in sent)
+    assert all("Ends:" not in r["text"] and "/120" not in r["text"] for r in sent)
     assert "remains unproven" in sent[-1]["text"]
 
 
-def test_session_opt_in_and_safe_identity_are_required(canonical_runtime_root, monkeypatch):
+def test_continuous_monitor_ignores_session_identity_and_requires_owner_opt_in(canonical_runtime_root, monkeypatch):
     module = _prepare(monkeypatch)
     monkeypatch.setenv("OWNER_TIMING_SESSION_ID", "../../escape")
     _observe(module, 1000)
-    assert module.summary(now_ts=1001) is None
-    monkeypatch.setenv("OWNER_TIMING_SESSION_ID", "owner-20261105-two-hours")
+    report = module.summary(now_ts=1001)
+    assert report["evaluations"] == 1
+    stable_path = module._path()
+    monkeypatch.delenv("OWNER_TIMING_SESSION_ID")
+    _observe(module, 9000)
+    assert module._path() == stable_path and module.summary(now_ts=9001)["evaluations"] == 2
     monkeypatch.setenv("ENABLE_BROKER_EXECUTION", "true")
     _observe(module, 1000)
     assert module.summary(now_ts=1001) is None
