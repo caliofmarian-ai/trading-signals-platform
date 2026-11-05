@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import shutil
 import time
+import traceback
 
 
 def prepare_runtime(directory: Path):
@@ -88,7 +89,15 @@ def run_engine(monitor):
     decide = signal_engine.decide
 
     def observe_decision(**kwargs):
-        result = decide(**kwargs)
+        try:
+            result = decide(**kwargs)
+        except Exception as exc:
+            frame = traceback.extract_tb(exc.__traceback__)[-1]
+            # Pure strategy inputs contain candles/parameters, never source credentials.
+            # Emit only the public code location and exception class, not values/messages.
+            print("SIGNALS_APP_EVALUATION_ERROR " + json.dumps({"error_class":type(exc).__name__,
+                  "module":Path(frame.filename).name, "line":frame.lineno}), flush=True)
+            raise
         monitor.evaluation(result.decision)
         return result
 
