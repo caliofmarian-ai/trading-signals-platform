@@ -47,6 +47,7 @@ _LAST_PARAM_ERROR_SIGNATURE: Optional[str] = None
 _SHADOW_RESEARCH_LAST_WARNING_TS: Optional[int] = None
 _TIMEBOX_RESEARCH_LAST_WARNING_TS: Optional[int] = None
 _LAST_CALIBRATION_STATE: Dict[str, Dict[str, Any]] = {}
+_LAST_M1_SPEED_EVIDENCE_TS: Dict[str, float] = {}
 
 
 def _load_execution_calibration(*, now_ts, provider, symbol, buffer_mode, params):
@@ -378,9 +379,30 @@ def _trade_physics_dict(decision_dict: Dict[str, Any]) -> Dict[str, Any]:
     return dict(trade_physics) if isinstance(trade_physics, dict) else {}
 
 
+def _emit_m1_speed_window_evidence(evaluation) -> None:
+    """Bounded closure provenance, without quotes, scores or signal content."""
+    window = evaluation.market.evidence.m1_speed_window
+    observed = window.observation_ts
+    symbol = evaluation.market.symbol
+    previous = _LAST_M1_SPEED_EVIDENCE_TS.get(symbol)
+    if observed is None or (previous is not None and 0 <= observed - previous < 300):
+        return
+    print("TSP_M1_COMPLETED_SPEED_EVIDENCE " + json.dumps({
+        "component": "market_model_completed_m1_speed",
+        "symbol": symbol,
+        "observed_at": observed,
+        "evaluation_candle_ts": evaluation.market.evaluated_ts,
+        "window": vars(window),
+        "forming_candle_included": False,
+        "no_prices_scores_or_trade_recommendations": True,
+    }, sort_keys=True), flush=True)
+    _LAST_M1_SPEED_EVIDENCE_TS[symbol] = observed
+
+
 def _log_decision_evaluated(evaluation, buffer_mode: str) -> None:
     decision = evaluation.decision
     decision_dict = decision.to_dict()
+    _emit_m1_speed_window_evidence(evaluation)
     # Preserve the canonical DecisionObject while enriching its observable
     # contexts with the upstream evidence required to diagnose calibration.
     market_context = decision_dict.get("market_context")
@@ -389,6 +411,7 @@ def _log_decision_evaluated(evaluation, buffer_mode: str) -> None:
             "average_m1_range": evaluation.market.evidence.average_m1_range,
             "minimum_m1_range": evaluation.market.evidence.minimum_m1_range,
             "atr_m5": evaluation.market.evidence.atr_m5,
+            "m1_speed_window": vars(evaluation.market.evidence.m1_speed_window),
         })
     structure = decision_dict.get("structure")
     if isinstance(structure, dict):
@@ -706,6 +729,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                     "opportunity_signal_id": current_opportunity_signal_id(state, symbol),
                 },
                 execution_calibration=execution_calibration,
+                observation_ts=now_ts,
             )
             decision = evaluation.decision
 

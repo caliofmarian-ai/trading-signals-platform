@@ -25,6 +25,18 @@ class MarketModelUnavailable(ValueError):
 
 
 @dataclass(frozen=True)
+class M1SpeedWindowEvidence:
+    derivation_version: str
+    completed_candles: int
+    completed_intervals: int
+    first_open_ts: int
+    first_close_ts: int
+    last_close_ts: int
+    observation_ts: float | None
+    completion_source: str
+
+
+@dataclass(frozen=True)
 class IndicatorEvidence:
     ema_fast: float
     ema_slow: float
@@ -37,6 +49,7 @@ class IndicatorEvidence:
     jump_vs_atr: float
     latest_body: float
     average_body_last_10: float
+    m1_speed_window: M1SpeedWindowEvidence
 
 
 @dataclass(frozen=True)
@@ -116,6 +129,8 @@ def _validate_candles(candles: Sequence[Mapping[str, Any]], label: str, minimum:
             raise MarketModelUnavailable(f"{label}[{index}] contains invalid evidence")
         if low > min(open_price, close) or high < max(open_price, close) or high < low:
             raise MarketModelUnavailable(f"{label}[{index}] has invalid OHLC geometry")
+        if "complete" in candle and not isinstance(candle["complete"], bool):
+            raise MarketModelUnavailable(f"{label}[{index}].complete must be boolean")
         if previous_ts is not None and timestamp >= previous_ts:
             raise MarketModelUnavailable(f"{label} must be strictly newest-first")
         previous_ts = timestamp
@@ -153,6 +168,65 @@ def _is_crypto(symbol: str) -> bool:
     normalized = symbol.upper().strip()
     crypto_bases = {"BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "LTC", "DOT", "AVAX"}
     return "/" in normalized and normalized.split("/", 1)[0] in crypto_bases
+
+
+def _completed_m1_speed_window(
+    candles: Sequence[Mapping[str, Any]], observation_ts: float | None,
+) -> tuple[list[Mapping[str, Any]], M1SpeedWindowEvidence]:
+    """Select 21 closed bars without compressing gaps or unfinished intervals.
+
+    Live callers supply the observation time. Explicit False is never promoted
+    to True by elapsed time. Legacy pure/offline callers without observation time or
+    closure metadata retain their closed-candle input contract, exposed below.
+    """
+    observed = None
+    if observation_ts is not None:
+        if isinstance(observation_ts, bool):
+            raise MarketModelUnavailable("observation_ts must be a positive finite timestamp")
+        try:
+            observed = float(observation_ts)
+        except (TypeError, ValueError) as exc:
+            raise MarketModelUnavailable("observation_ts must be a positive finite timestamp") from exc
+        if not isfinite(observed) or observed <= 0:
+            raise MarketModelUnavailable("observation_ts must be a positive finite timestamp")
+        if int(candles[0]["ts"]) > observed:
+            raise MarketModelUnavailable("latest M1 candle starts after observation_ts")
+
+    latest = candles[0]
+    latest_ended = observed is None or int(latest["ts"]) + 60 <= observed
+    if latest.get("complete") is True and not latest_ended:
+        raise MarketModelUnavailable("M1 candle marked complete before its interval ended")
+    # Only the newest bar may be forming. Never skip an unfinished bar inside
+    # the requested window and substitute an older interval for it.
+    forming = latest.get("complete") is False or not latest_ended
+    closed = list(candles[int(forming):int(forming) + 21])
+    if len(closed) < 21:
+        raise MarketModelUnavailable(
+            f"M1 speed requires 21 completed real candles / 20 completed intervals; received {len(closed)}"
+        )
+    for candle in closed:
+        if candle.get("complete") is False:
+            raise MarketModelUnavailable("M1 speed window contains an unfinished historical interval")
+        if observed is not None and int(candle["ts"]) + 60 > observed:
+            raise MarketModelUnavailable("M1 speed window contains an interval not ended at observation_ts")
+    window = _recent_contiguous_candles(closed, "completed M1 speed window", 21, 60)
+    all_flags = all(candle.get("complete") is True for candle in window)
+    source = (
+        "PROVIDER_FLAGS_AND_OBSERVATION_TIME" if all_flags and observed is not None
+        else "PROVIDER_COMPLETION_FLAGS" if all_flags
+        else "OBSERVATION_TIME" if observed is not None
+        else "CALLER_CLOSED_CANDLE_CONTRACT"
+    )
+    return window, M1SpeedWindowEvidence(
+        derivation_version="COMPLETED_M1_INTERVALS_V1",
+        completed_candles=21,
+        completed_intervals=20,
+        first_open_ts=int(window[-1]["ts"]),
+        first_close_ts=int(window[-1]["ts"]) + 60,
+        last_close_ts=int(window[0]["ts"]) + 60,
+        observation_ts=observed,
+        completion_source=source,
+    )
 
 
 def _directional_movement(
@@ -193,8 +267,13 @@ def evaluate_market(
     params: Mapping[str, Any],
     *,
     buffer_mode: str = "MEDIUM",
+    observation_ts: float | None = None,
 ) -> MarketModelResult:
-    """Build a market description from real candles and versioned parameters."""
+    """Build market facts; live callers pass observation_ts for candle closure.
+
+    Without closure flags or observation_ts, the pure caller must supply already
+    closed candles. That compatibility contract is explicit in speed evidence.
+    """
 
     strategy = _required_mapping(params.get("strategy_v2"), "strategy_v2")
     ema_fast_period = int(_required_number(strategy, "ema_fast", "strategy_v2"))
@@ -207,7 +286,8 @@ def evaluate_market(
     minimum_m5 = max(ATR_REQUIRED_CANDLES, ema_slow_period + 1)
     _validate_candles(candles_m1, "candles_m1", minimum_m1)
     _validate_candles(candles_m5, "candles_m5", minimum_m5)
-    _recent_contiguous_candles(candles_m1, "candles_m1", minimum_m1, 60)
+    temporal_m1 = _recent_contiguous_candles(candles_m1, "candles_m1", minimum_m1, 60)
+    completed_m1, speed_window = _completed_m1_speed_window(temporal_m1, observation_ts)
     temporal_m5 = _recent_contiguous_candles(
         candles_m5, "candles_m5", ATR_REQUIRED_CANDLES, 300
     )
@@ -291,7 +371,7 @@ def evaluate_market(
     if jump_vs_atr > _required_number(spike_filters, "jump_vs_atr_max", "spike_filters"):
         noise_reasons.append("JUMP_VS_ATR")
 
-    recent_closes = [float(candle["close"]) for candle in reversed(candles_m1[:21])]
+    recent_closes = [float(candle["close"]) for candle in reversed(completed_m1)]
     price_speed = sum(abs(recent_closes[index] - recent_closes[index - 1]) for index in range(1, 21)) / 20
     directional_effective_speed, weighted_gross_speed, flow_efficiency = _directional_movement(
         recent_closes, direction
@@ -327,6 +407,7 @@ def evaluate_market(
             jump_vs_atr=jump_vs_atr,
             latest_body=body,
             average_body_last_10=average_body_last_10,
+            m1_speed_window=speed_window,
         ),
         noise_reasons=tuple(noise_reasons),
     )

@@ -21,7 +21,7 @@ def _bar(ts, code, index):
     }
 
 
-def _feed(tmp_path, monkeypatch, *, m1=21, m5=201):
+def _feed(tmp_path, monkeypatch, *, m1=22, m5=201):
     module = importlib.import_module("runtime.finnhub_market_data")
     monkeypatch.setenv("FINNHUB_MIN_CANDLES", "201")
     monkeypatch.delenv("FINNHUB_MIN_M1_CANDLES", raising=False)
@@ -38,7 +38,7 @@ def _feed(tmp_path, monkeypatch, *, m1=21, m5=201):
     return module, feed
 
 
-def test_21_real_m1_bars_reach_the_unchanged_market_model(
+def test_21_closed_plus_forming_m1_bars_reach_the_market_model(
     canonical_runtime_root, tmp_path, monkeypatch, capsys,
 ):
     from core.market_model import evaluate_market
@@ -54,16 +54,17 @@ def test_21_real_m1_bars_reach_the_unchanged_market_model(
     assert evaluation.canonical_spec == "ALGO_SPEC_v3.0.0"
     assert evaluation.signal_handoff_ready is False
     assert feed.health()["history_ready"] is True
-    assert feed.health()["minimum_candles_by_timeframe"] == {"M1": 21, "M5": 201}
+    assert result.evidence.m1_speed_window.completed_intervals == 20
+    assert feed.health()["minimum_candles_by_timeframe"] == {"M1": 22, "M5": 201}
     feed._emit_stream_observation("TRANSPORT_PONG_CONFIRMED")
     record = json.loads(capsys.readouterr().out.strip().split(" ", 1)[1])
-    assert record["required_candles_by_timeframe"] == {"M1": 21, "M5": 201}
+    assert record["required_candles_by_timeframe"] == {"M1": 22, "M5": 201}
     assert record["required_candles_each"] is None
     assert record["usable_real_history_and_fresh_tick"] is True
 
 
-@pytest.mark.parametrize("m1,m5,code,missing", [(20, 201, "M1", "20/21"),
-                                               (21, 200, "M5", "200/201")])
+@pytest.mark.parametrize("m1,m5,code,missing", [(21, 201, "M1", "21/22"),
+                                               (22, 200, "M5", "200/201")])
 def test_short_history_still_blocks_the_required_timeframe(tmp_path, monkeypatch, m1, m5, code, missing):
     module, feed = _feed(tmp_path, monkeypatch, m1=m1, m5=m5)
     assert feed.health()["history_ready"] is False
@@ -78,10 +79,10 @@ def test_all_available_contiguous_m1_bars_are_used_without_crossing_a_gap(tmp_pa
     assert feed.health()["history_ready"] is True
 
 
-def test_gap_inside_21_bar_window_cannot_be_hidden_by_older_history(tmp_path, monkeypatch):
+def test_gap_inside_22_bar_window_cannot_be_hidden_by_older_history(tmp_path, monkeypatch):
     module, feed = _feed(tmp_path, monkeypatch, m1=300)
     del feed._candles["M1"][20]
-    with pytest.raises(module.FinnhubInsufficientHistory, match="20/21"):
+    with pytest.raises(module.FinnhubInsufficientHistory, match="20/22"):
         feed.get_candles("EUR/USD", "M1")
     assert feed.health()["history_ready"] is False
 
@@ -128,10 +129,10 @@ def test_runtime_snapshot_and_status_show_timeframe_minima_and_contiguous_counts
     market_client.get_candles("EUR/USD", "M1")
     evidence = runtime_status.read_status()
     snapshot = build_status_snapshot(evidence)
-    assert snapshot["market_data_minimum_candles_by_timeframe"] == {"M1": 21, "M5": 201}
-    assert snapshot["market_data_contiguous_candle_counts"] == {"M1": 21, "M5": 201}
+    assert snapshot["market_data_minimum_candles_by_timeframe"] == {"M1": 22, "M5": 201}
+    assert snapshot["market_data_contiguous_candle_counts"] == {"M1": 22, "M5": 201}
     text, _ = render_status_page(snapshot)
-    assert "Real contiguous history: M1 21/21; M5 201/201" in text
+    assert "Real contiguous history: M1 22/22; M5 201/201" in text
 
 
 def test_provider_without_timeframe_minima_clears_previous_finnhub_requirements():
