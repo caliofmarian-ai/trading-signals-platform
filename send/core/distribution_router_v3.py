@@ -607,6 +607,12 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
 
     event["stage"] = stage
     event["signal_id"] = signal_id
+    if finnhub_personal:
+        private_block = owner_signal_delivery.stage_block_reason(event, now_ts=time.time())
+        if private_block is not None:
+            summary["blocked"] = True
+            summary["block_reason"] = private_block
+            return summary
     cfg = _load_effective_config()
     state = legacy.load_state()
     if not finnhub_personal:
@@ -642,7 +648,7 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
             }
         )
 
-    if personal_owner is not None:
+    if personal_owner is not None and finnhub_personal:
         destinations.append({
             "name": "OWNER_PRIVATE", "tier": "ELITE", "chat_id": personal_owner,
             "thread_id": None, "is_tier": False, "applies_limits": False,

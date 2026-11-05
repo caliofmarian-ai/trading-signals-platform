@@ -58,6 +58,45 @@ def test_market_model_describes_evidence_without_emitting_a_signal(canonical_run
     assert not hasattr(result, "score")
 
 
+def test_normalized_activity_accepts_normal_small_absolute_ranges(canonical_runtime_root):
+    params = _params(canonical_runtime_root)
+    params["strategy_v2"]["min_avg_range"]["FOREX_DEFAULT"] = 0.5
+    m1, m5 = _candles(220, timeframe="M1", step=60), _candles(220, timeframe="M5", step=300)
+    result = evaluate_market(m1, m5, params)
+    assert result.evidence.average_m1_range < result.evidence.legacy_minimum_m1_range
+    assert result.context.volatility_state == "ACTIVE"
+    assert result.evidence.activity_ratio == pytest.approx(result.evidence.average_m1_range / result.evidence.atr_m5)
+    assert result.evidence.minimum_m1_range == pytest.approx(result.evidence.atr_m5 * 0.20)
+    assert result.evidence.activity_gate_ok is True
+    assert result.evidence.activity_atr_source == "M5_ATR_14"
+
+
+def test_normalized_activity_still_blocks_insignificant_relative_movement(canonical_runtime_root):
+    params = _params(canonical_runtime_root)
+    m1, m5 = _candles(220, timeframe="M1", step=60), _candles(220, timeframe="M5", step=300)
+    for row in m1:
+        row.update(open=1.1, close=1.1, high=1.100001, low=1.099999)
+    result = evaluate_market(m1, m5, params)
+    assert result.context.volatility_state == "BELOW_MINIMUM_ACTIVITY"
+    assert result.evidence.activity_gate_ok is False
+    assert result.evidence.activity_ratio < result.evidence.activity_threshold
+    assert result.evidence.activity_gate_reason == "BELOW_NORMALIZED_ACTIVITY_THRESHOLD"
+
+
+@pytest.mark.parametrize("scale", [0.001, 100, 10000])
+def test_normalized_activity_is_invariant_to_asset_price_units(canonical_runtime_root, scale):
+    params = _params(canonical_runtime_root)
+    m1, m5 = _candles(220, timeframe="M1", step=60), _candles(220, timeframe="M5", step=300)
+    baseline = evaluate_market(m1, m5, params)
+    for rows in (m1, m5):
+        for row in rows:
+            for field in ("open", "high", "low", "close"):
+                row[field] *= scale
+    result = evaluate_market(m1, m5, params)
+    assert result.evidence.activity_ratio == pytest.approx(baseline.evidence.activity_ratio)
+    assert result.evidence.activity_gate_ok == baseline.evidence.activity_gate_ok
+
+
 def test_directional_speed_uses_only_intended_direction_with_recency_weights(canonical_runtime_root: Path) -> None:
     params = _params(canonical_runtime_root)
     m1 = _candles(220, timeframe="M1", step=60, rising=True)

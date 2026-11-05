@@ -21,6 +21,7 @@ from core import storage
 TRUE = frozenset({"true", "1", "yes", "on"})
 MAX_TIMING_BYTES = 512 * 1024
 MAX_OPPORTUNITIES = 128
+MIN_PRE_LEAD_SECONDS = 30
 
 
 def destination() -> int | None:
@@ -53,6 +54,35 @@ def _read_object(path: Path, limit: int) -> dict[str, Any]:
 
 def _timing_path() -> Path:
     return Path(storage.root_path("state", "owner_signal_timing.json"))
+
+
+def stage_block_reason(event: dict[str, Any], *, now_ts: float) -> str | None:
+    """Keep the Owner's requested visible order and minimum PRE advance.
+
+    Missing private receipts cannot be replaced by an internal FSM state. This
+    adds no strategic stage and never delays/queues a stale price for later use:
+    each later attempt must still pass a fresh complete runtime evaluation.
+    """
+    if event.get("stage") == "PRE":
+        return None
+    try:
+        ledger = _read_object(_timing_path(), MAX_TIMING_BYTES)
+        key = hashlib.sha256(event["signal_id"].encode()).hexdigest()
+        stages = ledger["opportunities"].get(key, {})
+        pre = stages.get("PRE")
+        if pre is None:
+            return "OWNER_PRE_RECEIPT_REQUIRED"
+        if event.get("stage") == "OPEN_NOW":
+            confirm = stages.get("CONFIRM")
+            if confirm is None:
+                return "OWNER_CONFIRM_RECEIPT_REQUIRED"
+            if not pre["api_accepted_ts"] <= confirm["api_accepted_ts"] <= now_ts:
+                return "OWNER_STAGE_TIME_ORDER_INVALID"
+            if now_ts - pre["api_accepted_ts"] < MIN_PRE_LEAD_SECONDS:
+                return "OWNER_PRE_LEAD_TIME_NOT_MET"
+        return None
+    except (OSError, ValueError, TypeError, KeyError):
+        return "OWNER_STAGE_TIMING_UNAVAILABLE"
 
 
 def render_text(event: dict[str, Any], text: str) -> str:
