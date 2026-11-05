@@ -47,6 +47,7 @@ _LAST_PARAM_ERROR_SIGNATURE: Optional[str] = None
 _SHADOW_RESEARCH_LAST_WARNING_TS: Optional[int] = None
 _TIMEBOX_RESEARCH_LAST_WARNING_TS: Optional[int] = None
 _OWNER_TIMING_LAST_WARNING_TS: Optional[int] = None
+_SEVERITY_RESEARCH_LAST_WARNING_TS: Optional[int] = None
 _LAST_CALIBRATION_STATE: Dict[str, Dict[str, Any]] = {}
 _LAST_M1_SPEED_EVIDENCE_TS: Dict[str, float] = {}
 
@@ -124,6 +125,19 @@ def _observe_owner_timing_session(decision, handoff, execution_time, params) -> 
             _OWNER_TIMING_LAST_WARNING_TS = now
             print("TSP_OWNER_TIMING_SESSION_UNAVAILABLE " + json.dumps({
                 "observed_at": now, "error_class": type(exc).__name__,
+            }, sort_keys=True), flush=True)
+
+
+def _observe_score_severity(evaluation, params, *, now_ts: float, provider: str, buffer_mode: str) -> None:
+    global _SEVERITY_RESEARCH_LAST_WARNING_TS
+    try:
+        from intelligence import live_score_severity_research
+        live_score_severity_research.observe(evaluation, params, now_ts=now_ts, provider=provider, buffer_mode=buffer_mode)
+    except Exception as exc:
+        if _SEVERITY_RESEARCH_LAST_WARNING_TS is None or now_ts - _SEVERITY_RESEARCH_LAST_WARNING_TS >= 300:
+            _SEVERITY_RESEARCH_LAST_WARNING_TS = now_ts
+            print("TSP_LIVE_SCORE_SEVERITY_UNAVAILABLE " + json.dumps({
+                "observed_at": now_ts, "error_class": type(exc).__name__,
             }, sort_keys=True), flush=True)
 
 # Bound repeated HTTP 429 observability noise without changing the provider,
@@ -806,6 +820,11 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                     _log_post_distribution(
                         decision, persistent_fsm, execution, distribution_summary
                     )
+
+            # The production candidate/publication path finishes first. This
+            # independent research projection cannot alter its handoff/state.
+            _observe_score_severity(evaluation, params, now_ts=time.time(),
+                                    provider=market_client.configured_provider(), buffer_mode=buffer_mode)
 
         except Exception as exc:
             if isinstance(exc, MarketDataRateLimitError):

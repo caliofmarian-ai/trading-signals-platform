@@ -190,6 +190,8 @@ def audit_evidence(user_id: int) -> dict[str, Any]:
         result["timing_session"] = owner_timing_session.summary(now_ts=time.time())
         from intelligence import shadow_model_time_research
         result["model_time_research_evidence"] = shadow_model_time_research.private_calibration_evidence()
+        from intelligence import live_score_severity_research
+        result["live_score_severity_research"] = live_score_severity_research.summary(now_ts=time.time())
         path = _timing_path()
         result["delivery_timing"] = _read_object(path, MAX_TIMING_BYTES) if path.exists() else {"opportunities": {}}
         from core import market_data_provider_control, runtime_param_gate
