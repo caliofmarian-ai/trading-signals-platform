@@ -140,6 +140,7 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
         return
     now = _number(now_ts)
     from core.runtime_execution_calibration import algo_params_sha256
+    from intelligence.signal_severity_scale import score_thresholds
     scope = {"provider": "FINNHUB", "symbol": "EUR/USD", "buffer_mode": buffer_mode,
              "parameter_sha256": algo_params_sha256(params), "strategy_version": strategy_version,
              "canonical_spec": canonical_spec, "model_limits_minutes": params["expiry_limits_minutes"]}
@@ -148,6 +149,15 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
                                "started_ts": now, "records": {}, "capacity_rejections": 0}
         if state["scope"] != scope:
             raise ValueError("CALIBRATION_SCOPE_CHANGED")
+        variants = {str(level):{"score_thresholds":score_thresholds(params,level),
+                               "parameter_sha256":algo_params_sha256({**params,"score_thresholds":score_thresholds(params,level)})}
+                    for level in range(21)}
+        # Deterministic source metadata may be enriched without changing old
+        # observations or their source identity. Never reuse a level-0 fit as a
+        # calibration approved for unchanged level-14 production parameters.
+        if state.get("variant_scopes",variants) != variants:
+            raise ValueError("CALIBRATION_VARIANT_SCOPE_CHANGED")
+        state["variant_scopes"] = variants
         for item in entries:
             # No backfilled PRE/CONFIRM evidence for chains begun before this release.
             if item.get("confirm_model_seconds") is None:
@@ -264,6 +274,8 @@ def analyze(state, *, now_ts):
     report = {"protocol": PROTOCOL, "truth_domain": "HYPOTHETICAL_RESEARCH", "observed_at": now_ts,
               "status": "WAITING_FIRST_COMPLETE_CHAIN", "bias_grid": list(BIASES),
               "unique_entry_experiments": 0, "pending": 0, "levels": [],
+              "observed_entry_quotes":0, "finalized_entry_experiments":0,
+              "entry_quote_delay_seconds":_quantiles([]), "paired_expiry_observations":[],
               "readiness_policy": {"minimum_train_decisive": MIN_TRAIN, "minimum_validation_decisive": MIN_VALIDATION,
                                    "fixed_train_entries":TRAIN_ENTRIES, "fixed_holdout_entries":HOLDOUT_ENTRIES,
                                    "target_win_rate": TARGET_WIN_RATE,
@@ -282,6 +294,16 @@ def analyze(state, *, now_ts):
                   pending=sum(r["state"] != "FINAL" for r in records),
                   capacity_rejections=state["capacity_rejections"],
                   status="CAPACITY_REACHED" if len(records) >= MAX_RECORDS else "COLLECTING")
+    report["observed_entry_quotes"] = sum(r["entry"] is not None for r in records)
+    report["finalized_entry_experiments"] = sum(r["state"] == "FINAL" for r in records)
+    report["entry_quote_delay_seconds"] = _quantiles([
+        r["entry"]["observed_ts"]-r["created_ts"] for r in records if r["entry"] is not None])
+    report["paired_expiry_observations"] = [{"pressure_bias":bias, **_counts(records,index),
+        "pending":sum(r["candidates"][index]["outcome"] == "PENDING" for r in records),
+        "expiry_quote_delay_seconds":_quantiles([
+            r["candidates"][index]["quote"]["observed_ts"]-r["entry"]["observed_ts"]-r["candidates"][index]["horizon_seconds"]
+            for r in records if r["candidates"][index]["quote"] is not None])}
+        for index,bias in enumerate(BIASES)]
     for level in range(21):
         rows = sorted((r for r in records if str(level) in r["levels"]), key=lambda r:r["created_ts"])
         independent, next_entry = [], 0.0
@@ -315,7 +337,11 @@ def analyze(state, *, now_ts):
                       and validation and validation["decisive"] >= MIN_VALIDATION
                       and validation["unknown_fraction"] <= MAX_UNKNOWN_FRACTION
                       and validation["familywise_95_lower"] >= TARGET_WIN_RATE and violations == 0)
-        if not training_complete:
+        variant_scope = state.get("variant_scopes",{}).get(str(level))
+        if variant_scope is None:
+            passed = False
+            status = "VARIANT_SCOPE_UNAVAILABLE"
+        elif not training_complete:
             status = "COLLECTING_TRAINING"
         elif selected is None:
             status = "TRAINING_DATA_QUALITY_FAILED"
@@ -343,6 +369,8 @@ def analyze(state, *, now_ts):
                                                     ("pre_to_open","pre_ts","open_ts"))}}
         if passed:
             row_summary["proposal_only"] = {"pressure_bias":BIASES[selected],
+                "validated_level":level, "validated_parameter_sha256":variant_scope["parameter_sha256"],
+                "validated_score_thresholds":variant_scope["score_thresholds"],
                 "confirm_delta_minutes":delta,
                 "minimum_expiry_minutes":bounds["min"]*(1-BIASES[selected]),
                 "maximum_expiry_minutes":bounds["max"], "source_evidence_sha256":_digest(state)}

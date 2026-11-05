@@ -19,6 +19,9 @@ sample validator, ten-second entry deadline and two-second post-expiry sample
 tolerance. Never interpolate, backfill, round expiry or treat missing quotes as
 losses. Quote gaps become UNKNOWN. Prices and identifiers stay in private state;
 logs contain only scope, counters, timing quantiles and readiness summaries.
+Entry-quote delay and expiry-quote delay have separate quantiles. Paired candidate
+outcome counters use unique entry experiments, without multiplying shared levels;
+these descriptive counters never select an expiry or claim held-out validation.
 
 Identical direction/open timestamp/model/adjusted-time/source entries occurring
 at multiple severity levels share one experiment and quote set. Level membership
@@ -51,7 +54,10 @@ A proposal derives CONFIRM tolerance from the maximum observed training differen
 between the CONFIRM forecast and the selected OPEN expiry, widened if necessary
 to cover pressure over the governed model range. Every fixed holdout interval
 must contain its selected OPEN expiry. Exact minimum/maximum horizons follow that range.
-Proposals retain a source digest and source scope. They do not write
+Proposals retain a source digest and source scope. Each proposal also binds its
+exact severity level, score thresholds and variant
+parameter hash. Evidence from a counterfactual level must never be relabelled as
+validation of unchanged production thresholds. Proposals do not write
 `execution_calibration.json`, mutate thresholds, publish signals or call a broker.
 Source-scope drift cannot be mixed into the cohort. Deployment restarts do not
 erase already collected evidence.
