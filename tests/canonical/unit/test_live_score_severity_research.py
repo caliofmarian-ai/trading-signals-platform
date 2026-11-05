@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import importlib
 import json
+from collections import Counter
 
 import pytest
 
@@ -39,6 +40,26 @@ def test_all_live_levels_reuse_canonical_evidence_without_mutating_production(ca
     output = capsys.readouterr().out
     assert "TSP_LIVE_SCORE_SEVERITY" in output and "fsm_state" not in output
     assert "opportunities" not in output and "sig-v2-" not in output
+
+
+def test_fast_projection_matches_full_canonical_pipeline_at_every_level(canonical_runtime_root, monkeypatch):
+    module, evaluation, params = _prepare(canonical_runtime_root, monkeypatch)
+    from core.strategy_v2 import decide
+    from core.v2_fsm_orchestrator import advance_persistent_fsm
+    from state_store.state_store import default_fsm_state
+    m1, m5, _ = _inputs(canonical_runtime_root)
+    module.observe(evaluation, params, now_ts=1000, provider="FINNHUB", buffer_mode="SMALL")
+    report = module.summary(now_ts=1001)
+    for row in report["levels"]:
+        candidate = copy.deepcopy(params)
+        candidate["score_thresholds"] = row["score_thresholds"]
+        full = decide(m1, m5, candidate, cycle_id="live-grid-test", buffer_mode="SMALL")
+        handoff = advance_persistent_fsm(default_fsm_state(), full.decision, now_ts=1000)
+        assert row["decision_kinds"] == {full.decision.kind: 1}
+        assert row["fsm_reason_families"] == {handoff.reason_family: 1}
+        assert row["blockers"] == dict(Counter(full.decision.reject.hard_blockers))
+        expected = {handoff.accepted_stage: 1} if handoff.stage_handoff_ready else {}
+        assert row["accepted_unique_stages"] == expected
 
 
 def test_research_window_survives_restart_and_cannot_recount_same_observation(canonical_runtime_root, monkeypatch):
