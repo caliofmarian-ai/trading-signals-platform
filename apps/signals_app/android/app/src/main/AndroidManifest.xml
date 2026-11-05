@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application android:label="Trading Signals" android:icon="@drawable/ic_launcher"
         android:allowBackup="false" android:supportsRtl="true"
         android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Translucent.NoTitleBar">
@@ -23,6 +24,7 @@
         </activity>
         <service android:name="com.google.androidbrowserhelper.trusted.DelegationService"
             android:enabled="true" android:exported="true">
+            <meta-data android:name="android.support.customtabs.trusted.SMALL_ICON" android:resource="@drawable/ic_launcher"/>
             <intent-filter>
                 <action android:name="android.support.customtabs.trusted.TRUSTED_WEB_ACTIVITY_SERVICE"/>
                 <category android:name="android.intent.category.DEFAULT"/>
