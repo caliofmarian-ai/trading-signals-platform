@@ -15,6 +15,8 @@ SUPPORTED_SYMBOL = "EUR/USD"
 FINNHUB_SYMBOL = "OANDA:EUR_USD"
 MAX_CANDLES = 500
 DEFAULT_MIN_CANDLES = 201
+# M1 feeds RSI and the 20-interval directional-speed window; EMA200 uses M5.
+DEFAULT_MIN_M1_CANDLES = 21
 # Transport guardrails; these never replace quote freshness or history gates.
 STREAM_READ_POLL_SECONDS = 5
 STREAM_PING_INTERVAL_SECONDS = 20
@@ -92,6 +94,7 @@ class FinnhubForexFeed:
         symbol: str = SUPPORTED_SYMBOL,
         freshness_seconds: Optional[int] = None,
         minimum_candles: Optional[int] = None,
+        minimum_m1_candles: Optional[int] = None,
         store_path: Optional[Path] = None,
         clock: Any = time.time,
         websocket_connector: Any = None,
@@ -109,12 +112,30 @@ class FinnhubForexFeed:
             if minimum_candles is not None
             else os.getenv("FINNHUB_MIN_CANDLES", str(DEFAULT_MIN_CANDLES))
         )
+        self.minimum_m1_candles = int(
+            minimum_m1_candles
+            if minimum_m1_candles is not None
+            else minimum_candles
+            if minimum_candles is not None
+            else os.getenv("FINNHUB_MIN_M1_CANDLES", str(DEFAULT_MIN_M1_CANDLES))
+        )
         if self.freshness_seconds < 1:
             raise FinnhubConfigurationError("MARKET_DATA_FRESHNESS_SECONDS must be positive")
         if self.minimum_candles < 2 or self.minimum_candles > MAX_CANDLES:
             raise FinnhubConfigurationError(
                 f"FINNHUB_MIN_CANDLES must be between 2 and {MAX_CANDLES}"
             )
+        if self.minimum_m1_candles < 2 or self.minimum_m1_candles > MAX_CANDLES:
+            raise FinnhubConfigurationError(
+                f"FINNHUB_MIN_M1_CANDLES must be between 2 and {MAX_CANDLES}"
+            )
+        # Retain the explicit constructor override for existing offline callers.
+        # The legacy environment setting now governs M5 only, so an existing
+        # FINNHUB_MIN_CANDLES=201 cannot reintroduce the excessive M1 wait.
+        self.minimum_candles_by_timeframe = {
+            "M1": self.minimum_m1_candles,
+            "M5": self.minimum_candles,
+        }
         self.store_path = Path(store_path) if store_path is not None else _default_store_path()
         self.clock = clock
         self.websocket_connector = websocket_connector
@@ -335,8 +356,10 @@ class FinnhubForexFeed:
             tick_age = None if self._last_price_ts is None else now_ts - int(self._last_price_ts)
             usable = (
                 integrity["state"] == "VALID"
-                and int(head["M1"]) >= self.minimum_candles
-                and int(head["M5"]) >= self.minimum_candles
+                and all(
+                    int(head[code]) >= minimum
+                    for code, minimum in self.minimum_candles_by_timeframe.items()
+                )
                 and self._valid_trade_tick_count > 0
                 and tick_age is not None
                 and 0 <= tick_age <= self.freshness_seconds
@@ -368,7 +391,11 @@ class FinnhubForexFeed:
                 "history_continuity_state": integrity["temporal_continuity_state"],
                 "usable_real_history_and_fresh_tick": usable,
                 "history_gap_diagnostics": summarize_gap_distribution(self._candles),
-                "required_candles_each": self.minimum_candles,
+                "required_candles_each": (
+                    self.minimum_candles
+                    if self.minimum_m1_candles == self.minimum_candles else None
+                ),
+                "required_candles_by_timeframe": dict(self.minimum_candles_by_timeframe),
                 "no_prices_or_trade_recommendations": True,
             }
         try:
@@ -518,10 +545,11 @@ class FinnhubForexFeed:
         # Do not feed an old segment across a weekend or silent-tick gap into
         # temporal physics. A stored bar count is not a usable contiguous count.
         contiguous_count = int(integrity["contiguous_candle_counts"].get(code, 0))
-        if contiguous_count < self.minimum_candles:
+        minimum = self.minimum_candles_by_timeframe[code]
+        if contiguous_count < minimum:
             raise FinnhubInsufficientHistory(
                 f"Finnhub {code} history is still collecting: "
-                f"{contiguous_count}/{self.minimum_candles} real candles contiguous "
+                f"{contiguous_count}/{minimum} real candles contiguous "
                 f"(stored={len(candles)})"
             )
         age_seconds = int(self.clock()) - int(last_price_ts)
@@ -586,11 +614,12 @@ class FinnhubForexFeed:
                 integrity.get("contiguous_candle_counts", {})
             ),
             "minimum_candles": self.minimum_candles,
+            "minimum_candles_by_timeframe": dict(self.minimum_candles_by_timeframe),
             "history_ready": (
                 integrity["state"] == "VALID"
                 and all(
-                    int(value) >= self.minimum_candles
-                    for value in integrity["contiguous_candle_counts"].values()
+                    int(integrity["contiguous_candle_counts"].get(code, 0)) >= minimum
+                    for code, minimum in self.minimum_candles_by_timeframe.items()
                 )
             ),
             "persistence_state": persistence_state,

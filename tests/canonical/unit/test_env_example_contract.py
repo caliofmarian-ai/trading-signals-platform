@@ -55,6 +55,7 @@ def test_env_example_documents_provider_bootstrap_without_provider_mixing() -> N
     assert values["FINNHUB_API_KEY"] == "replace-me"
     assert values["FINNHUB_CANDLE_STORE"] == "/data/market_data/finnhub_eurusd.json"
     assert values["FINNHUB_MIN_CANDLES"] == "201"
+    assert values["FINNHUB_MIN_M1_CANDLES"] == "21"
     assert values["MARKET_DATA_FRESHNESS_SECONDS"] == "10"
     assert values["TWELVE_DATA_API_KEY"] == "replace-me"
 

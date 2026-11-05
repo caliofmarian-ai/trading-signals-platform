@@ -166,18 +166,19 @@ def collect_historical_strategy_probe(
         buffer_mode = str(settings.get("buffer_mode") or "MEDIUM").strip().upper()
         if buffer_mode not in {"SMALL", "MEDIUM", "LARGE"}:
             return _report("INVALID_GOVERNED_BUFFER_MODE")
-        required_m1 = int(os.getenv("FINNHUB_MIN_CANDLES", "201"))
-        if not 2 <= required_m1 <= MAX_CANDLES:
+        required_m1 = max(21, int(params["strategy_v2"]["rsi_period"]) + 1,
+                          int(os.getenv("FINNHUB_MIN_M1_CANDLES", "21")))
+        required_m5 = max(15, int(params["strategy_v2"]["ema_slow"]) + 1,
+                          int(os.getenv("FINNHUB_MIN_CANDLES", "201")))
+        if not all(2 <= value <= MAX_CANDLES for value in (required_m1, required_m5)):
             return _report("FINNHUB_CANDLE_REQUIREMENT_INVALID")
-        # Retain the current Finnhub adapter's 201/201 gate for source
-        # reproducibility, despite the Market Model's smaller M1 base need.
         selected = _select_no_lookahead_window(
-            m1, m5, min_m1=required_m1, min_m5=required_m1,
+            m1, m5, min_m1=required_m1, min_m5=required_m5,
         )
         if selected is None:
             return _report(
                 "NO_COMPLETED_HISTORICAL_OVERLAP",
-                required_bars_each=required_m1,
+                required_bars_by_timeframe={"M1": required_m1, "M5": required_m5},
             )
         window_m1, window_m5, cutoff_ts = selected
         if cutoff_ts > now:

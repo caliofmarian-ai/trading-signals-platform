@@ -293,6 +293,12 @@ def build_status_snapshot(
         ),
         "market_data_candle_counts": evidence.get("market_data_candle_counts"),
         "market_data_minimum_candles": evidence.get("market_data_minimum_candles"),
+        "market_data_minimum_candles_by_timeframe": evidence.get(
+            "market_data_minimum_candles_by_timeframe"
+        ),
+        "market_data_contiguous_candle_counts": evidence.get(
+            "market_data_contiguous_candle_counts"
+        ),
         "market_data_history_ready": evidence.get("market_data_history_ready"),
         "market_data_bootstrap_state": evidence.get("market_data_bootstrap_state"),
         "market_data_stream_state": evidence.get("market_data_stream_state"),
