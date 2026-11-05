@@ -48,6 +48,7 @@ _SHADOW_RESEARCH_LAST_WARNING_TS: Optional[int] = None
 _TIMEBOX_RESEARCH_LAST_WARNING_TS: Optional[int] = None
 _OWNER_TIMING_LAST_WARNING_TS: Optional[int] = None
 _SEVERITY_RESEARCH_LAST_WARNING_TS: Optional[int] = None
+_CADENCE_RESEARCH_LAST_WARNING_TS: Optional[int] = None
 _LAST_CALIBRATION_STATE: Dict[str, Dict[str, Any]] = {}
 _LAST_M1_SPEED_EVIDENCE_TS: Dict[str, float] = {}
 
@@ -139,6 +140,15 @@ def _observe_score_severity(evaluation, params, *, now_ts: float, provider: str,
             print("TSP_LIVE_SCORE_SEVERITY_UNAVAILABLE " + json.dumps({
                 "observed_at": now_ts, "error_class": type(exc).__name__,
             }, sort_keys=True), flush=True)
+    global _CADENCE_RESEARCH_LAST_WARNING_TS
+    try:
+        from intelligence import lifecycle_cadence_research
+        lifecycle_cadence_research.observe(evaluation,params,now_ts=now_ts,provider=provider,buffer_mode=buffer_mode)
+    except Exception as exc:
+        if _CADENCE_RESEARCH_LAST_WARNING_TS is None or now_ts-_CADENCE_RESEARCH_LAST_WARNING_TS>=300:
+            _CADENCE_RESEARCH_LAST_WARNING_TS=now_ts
+            print("TSP_LIFECYCLE_CADENCE_UNAVAILABLE "+json.dumps({
+                "observed_at":now_ts,"error_class":type(exc).__name__},sort_keys=True),flush=True)
 
 # Bound repeated HTTP 429 observability noise without changing the provider,
 # backoff, scan schedule, or fail-closed behavior. The first failure is always

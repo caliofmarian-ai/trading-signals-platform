@@ -183,6 +183,14 @@ def telemetry_market_loop(
             )
         if shadow_research.enabled():
             try:
+                from intelligence import lifecycle_cadence_research
+                lifecycle_cadence_research.advance(now_ts=float(clock()),
+                    active_provider=market_client.configured_provider(),price_loader=market_client.get_latest_price_sample)
+            except Exception as exc:
+                _warn_once_per_window(warning_cache,"lifecycle_cadence",now_ts=float(clock()),
+                    warn_type="LIFECYCLE_CADENCE_UNAVAILABLE",message="Research cadence observations are unavailable",
+                    context={"error_class":type(exc).__name__})
+            try:
                 from intelligence import execution_expiry_calibration
                 execution_expiry_calibration.advance(
                     now_ts=float(clock()), active_provider=market_client.configured_provider(),
