@@ -380,3 +380,159 @@ def test_post_distribution_emitted_requires_publication_evidence(
     assert post[0]["decision_audit_id"] == "decision-audit-post-v3"
     assert post[0]["data"]["fsm_handoff"]["fsm_transition_id"] == "fsm-post-v3"
     assert post[0]["data"]["publication_evidence"]["published"][0]["event_id"] == "route-result-1"
+
+
+def _personal(monkeypatch, router):
+    monkeypatch.setenv("OWNER_SIGNAL_DELIVERY_ENABLED", "true")
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "123456789")
+    monkeypatch.setenv("SHADOW_MODE", "true")
+    monkeypatch.setenv("ENABLE_BROKER_EXECUTION", "false")
+    monkeypatch.setenv("MARKET_DATA_PROVIDER", "FINNHUB")
+    return router.owner_signal_delivery
+
+
+@pytest.mark.parametrize("stage", ["PRE", "CONFIRM", "OPEN_NOW"])
+def test_finnhub_personal_stages_only_reach_owner_never_channels(tmp_path, monkeypatch, stage):
+    root, _, legacy, router, _ = _setup(tmp_path, monkeypatch)
+    owner = _personal(monkeypatch, router)
+    calls = []
+    monkeypatch.setenv("ADMIN_GROUP_ID", "-100111111")
+    monkeypatch.setenv("SIGNALS_LIVE_TOPIC_ID", "7")
+    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **kw: (
+        calls.append(kw) or {"ok": True, "result": {"message_id": 42, "date": 1720000100}}
+    ))
+    candidate = _candidate(stage, "personal-lifecycle")
+    summary = router.route(candidate, now_ts=1720000100)
+    assert summary["published_count"] == 1
+    assert len(summary["route_results"]) == 1
+    assert summary["route_results"][0]["route"] == "OWNER_PRIVATE"
+    assert calls[0]["chat_id"] == 123456789
+    assert calls[0]["thread_id"] is None and calls[0]["reply_markup"] is None
+    assert "Generated:" in calls[0]["text"] and "shadow observation" in calls[0]["text"]
+    assert legacy.load_state()["open_signals_today"]["FREE"] == 0
+    assert owner.audit_evidence(987654321) == {"status": "PERSONAL_DELIVERY_NOT_ENABLED_FOR_OWNER"}
+    assert (root / "state" / "owner_signal_timing.json").is_file()
+    repeated = router.route(candidate, now_ts=1720000102)
+    assert repeated["published_count"] == 0 and len(calls) == 1
+
+
+@pytest.mark.parametrize("setting,value", [
+    ("OWNER_SIGNAL_DELIVERY_ENABLED", "false"), ("OWNER_TELEGRAM_ID", "-100123"),
+    ("OWNER_TELEGRAM_ID", "0"), ("OWNER_TELEGRAM_ID", "someone"),
+    ("OWNER_TELEGRAM_ID", "1" * 5000), ("SHADOW_MODE", "false"),
+    ("ENABLE_BROKER_EXECUTION", "true"),
+])
+def test_personal_delivery_fails_closed_for_invalid_scope(tmp_path, monkeypatch, setting, value):
+    _, _, legacy, router, _ = _setup(tmp_path, monkeypatch)
+    _personal(monkeypatch, router)
+    monkeypatch.setenv(setting, value)
+    calls = []
+    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **kw: calls.append(kw))
+    summary = router.route(_candidate("PRE"), now_ts=1720000100)
+    assert summary["blocked"] and summary["block_reason"] == "FINNHUB_PERSONAL_USE_DISTRIBUTION_BLOCKED"
+    assert not calls
+
+
+def test_personal_route_preserves_open_now_expiry_gate(tmp_path, monkeypatch):
+    _, _, legacy, router, _ = _setup(tmp_path, monkeypatch)
+    _personal(monkeypatch, router)
+    calls = []
+    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **kw: calls.append(kw))
+    candidate = _candidate("PRE")
+    candidate["stage"] = "OPEN_NOW"
+    summary = router.route(candidate, now_ts=1720000100)
+    assert summary["block_reason"] == "EXECUTION_TIME_UNAVAILABLE" and not calls
+
+
+def test_owner_timing_uses_first_successful_stage_and_preserves_missing_gaps(tmp_path, monkeypatch):
+    _, _, _, router, _ = _setup(tmp_path, monkeypatch)
+    owner = _personal(monkeypatch, router)
+    response = {"ok": True, "result": {"date": 1720000100}}
+    candidate = _candidate("PRE", "real-shared-identity")
+    first = owner.record_acceptance(candidate, response, started_ts=1720000100,
+                                    accepted_ts=1720000100.2, transport_seconds=0.2)
+    assert first["pre_to_open_seconds"] is None
+    owner.record_acceptance(candidate, response, started_ts=1720000110,
+                            accepted_ts=1720000110.4, transport_seconds=0.4)
+    candidate["stage"] = "CONFIRM"
+    confirm = owner.record_acceptance(candidate, response, started_ts=1720000130,
+                                      accepted_ts=1720000130.2, transport_seconds=0.2)
+    assert confirm["pre_to_confirm_seconds"] == 30
+    assert confirm["confirm_to_open_seconds"] is None
+    candidate["stage"] = "OPEN_NOW"
+    opened = owner.record_acceptance(candidate, response, started_ts=1720000150,
+                                     accepted_ts=1720000150.5, transport_seconds=0.5)
+    assert opened["pre_to_open_seconds"] == 50.3
+    assert opened["confirm_to_open_seconds"] == 20.3
+    assert opened["phone_receipt_proven"] is False
+    with pytest.raises(ValueError):
+        owner.record_acceptance(candidate, {"ok": False}, started_ts=1,
+                                accepted_ts=2, transport_seconds=1)
+
+
+def test_supplemental_timing_failure_never_resends_published_stage(tmp_path, monkeypatch):
+    _, _, legacy, router, _ = _setup(tmp_path, monkeypatch)
+    owner = _personal(monkeypatch, router)
+    monkeypatch.setattr(owner, "record_acceptance", lambda *a, **kw: (_ for _ in ()).throw(ValueError()))
+    calls = []
+    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **kw: (
+        calls.append(kw) or {"ok": True, "result": {"message_id": 42}}
+    ))
+    first = router.route(_candidate("PRE"), now_ts=1720000100)
+    second = router.route(_candidate("PRE"), now_ts=1720000102)
+    assert first["published_count"] == 1 and first["failed_count"] == 0
+    assert second["published_count"] == 0 and len(calls) == 1
+    assert first["telemetry_errors"] == [{"route": "OWNER_PRIVATE", "error": "OWNER_TIMING_UNAVAILABLE"}]
+
+
+def test_activation_receipt_is_explicitly_not_a_signal(tmp_path, monkeypatch, capsys):
+    _, _, legacy, router, _ = _setup(tmp_path, monkeypatch)
+    owner = _personal(monkeypatch, router)
+    calls = []
+    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **kw: (
+        calls.append(kw) or {"ok": True, "result": {"message_id": 42}}
+    ))
+    owner.send_activation_receipt()
+    assert calls[0]["chat_id"] == 123456789 and "not a signal" in calls[0]["text"]
+    assert '"accepted": true' in capsys.readouterr().out
+
+
+def test_personal_delivery_preserves_tier_limits_states_and_reset(tmp_path, monkeypatch):
+    _, _, legacy, router, _ = _setup(tmp_path, monkeypatch)
+    _personal(monkeypatch, router)
+    state = legacy._default_state()
+    state["tier_state"]["FREE"] = "SILENT"
+    state["open_signals_today"]["FREE"] = 6
+    state["last_reset_london_date"] = "2024-01-01"
+    legacy.save_state(state)
+    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **kw: {"ok": True, "result": {"message_id": 3}})
+    router.route(_candidate("PRE"), now_ts=1720000100)
+    after = legacy.load_state()
+    assert after["tier_state"] == state["tier_state"]
+    assert after["open_signals_today"] == state["open_signals_today"]
+    assert after["last_reset_london_date"] == "2024-01-01"
+
+
+def test_owner_audit_exports_allowlisted_real_candles_only(tmp_path, monkeypatch):
+    root, _, _, router, _ = _setup(tmp_path, monkeypatch)
+    owner = _personal(monkeypatch, router)
+    params = json.loads((SEND_ROOT / "config" / "algo_params.json").read_text())
+    (root / "config" / "algo_params.json").write_text(json.dumps(params))
+    store = root / "market_data" / "finnhub_eurusd.json"
+    store.parent.mkdir()
+    monkeypatch.setenv("FINNHUB_CANDLE_STORE", str(store))
+    candles = {}
+    for frame, seconds in (("M1", 60), ("M5", 300)):
+        candles[frame] = [{"ts": 1793872800-i*seconds, "open": 1.1, "high": 1.11,
+                           "low": 1.09, "close": 1.1, "complete": True,
+                           "provider": "FINNHUB", "symbol": "EUR/USD", "timeframe": frame,
+                           "arbitrary_secret": "must-not-export"} for i in range(25)]
+    store.write_text(json.dumps({"provider": "FINNHUB", "candles": candles, "api_key": "never-export"}))
+    evidence = owner.audit_evidence(123456789)
+    assert evidence["status"] == "PERSONAL_RESEARCH_SNAPSHOT"
+    assert evidence["params"] == params
+    assert len(evidence["candles"]["M1"]) == 25
+    assert "secret" not in json.dumps(evidence) and "never-export" not in json.dumps(evidence)
+    assert "candles" not in owner.audit_evidence(987654321)
+    store.write_text(json.dumps({"provider": "OTHER", "candles": candles}))
+    assert owner.audit_evidence(123456789)["status"] == "SOURCE_UNAVAILABLE_OR_INVALID"

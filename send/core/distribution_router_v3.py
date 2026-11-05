@@ -25,6 +25,7 @@ from core import distribution_router as legacy
 from core import market_data_provider_control
 from core import observability_logger
 from core import outcome_service
+from core import owner_signal_delivery
 from core import trade_temporal_telemetry
 
 
@@ -550,7 +551,9 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
         "telemetry_errors": [],
     }
 
-    if os.getenv("MARKET_DATA_PROVIDER", "TWELVE_DATA").strip().upper() == "FINNHUB":
+    personal_owner = owner_signal_delivery.destination()
+    finnhub_personal = os.getenv("MARKET_DATA_PROVIDER", "TWELVE_DATA").strip().upper() == "FINNHUB"
+    if finnhub_personal and personal_owner is None:
         observability_logger.log_warning(
             warn_type="FINNHUB_PERSONAL_USE_DISTRIBUTION_BLOCKED",
             message="Finnhub personal-use market data cannot publish signals to Telegram channels",
@@ -606,11 +609,12 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
     event["signal_id"] = signal_id
     cfg = _load_effective_config()
     state = legacy.load_state()
-    state = _sync_config_states(state, cfg)
-    state, _ = _maybe_daily_reset(state, cfg, now_ts)
+    if not finnhub_personal:
+        state = _sync_config_states(state, cfg)
+        state, _ = _maybe_daily_reset(state, cfg, now_ts)
 
     destinations: list[Dict[str, Any]] = []
-    for tier in TIERS:
+    for tier in (() if finnhub_personal else TIERS):
         destinations.append(
             {
                 "name": tier,
@@ -625,7 +629,7 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
 
     admin_group_id = _safe_int(cfg["admin"].get("group_id"))
     admin_topic_id = _safe_int(cfg["admin"].get("signals_live_topic_id"))
-    if admin_group_id and admin_topic_id:
+    if admin_group_id and admin_topic_id and not finnhub_personal:
         destinations.append(
             {
                 "name": "ADMIN_SIGNALS_LIVE",
@@ -638,6 +642,13 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
             }
         )
 
+    if personal_owner is not None:
+        destinations.append({
+            "name": "OWNER_PRIVATE", "tier": "ELITE", "chat_id": personal_owner,
+            "thread_id": None, "is_tier": False, "applies_limits": False,
+            "feedback_enabled": False,
+        })
+
     for dest in destinations:
         route_name = str(dest["name"])
         tier = str(dest["tier"])
@@ -647,6 +658,8 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
         applies_limits = bool(dest["applies_limits"])
         feedback_available = bool(dest["feedback_enabled"])
         destination_kind = "tier_channel" if is_tier else "admin_topic"
+        if route_name == "OWNER_PRIVATE":
+            destination_kind = "owner_private"
         limit = cfg["limits"].get(tier) if is_tier else None
         counter_before = int(state["open_signals_today"].get(tier, 0))
         route_state_before = (
@@ -943,6 +956,8 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
         )
 
         text = _render_signal_text(event, tier if is_tier else "ADMIN")
+        if route_name == "OWNER_PRIVATE":
+            text = owner_signal_delivery.render_text(event, _render_signal_text(event, "PERSONAL"))
         feedback_enabled = bool(feedback_available and stage == "OPEN_NOW")
         reply_markup = legacy.build_feedback_markup(signal_id) if feedback_enabled else None
         route_state_after = route_state_before
@@ -950,6 +965,8 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
         message_id: Optional[int] = None
 
         try:
+            send_started_ts = time.time()
+            send_started_monotonic = time.perf_counter()
             response = legacy.telegram_publisher.send_message(
                 chat_id=int(chat_id),
                 text=text,
@@ -957,6 +974,8 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
                 thread_id=thread_id,
             )
             ok = bool(response.get("ok"))
+            accepted_ts = time.time()
+            transport_seconds = time.perf_counter() - send_started_monotonic
             if ok:
                 message_id = _safe_int((response.get("result") or {}).get("message_id"))
                 legacy.tier_dedup_mark(state, dedup_scope, signal_id, stage)
@@ -1023,6 +1042,16 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
                     message_id=message_id,
                     result_event_id=result_event["event_id"],
                 )
+                if route_name == "OWNER_PRIVATE":
+                    try:
+                        owner_signal_delivery.record_acceptance(
+                            event, response, started_ts=send_started_ts,
+                            accepted_ts=accepted_ts, transport_seconds=transport_seconds,
+                        )
+                    except Exception:
+                        # The primary receipt and dedup have already been
+                        # persisted. Timing failure must never resend a stage.
+                        summary["telemetry_errors"].append({"route": route_name, "error": "OWNER_TIMING_UNAVAILABLE"})
                 if stage == "OPEN_NOW":
                     try:
                         _register_market_telemetry(
