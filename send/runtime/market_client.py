@@ -253,6 +253,16 @@ def _cached_rest_candles(symbol: str, timeframe: str):
     return candles
 
 
+def _history_status_evidence(health):
+    requirements = health.get("minimum_candles_by_timeframe")
+    if not isinstance(requirements, dict):
+        requirements = {code: health["minimum_candles"] for code in ("M1", "M5")}
+    return {
+        "market_data_minimum_candles_by_timeframe": dict(requirements),
+        "market_data_contiguous_candle_counts": health.get("contiguous_candle_counts"),
+    }
+
+
 def _update_twelve_data_stream_status(feed, *, state: str, note: str) -> None:
     health = feed.health()
     runtime_status.update_status(
@@ -265,6 +275,7 @@ def _update_twelve_data_stream_status(feed, *, state: str, note: str) -> None:
         market_data_freshness_limit_seconds=health["freshness_limit_seconds"],
         market_data_candle_counts=health["candle_counts"],
         market_data_minimum_candles=health["minimum_candles"],
+        **_history_status_evidence(health),
         market_data_history_ready=health["history_ready"],
         market_data_store_load_state=health.get("store_load_state"),
         market_data_store_write_state=health.get("store_write_state"),
@@ -358,6 +369,7 @@ def get_candles(symbol: str, timeframe: str, *, prefer_live: bool = False):
                 market_data_freshness_limit_seconds=health["freshness_limit_seconds"],
                 market_data_candle_counts=health["candle_counts"],
                 market_data_minimum_candles=health["minimum_candles"],
+                **_history_status_evidence(health),
                 market_data_history_ready=health["history_ready"],
                 # A successful WebSocket connect is not evidence of a real FX tick.
                 market_data_stream_state=health.get("stream_state"),
@@ -392,6 +404,7 @@ def get_candles(symbol: str, timeframe: str, *, prefer_live: bool = False):
             market_data_freshness_limit_seconds=health["freshness_limit_seconds"],
             market_data_candle_counts=health["candle_counts"],
             market_data_minimum_candles=health["minimum_candles"],
+            **_history_status_evidence(health),
             market_data_history_ready=health["history_ready"],
             market_data_stream_state=health.get("stream_state"),
             market_data_subscription_state=health.get("subscription_state"),

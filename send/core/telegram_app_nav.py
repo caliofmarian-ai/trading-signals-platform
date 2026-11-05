@@ -1166,6 +1166,8 @@ def render_status_page(
     freshness_limit = snapshot.get("market_data_freshness_limit_seconds")
     candle_counts = snapshot.get("market_data_candle_counts")
     minimum_candles = snapshot.get("market_data_minimum_candles")
+    requirements = snapshot.get("market_data_minimum_candles_by_timeframe")
+    contiguous_counts = snapshot.get("market_data_contiguous_candle_counts")
     history_ready = snapshot.get("market_data_history_ready")
     bootstrap_state = snapshot.get("market_data_bootstrap_state")
     stream_state = snapshot.get("market_data_stream_state")
@@ -1201,13 +1203,21 @@ def render_status_page(
             f"\nLatest price age: {market_age} seconds "
             f"(maximum accepted: {freshness_limit})"
         )
-    if isinstance(candle_counts, dict) and isinstance(minimum_candles, int):
+    if not isinstance(requirements, dict):
+        requirements = {code: minimum_candles for code in ("M1", "M5")}
+    history_label = "Real history"
+    if isinstance(contiguous_counts, dict):
+        candle_counts = contiguous_counts
+        history_label = "Real contiguous history"
+    if isinstance(candle_counts, dict):
         m1_count = candle_counts.get("M1")
         m5_count = candle_counts.get("M5")
-        if isinstance(m1_count, int) and isinstance(m5_count, int):
+        m1_minimum = requirements.get("M1")
+        m5_minimum = requirements.get("M5")
+        if all(isinstance(value, int) for value in (m1_count, m5_count, m1_minimum, m5_minimum)):
             current_state += (
-                f"\nReal history: M1 {m1_count}/{minimum_candles}; "
-                f"M5 {m5_count}/{minimum_candles}"
+                f"\n{history_label}: M1 {m1_count}/{m1_minimum}; "
+                f"M5 {m5_count}/{m5_minimum}"
             )
     if isinstance(history_ready, bool):
         current_state += (

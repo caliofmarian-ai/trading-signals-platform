@@ -56,6 +56,7 @@ def _prepare(monkeypatch, canonical_runtime_root: Path):
     monkeypatch.setenv("ENABLE_BROKER_EXECUTION", "false")
     monkeypatch.setenv("MARKET_DATA_PROVIDER", "FINNHUB")
     monkeypatch.setenv("FINNHUB_MIN_CANDLES", "201")
+    monkeypatch.setenv("FINNHUB_MIN_M1_CANDLES", "21")
     filename = canonical_runtime_root / "market_data" / "finnhub_eurusd.json"
     monkeypatch.setenv("FINNHUB_CANDLE_STORE", str(filename))
     return filename
@@ -84,7 +85,7 @@ def test_historical_strategy_evaluates_real_window_shape_without_publishing(
         base_dir=canonical_runtime_root, now_ts=T + 60 * 60 * 24 * 50,
     )
     assert report["status"] == "HISTORICAL_EVALUATION_COMPLETED"
-    assert report["m1_completed_window_bars"] == 201
+    assert report["m1_completed_window_bars"] == 21
     assert report["m5_completed_window_bars"] == 201
     assert report["historical_age_days"] >= 49
     assert report["model_decision_object_created"] is True
