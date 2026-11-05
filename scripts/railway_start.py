@@ -68,6 +68,14 @@ def main() -> int:
         _install_telegram_ui_diagnostic_stream_routing()
         from runtime.system_boot import start_system
 
+        # Optional, bounded status export shares the running source; it never
+        # opens another provider connection or blocks the engine loop.
+        try:
+            from scripts.app_source_bridge import start_bridge
+            start_bridge()
+        except Exception as exc:
+            print("TSP_APP_SOURCE_BRIDGE_START_FAILED "+type(exc).__name__, flush=True)
+
         boot_result = start_system()
         if boot_result is False:
             raise RuntimeError("Runtime system boot returned a blocked startup state")
