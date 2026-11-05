@@ -168,6 +168,8 @@ def test_fixed_holdout_and_interval_gate_before_proposal(calibration):
     row=report["levels"][0]
     assert row["status"]=="READY_FOR_REVIEW"
     assert row["proposal_only"]["pressure_bias"]==.05
+    assert row["proposal_only"]["validated_level"]==0
+    assert row["proposal_only"]["validated_parameter_sha256"] != report["scope"]["parameter_sha256"]
     assert row["untouched_holdout"]["familywise_95_lower"] < row["untouched_holdout"]["wilson_95_lower"]
     assert row["untouched_holdout"]["familywise_95_lower"] >= .8
     # A reviewable proposal still cannot write or activate any runtime artifact.

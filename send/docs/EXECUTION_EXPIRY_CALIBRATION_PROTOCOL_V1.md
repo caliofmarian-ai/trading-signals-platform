@@ -54,7 +54,10 @@ A proposal derives CONFIRM tolerance from the maximum observed training differen
 between the CONFIRM forecast and the selected OPEN expiry, widened if necessary
 to cover pressure over the governed model range. Every fixed holdout interval
 must contain its selected OPEN expiry. Exact minimum/maximum horizons follow that range.
-Proposals retain a source digest and source scope. They do not write
+Proposals retain a source digest and source scope. Each proposal also binds its
+exact severity level, score thresholds and variant
+parameter hash. Evidence from a counterfactual level must never be relabelled as
+validation of unchanged production thresholds. Proposals do not write
 `execution_calibration.json`, mutate thresholds, publish signals or call a broker.
 Source-scope drift cannot be mixed into the cohort. Deployment restarts do not
 erase already collected evidence.
