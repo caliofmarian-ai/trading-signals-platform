@@ -46,7 +46,7 @@ No source prices are invented. Paid checkout is unavailable when source prices a
 
 ## Signal engine and transport
 
-The engine is disabled by default. The dedicated app service can enable it independently and select a subset of the existing market catalog with `SIGNALS_APP_SYMBOLS` (default `EUR/USD`). Its own engine/config/state directories live on the app volume. Do not label an HTTP health check or a running loop as live signal acceptance.
+The engine is disabled by default. The dedicated app service can enable it independently and select a subset of the existing market catalog with `SIGNALS_APP_SYMBOLS` (default `GBP/USD`). Exactly one catalog symbol is accepted; a multi-symbol configuration is rejected before market requests. Its own engine/config/state directories live on the app volume. Do not label an HTTP health check or a running loop as live signal acceptance.
 
 To run the existing engine in an **independent process**, configure a member-distribution-capable existing market provider and set `SIGNALS_APP_ENGINE_ENABLED=1` **on the app service only**. The child seeds its own engine/config/state directories, imports `send/core/signal_engine.py`, and replaces only its own in-memory router boundary with the APP transport. It never starts `system_boot`, Telegram polling, or a broker worker. It clears Telegram credentials/destinations from its own environment before imports. The app transport preserves the existing Finnhub personal-use restriction and rejects member distribution for unsupported providers. A provider credential can be referenced from the existing Railway service without reading it into the browser or APK. This does not switch or redeploy the Telegram service.
 
@@ -87,7 +87,7 @@ Use a dedicated service, its own volume at `/app-data`, and the feature branch c
 | `SIGNALS_APP_SETUP_TOKEN` | Private, single-use owner bootstrap key |
 | `SIGNALS_APP_INGEST_TOKEN` | Private machine source key, at least 32 characters |
 | `SIGNALS_APP_ENGINE_ENABLED` | `0` by default; only `1` starts the isolated engine |
-| `SIGNALS_APP_SYMBOLS` | Comma-separated subset of the existing market catalog; default `EUR/USD` |
+| `SIGNALS_APP_SYMBOLS` | Exactly one symbol from the existing market catalog; default `GBP/USD` |
 | `SIGNALS_APP_ANDROID_SHA256` | Comma-separated signing-certificate SHA-256 fingerprints for Digital Asset Links |
 | `PORT` | HTTP listener, default 8765 |
 
@@ -117,3 +117,5 @@ I/O and survive restarts. These are app-local caps, not a verification of the
 provider account's subscription or of usage by other clients sharing its key.
 No subscription, payment or automatic upgrade is created. The dashboard shows
 the quota, reset time and unverified account-plan status.
+
+Approved provider assignment: the existing FINNHUB owner-calibration stream retains **EUR/USD**. The separate Twelve Data application worker uses **GBP/USD only**. The app-local 700-request daily cap and its persistent request ledger are retained; changing symbols does not reset the ledger or change any provider subscription. Existing records retain their original symbols and timestamps.

@@ -103,18 +103,19 @@ def test_old_loop_heartbeat_never_implies_real_market_health(tmp_path):
     assert AppService(store).status()['engine_state'] == 'NOT_CONNECTED'
 
 
-def test_app_runtime_isolated_and_catalog_selection_preserves_source(tmp_path, monkeypatch):
+@pytest.mark.parametrize('selected_symbol', ['EUR/USD', 'GBP/USD'])
+def test_app_runtime_isolated_and_catalog_selection_preserves_source(tmp_path, monkeypatch, selected_symbol):
     source = canonical.SEND/'config'/'active_symbols.json'
     original = source.read_bytes()
-    env = dict(os.environ, SIGNALS_APP_SYMBOLS='EUR/USD', TELEGRAM_BOT_TOKEN='do-not-copy',
+    env = dict(os.environ, SIGNALS_APP_SYMBOLS=selected_symbol, TELEGRAM_BOT_TOKEN='do-not-copy',
                FREE_CHANNEL_ID='-1234', ALGO_PARAMS_PATH='/unrelated/algo.json',
                ENGINE_EVENTS_LOG='/unrelated/events.jsonl', OWNER_SIGNAL_DELIVERY_ENABLED='1')
     monkeypatch.setattr(os, 'environ', env)
     engine, symbols = worker.prepare_runtime(tmp_path)
-    assert symbols == ['EUR/USD']
+    assert symbols == [selected_symbol]
     assert source.read_bytes() == original
     selected = json.loads((engine/'config'/'active_symbols.json').read_text())
-    assert selected['forex'] == ['EUR/USD'] and selected['crypto'] == []
+    assert selected['forex'] == [selected_symbol] and selected['crypto'] == []
     assert 'TELEGRAM_BOT_TOKEN' not in env and 'FREE_CHANNEL_ID' not in env
     assert env['ENABLE_TELEGRAM'] == env['ENABLE_BROKER_EXECUTION'] == env['OWNER_SIGNAL_DELIVERY_ENABLED'] == '0'
     for key in ['ALGO_PARAMS_PATH','ENGINE_EVENTS_LOG','DIST_EVENTS_LOG','OUTCOMES_LOG']:
@@ -125,6 +126,22 @@ def test_unknown_symbol_is_rejected_before_market_requests(tmp_path, monkeypatch
     monkeypatch.setattr(os, 'environ', dict(os.environ, SIGNALS_APP_SYMBOLS='UNKNOWN/PAIR'))
     with pytest.raises(ValueError, match='existing market catalog'):
         worker.prepare_runtime(tmp_path)
+
+
+def test_multiple_symbols_are_rejected_before_market_requests(tmp_path, monkeypatch):
+    monkeypatch.setattr(os, 'environ', dict(os.environ, SIGNALS_APP_SYMBOLS='GBP/USD,EUR/USD'))
+    with pytest.raises(ValueError, match='exactly one symbol'):
+        worker.prepare_runtime(tmp_path)
+
+
+def test_default_app_symbol_is_the_approved_gbpusd(tmp_path, monkeypatch):
+    env = dict(os.environ)
+    env.pop('SIGNALS_APP_SYMBOLS', None)
+    monkeypatch.setattr(os, 'environ', env)
+    engine, symbols = worker.prepare_runtime(tmp_path)
+    selected = json.loads((engine/'config'/'active_symbols.json').read_text())
+    assert symbols == ['GBP/USD']
+    assert selected['forex'] == ['GBP/USD'] and selected['crypto'] == []
 
 
 def test_existing_engine_candidate_reaches_app_only_transport(tmp_path, monkeypatch):

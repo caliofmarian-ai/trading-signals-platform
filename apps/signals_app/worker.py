@@ -59,9 +59,9 @@ def prepare_runtime(directory: Path):
         (engine/subdir).mkdir(exist_ok=True)
     catalog = json.loads((source/"active_symbols.json").read_text())
     known = {symbol for group in catalog.values() for symbol in group if isinstance(symbol, str)}
-    symbols = list(dict.fromkeys(s.strip().upper() for s in os.getenv("SIGNALS_APP_SYMBOLS", "EUR/USD").split(",") if s.strip()))
-    if not symbols or any(symbol not in known for symbol in symbols):
-        raise ValueError("Select symbols from the existing market catalog.")
+    symbols = list(dict.fromkeys(s.strip().upper() for s in os.getenv("SIGNALS_APP_SYMBOLS", "GBP/USD").split(",") if s.strip()))
+    if len(symbols) != 1 or any(symbol not in known for symbol in symbols):
+        raise ValueError("Select exactly one symbol from the existing market catalog.")
     selected = {group: [symbol for symbol in values if symbol in symbols] for group, values in catalog.items()}
     (config/"active_symbols.json").write_text(json.dumps(selected))
     # Deployment variables must never redirect this child's artifacts to another service's state.

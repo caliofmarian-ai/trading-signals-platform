@@ -106,3 +106,9 @@ pre-integration baseline. The full local existing-runtime suite passed 2,168
 tests, and required CI passed with the final merged source. Isolated bridge
 tests passed 3 and current expiry tests passed 20. No unrelated permission
 runtime or fixture change was included in this provider integration.
+
+## Single-symbol provider assignment — 2026-11-05
+
+Owner approved FINNHUB → EUR/USD and Twelve Data → GBP/USD, with exactly one symbol per provider. The dedicated app service's `SIGNALS_APP_SYMBOLS` is set to `GBP/USD`. The app worker now defaults to GBP/USD and rejects an empty, unknown or multi-symbol selection before making market requests. The existing FINNHUB service is not changed. The durable Twelve Data budget and the 700-request cap remain in force; no provider account/billing operation is performed.
+
+Targeted selection validation: **5 passed, 12 deselected** (`catalog_selection`, `unknown_symbol`, `multiple_symbols`, `default_app_symbol`). These verify both supported single-pair selections, immutable source catalog/isolation, rejection of multiple/unknown symbols and the approved GBP/USD default. Live data/evaluation acceptance is recorded separately after deployment.
