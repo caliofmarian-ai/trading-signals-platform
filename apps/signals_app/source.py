@@ -43,7 +43,7 @@ def snapshot(store, now=None):
         result.update(state="SOURCE_UNAVAILABLE", reason="WORKER_NOT_RESPONDING")
     if result["state"] == "OBSERVING":
         evaluation, market = result["last_evaluation_at"], result["last_market_data_at"]
-        if evaluation is None or not 0 <= now-evaluation <= 30 or market is None or not 0 <= now-market <= 90:
+        if evaluation is None or not 0 <= now-evaluation <= 90 or market is None or not 0 <= now-market <= 90:
             result.update(state="SOURCE_UNAVAILABLE", reason="MARKET_DATA_UNAVAILABLE")
     return result
 
@@ -51,6 +51,7 @@ def snapshot(store, now=None):
 class SourceMonitor:
     def __init__(self, store, symbols):
         self.store = store
+        self.evaluation_failed = False
         self.data = {"state": "STARTING", "reason": "STARTING", "provider": "TWELVE_DATA",
                      "symbols": list(symbols), "evaluations": 0, "last_evaluation_at": None,
                      "last_market_data_at": None, "last_decision": None,
@@ -62,6 +63,7 @@ class SourceMonitor:
         self.store.set_meta("source_status", self.data)
 
     def evaluation(self, decision, *, now=None):
+        self.evaluation_failed = False
         self.data["last_evaluation_at"] = int(time.time()) if now is None else int(now)
         self.data["evaluations"] += 1
         kind = getattr(decision, "kind", None)
@@ -81,11 +83,14 @@ class SourceMonitor:
                                                         if isinstance(item, dict)))
         evaluated = self.data.get("last_evaluation_at")
         observed = self.data.get("last_market_data_at")
-        if market == "MARKET_DATA_LIMITED":
+        if self.evaluation_failed:
+            self.data.update(state="SOURCE_UNAVAILABLE", reason="EVALUATION_NOT_READY")
+        elif market == "MARKET_DATA_LIMITED":
             self.data.update(state="SOURCE_LIMITED", reason="RATE_LIMITED")
         elif market == "MARKET_DATA_COLLECTING":
             self.data.update(state="SOURCE_WARMING", reason="COLLECTING_HISTORY")
-        elif market == "READY" and evaluated and 0 <= now-evaluated <= 15 and observed and 0 <= now-observed <= 90:
+        # The unchanged wide scheduler evaluates an unfocused symbol once per minute.
+        elif market == "READY" and evaluated and 0 <= now-evaluated <= 90 and observed and 0 <= now-observed <= 90:
             self.data.update(state="OBSERVING", reason="READY")
         else:
             self.data.update(state="SOURCE_UNAVAILABLE", reason="EVALUATION_NOT_READY" if market == "READY"

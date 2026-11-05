@@ -50,11 +50,35 @@ def test_upstream_data_problems_do_not_become_healthy_heartbeats(tmp_path, marke
 def test_stale_evaluations_and_stale_market_data_cannot_remain_green(tmp_path):
     monitor = SourceMonitor(Store(tmp_path), ['EUR/USD'])
     monitor.evaluation(SimpleNamespace(kind='PRE'), now=1000)
-    monitor.cycle({'market_data_state': 'READY', 'last_market_data_success_ts': 1000}, now=1016)
-    assert snapshot(monitor.store, now=1016)['state'] == 'SOURCE_UNAVAILABLE'
+    monitor.cycle({'market_data_state': 'READY', 'last_market_data_success_ts': 1090}, now=1091)
+    assert snapshot(monitor.store, now=1091)['state'] == 'SOURCE_UNAVAILABLE'
     monitor.evaluation(SimpleNamespace(kind='PRE'), now=1200)
     monitor.cycle({'market_data_state': 'READY', 'last_market_data_success_ts': 1000}, now=1200)
     assert snapshot(monitor.store, now=1200)['state'] == 'SOURCE_UNAVAILABLE'
+
+
+def test_minute_wide_scan_cadence_retains_health_until_actual_evidence_expires(tmp_path):
+    monitor = SourceMonitor(Store(tmp_path), ['EUR/USD'])
+    monitor.evaluation(SimpleNamespace(kind='NO_SIGNAL'), now=1000)
+    monitor.cycle({'market_data_state':'READY','last_market_data_success_ts':1000}, now=1060)
+    assert snapshot(monitor.store, now=1060)['state'] == 'OBSERVING'
+    monitor.evaluation_failed = True
+    monitor.cycle({'market_data_state':'READY','last_market_data_success_ts':1060}, now=1060)
+    assert snapshot(monitor.store, now=1060)['state'] == 'SOURCE_UNAVAILABLE'
+
+
+def test_history_transport_requests_utc_without_changing_authentication_or_shared_client():
+    calls = []
+    delegate = SimpleNamespace(get=lambda url, **kw: calls.append((url,kw)), exceptions=object())
+    adapter = worker.UtcMarketHttp(delegate, 'https://provider.invalid/time_series')
+    params = {'apikey':'fixture-only','symbol':'EUR/USD'}
+    adapter.get('https://provider.invalid/time_series',params=params,timeout=20)
+    assert calls[0][1]['params'] == dict(params,timezone='UTC')
+    assert params == {'apikey':'fixture-only','symbol':'EUR/USD'}
+    assert calls[0][1]['timeout'] == 20
+    assert adapter.exceptions is delegate.exceptions
+    adapter.get('https://provider.invalid/other',params=params)
+    assert calls[1][1]['params'] is params
 
 
 def test_source_restart_drops_old_readiness_and_keeps_no_raw_runtime_secrets(tmp_path):
@@ -106,6 +130,7 @@ def test_unknown_symbol_is_rejected_before_market_requests(tmp_path, monkeypatch
 def test_existing_engine_candidate_reaches_app_only_transport(tmp_path, monkeypatch):
     import core
     from core import market_data_provider_control, storage
+    from runtime import market_client
     from apps.signals_app.tests.test_app import candidate
     now = int(time.time())
     fake = SimpleNamespace(decide=lambda **kwargs: SimpleNamespace(decision=SimpleNamespace(kind='PRE')),
@@ -115,6 +140,8 @@ def test_existing_engine_candidate_reaches_app_only_transport(tmp_path, monkeypa
         fake.distribution_router.route(canonical.signal(candidate()), now_ts=now)
     fake.run_once = tick
     monkeypatch.setattr(core, 'signal_engine', fake, raising=False)
+    # The worker's HTTP adapter binding must not escape this process-isolation fixture.
+    monkeypatch.setattr(market_client, 'requests', market_client.requests)
     monkeypatch.setitem(sys.modules, 'core.signal_engine', fake)
     monkeypatch.setattr(market_data_provider_control, 'get_active_provider', lambda: 'TWELVE_DATA')
     monkeypatch.setattr(market_data_provider_control, 'provider_ready', lambda _: (True,'READY'))

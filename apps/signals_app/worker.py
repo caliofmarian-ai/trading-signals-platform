@@ -12,6 +12,20 @@ import time
 import traceback
 
 
+class UtcMarketHttp:
+    """Specify the timezone already assumed by the shared REST candle parser."""
+    def __init__(self, delegate, history_url):
+        self.delegate, self.history_url = delegate, history_url
+
+    def __getattr__(self, name):
+        return getattr(self.delegate, name)
+
+    def get(self, url, **kwargs):
+        if url == self.history_url:
+            kwargs["params"] = dict(kwargs.get("params") or {}, timezone="UTC")
+        return self.delegate.get(url, **kwargs)
+
+
 def prepare_runtime(directory: Path):
     directory = directory.resolve()
     engine = directory / "engine"
@@ -75,7 +89,9 @@ def run_engine(monitor):
     from .service import AppService
     from core import signal_engine
     from core import market_data_provider_control
+    from runtime import market_client
     service = AppService(store)
+    market_client.requests = UtcMarketHttp(market_client.requests, market_client.BASE_URL)
 
     class AppRouter:
         @staticmethod
@@ -92,6 +108,7 @@ def run_engine(monitor):
         try:
             result = decide(**kwargs)
         except Exception as exc:
+            monitor.evaluation_failed = True
             frame = traceback.extract_tb(exc.__traceback__)[-1]
             # Pure strategy inputs contain candles/parameters, never source credentials.
             # Emit only the public code location and exception class, not values/messages.

@@ -95,6 +95,8 @@ def create_app(directory: Path | None = None, *, public_url: str | None = None,
         })
         if request.url.path.startswith("/api/") or request.url.path == "/sw.js":
             response.headers["Cache-Control"]="no-store"
+        elif request.url.path.startswith("/assets/"):
+            response.headers["Cache-Control"]="no-cache"
         if parsed.scheme == "https":
             response.headers["Strict-Transport-Security"]="max-age=31536000"
         return response
