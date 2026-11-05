@@ -46,6 +46,7 @@ WIDE_SCAN_CYCLE_SECONDS = 60
 _LAST_PARAM_ERROR_SIGNATURE: Optional[str] = None
 _SHADOW_RESEARCH_LAST_WARNING_TS: Optional[int] = None
 _TIMEBOX_RESEARCH_LAST_WARNING_TS: Optional[int] = None
+_OWNER_TIMING_LAST_WARNING_TS: Optional[int] = None
 _LAST_CALIBRATION_STATE: Dict[str, Dict[str, Any]] = {}
 _LAST_M1_SPEED_EVIDENCE_TS: Dict[str, float] = {}
 
@@ -107,6 +108,23 @@ def _observe_shadow_research(decision, handoff, *, params=None) -> None:
                 )
             except Exception:
                 pass
+
+
+def _observe_owner_timing_session(decision, handoff, execution_time, params) -> None:
+    global _OWNER_TIMING_LAST_WARNING_TS
+    try:
+        from intelligence import owner_timing_session
+        owner_timing_session.observe_evaluation(
+            decision, handoff, execution_time, now_ts=time.time(),
+            parameter_sha256=runtime_execution_calibration.algo_params_sha256(params),
+        )
+    except Exception as exc:
+        now = int(time.time())
+        if _OWNER_TIMING_LAST_WARNING_TS is None or now - _OWNER_TIMING_LAST_WARNING_TS >= 300:
+            _OWNER_TIMING_LAST_WARNING_TS = now
+            print("TSP_OWNER_TIMING_SESSION_UNAVAILABLE " + json.dumps({
+                "observed_at": now, "error_class": type(exc).__name__,
+            }, sort_keys=True), flush=True)
 
 # Bound repeated HTTP 429 observability noise without changing the provider,
 # backoff, scan schedule, or fail-closed behavior. The first failure is always
@@ -750,6 +768,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
             _observe_shadow_research(decision, persistent_fsm, params=params)
             _observe_timebox_diagnostics(decision, persistent_fsm, evaluation.execution_time,
                                          now_ts=time.time())
+            _observe_owner_timing_session(decision, persistent_fsm, evaluation.execution_time, params)
 
             if decision.kind in ACTIONABLE_DECISION_KINDS:
                 execution = prepare_signal_execution(

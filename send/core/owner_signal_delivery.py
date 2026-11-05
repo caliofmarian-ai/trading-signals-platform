@@ -150,6 +150,8 @@ def record_acceptance(event: dict[str, Any], response: dict[str, Any], *,
         **gaps, "phone_receipt_proven": False, "broker_executed": False,
     }
     print("TSP_OWNER_SIGNAL_TIMING " + json.dumps(evidence, sort_keys=True), flush=True)
+    from intelligence import owner_timing_session
+    owner_timing_session.observe_receipt(evidence, now_ts=accepted_ts)
     return evidence
 
 
@@ -184,6 +186,8 @@ def audit_evidence(user_id: int) -> dict[str, Any]:
         return {"status": "PERSONAL_DELIVERY_NOT_ENABLED_FOR_OWNER"}
     result: dict[str, Any] = {"status": "UNAVAILABLE", "broker_executed": False}
     try:
+        from intelligence import owner_timing_session
+        result["timing_session"] = owner_timing_session.summary(now_ts=time.time())
         path = _timing_path()
         result["delivery_timing"] = _read_object(path, MAX_TIMING_BYTES) if path.exists() else {"opportunities": {}}
         from core import market_data_provider_control, runtime_param_gate

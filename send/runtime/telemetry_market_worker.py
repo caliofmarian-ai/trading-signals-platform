@@ -171,6 +171,16 @@ def telemetry_market_loop(
             )
         # This experiment has separate storage and labels. It cannot register
         # canonical telemetry, supply execution calibration or publish a signal.
+        try:
+            from intelligence import owner_timing_session
+            owner_timing_session.report_if_due(now_ts=float(clock()))
+        except Exception as exc:
+            _warn_once_per_window(
+                warning_cache, "owner_timing_session", now_ts=float(clock()),
+                warn_type="OWNER_TIMING_SESSION_REPORT_UNAVAILABLE",
+                message="Private timing observation report could not be delivered",
+                context={"error_class": type(exc).__name__},
+            )
         if shadow_research.enabled():
             try:
                 research_result = shadow_research.run_cycle(
