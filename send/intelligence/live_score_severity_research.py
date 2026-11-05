@@ -18,12 +18,14 @@ from core.scoring_model import evaluate_score
 from core.strategy_v2 import BinaryStrategyV2Evaluation
 from core.v2_fsm_orchestrator import advance_persistent_fsm, current_opportunity_signal_id
 from intelligence.signal_severity_scale import BASELINE_LEVEL, LEVELS, score_thresholds
+from intelligence import model_time_paper_trades as paper
 from state_store.state_store import default_fsm_state
 
 
-PROTOCOL = "LIVE_SCORE_SEVERITY_RESEARCH_V1"
+PROTOCOL = "LIVE_SCORE_SEVERITY_RESEARCH_V2"
 DURATION_SECONDS = 7200
-MAX_BYTES = 1024 * 1024
+MAX_BYTES = 4 * 1024 * 1024
+MIN_PRE_LEAD_SECONDS = 30
 STAGES = ("PRE", "CONFIRM", "OPEN_NOW")
 PAIRS = {"pre_to_confirm_seconds": ("PRE", "CONFIRM"),
          "confirm_to_open_seconds": ("CONFIRM", "OPEN_NOW"),
@@ -37,7 +39,9 @@ def _path() -> Path | None:
         or os.getenv("SHADOW_MODEL_TIME_RESEARCH_ENABLED", "").lower() not in {"true", "1", "yes", "on"}
         or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", session) is None):
         return None
-    directory = Path(storage.root_path("analytics", "live_score_severity_research"))
+    # Preserve V1's closed evidence. V2 adds an explicit ordered-request policy
+    # and prospective outcomes; the two experiments must never be pooled.
+    directory = Path(storage.root_path("analytics", "live_score_severity_research_v2"))
     path = directory / (session + ".json")
     if directory.is_symlink() or path.is_symlink():
         raise ValueError("INVALID_SEVERITY_EVIDENCE_PATH")
@@ -68,6 +72,7 @@ def _read(path: Path) -> dict | None:
         or re.fullmatch(r"[0-9a-f]{64}", value["parameter_sha256"]) is None):
         raise ValueError("INVALID_SEVERITY_BASELINE")
     for row in value["levels"]:
+        paper.validate(row["paper_trades"])
         n = row["evaluations"]
         if type(n) is not int or not 0 <= n <= 100000:
             raise ValueError("INVALID_SEVERITY_COUNTER")
@@ -116,6 +121,7 @@ def _new(params, evaluation, now: float, buffer_mode: str) -> dict:
                         "fsm_reason_families": {}, "accepted_unique_stages": {},
                         "complete_ordered_chains": 0, "stage_gap_samples": [],
                         "stage_pair_gap_samples": {name: [] for name in PAIRS},
+                        "paper_trades": paper.new_ledger(),
                         "fsm_state": default_fsm_state(), "opportunities": {}}
                        for level in LEVELS]}
 
@@ -123,16 +129,20 @@ def _new(params, evaluation, now: float, buffer_mode: str) -> dict:
 def _summary(state: dict, now: float) -> dict:
     return {"protocol": PROTOCOL, "truth_domain": "LIVE_COUNTERFACTUAL_RESEARCH",
             "status": "PAUSED_BASELINE_CHANGED" if state["baseline_changed"] else
+                      "SETTLING" if now >= state["deadline_ts"] and any(
+                          paper.pending(row["paper_trades"]) for row in state["levels"]) else
                       "COMPLETE" if now >= state["deadline_ts"] else "OBSERVING",
             **{key: state[key] for key in ("started_ts", "deadline_ts", "parameter_sha256",
                                           "baseline_changed", "last_evaluation_ts")},
             "baseline_level": BASELINE_LEVEL, "tested_dimension": "CLASSICAL_SCORE_THRESHOLDS_ONLY",
+            "stage_request_policy": "SCORE_CEILING_THEN_PRE_CONFIRM_OPEN_WITH_30S_PRE_LEAD",
+            "outcome_observation_policy": "PROSPECTIVE_MARKET_TICKS_AT_CANONICAL_MODEL_TIME",
             "provider": "FINNHUB", "symbol": "EUR/USD", "buffer_mode": state["buffer_mode"],
-            "levels": [{key: row[key] for key in (
+            "levels": [{**{key: row[key] for key in (
                 "level", "score_thresholds", "evaluations", "decision_kinds", "blockers",
                 "fsm_reason_families", "accepted_unique_stages", "complete_ordered_chains", "stage_gap_samples",
                 "stage_pair_gap_samples"
-            )} for row in state["levels"]],
+            )}, "paper_trades": paper.summary(row["paper_trades"])} for row in state["levels"]],
             "stage_gap_sample_scope": "LAST_32_COMPLETE_RESEARCH_CHAINS_PER_LEVEL",
             "stage_pair_gap_sample_scope": "LAST_32_FIRST_ACCEPTED_STAGE_PAIRS_PER_LEVEL_INCLUDING_INCOMPLETE_CHAINS",
             "actual_telegram_publications": 0, "broker_executed": False,
@@ -140,7 +150,8 @@ def _summary(state: dict, now: float) -> dict:
             "automatic_selection_allowed": False,
             "limitations": ["Independent research FSM histories are not actual production deliveries.",
                             "Score severity leaves all non-score hard gates unchanged.",
-                            "No outcome or efficacy is inferred from stage counts."]}
+                            "Paper results use real market ticks and Model Time, not calibrated Execution Time.",
+                            "Stage counts alone do not establish efficacy; paired levels share correlated observations."]}
 
 
 def summary(*, now_ts: float) -> dict | None:
@@ -152,7 +163,7 @@ def summary(*, now_ts: float) -> dict | None:
 def _observe_accepted_stage(row, decision, handoff, now_ts: float) -> None:
     if handoff.stage_handoff_ready and handoff.accepted_stage in STAGES:
         opportunities = row["opportunities"]
-        stages = opportunities.setdefault(decision.signal_id, {})
+        stages = opportunities.setdefault(decision.signal_id, {"direction": decision.setup.direction})
         stage = handoff.accepted_stage
         if stage not in stages:
             stages[stage] = now_ts
@@ -167,8 +178,57 @@ def _observe_accepted_stage(row, decision, handoff, now_ts: float) -> None:
                         "confirm_to_open_seconds": stages["OPEN_NOW"] - stages["CONFIRM"],
                         "pre_to_open_seconds": stages["OPEN_NOW"] - stages["PRE"]}
                 row["stage_gap_samples"] = (row["stage_gap_samples"] + [gaps])[-32:]
+                if stage == "OPEN_NOW" and stages["direction"] == decision.setup.direction:
+                    paper.register(row["paper_trades"], decision, handoff, now_ts=now_ts)
         while len(opportunities) > 128:
             del opportunities[next(iter(opportunities))]
+
+
+def _maximum_stage(row: dict, fsm: dict, symbol: str, now_ts: float, direction: str) -> str:
+    """Request a scored stage in order; the canonical FSM still accepts it.
+
+    Score thresholds are eligibility floors, not an instruction to skip PRE
+    when the first observation already exceeds the OPEN threshold. All levels
+    use the same prospective policy. Production callers keep their defaults.
+    """
+    identity = current_opportunity_signal_id(fsm, symbol)
+    stages = row["opportunities"].get(identity, {})
+    symbol_state = (fsm.get("per_symbol") or {}).get(symbol, {})
+    if (symbol_state.get("state") not in {"WATCHLIST", "CONFIRMED"} or "PRE" not in stages
+        or stages.get("direction") != direction):
+        return "PRE"
+    if "CONFIRM" not in stages or now_ts < stages["PRE"] + MIN_PRE_LEAD_SECONDS:
+        return "CONFIRM"
+    return "OPEN_NOW"
+
+
+def advance_paper_trades(*, now_ts: float, active_provider: str, price_loader) -> dict | None:
+    """Settle already registered paper ideas even after collection has closed."""
+    path = _path()
+    if path is None:
+        return None
+    if type(now_ts) not in {int, float} or not math.isfinite(now_ts) or now_ts <= 0:
+        raise ValueError("INVALID_PAPER_OBSERVATION_TIME")
+    with storage.with_lock("live_score_severity_research", timeout_sec=0.2):
+        state = _read(path)
+        if state is None or not any(paper.pending(row["paper_trades"]) for row in state["levels"]):
+            return None
+        sample = None
+        if active_provider == "FINNHUB":
+            try:
+                sample = price_loader("EUR/USD")
+            except Exception:
+                pass  # A missed observation becomes UNKNOWN at its deadline.
+        changed = False
+        for row in state["levels"]:
+            changed = paper.advance(row["paper_trades"], sample, now_ts=now_ts,
+                                    active_provider=active_provider) or changed
+        if not changed:
+            return None
+        _save(path, state)
+        report = _summary(state, now_ts)
+    print("TSP_LIVE_SCORE_PAPER_TRADES " + json.dumps(report, sort_keys=True), flush=True)
+    return report
 
 
 def observe(evaluation: BinaryStrategyV2Evaluation, params: dict, *, now_ts: float, provider: str, buffer_mode: str) -> None:
@@ -202,7 +262,9 @@ def observe(evaluation: BinaryStrategyV2Evaluation, params: dict, *, now_ts: flo
                     evaluation.market, evaluation.corridor, evaluation.time, score,
                     timeframe=evaluation.decision.setup.timeframe,
                     cycle_id=evaluation.cycle_id, source="live_score_severity_research",
-                    opportunity_signal_id=current_opportunity_signal_id(fsm, evaluation.market.symbol))
+                    opportunity_signal_id=current_opportunity_signal_id(fsm, evaluation.market.symbol),
+                    maximum_stage=_maximum_stage(row, fsm, evaluation.market.symbol, now_ts,
+                                                 evaluation.market.direction_bias))
                 handoff = advance_persistent_fsm(fsm, decision, now_ts=int(now_ts))
                 row["fsm_state"] = handoff.next_state
                 row["evaluations"] += 1

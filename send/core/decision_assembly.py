@@ -79,6 +79,7 @@ def assemble_decision(
     cycle_id: str,
     source: str = "binary_strategy_v2",
     opportunity_signal_id: Optional[str] = None,
+    maximum_stage: Optional[str] = None,
 ) -> DecisionObject:
     """Create the standardized pre-FSM contract without making an FSM decision."""
 
@@ -158,6 +159,16 @@ def assemble_decision(
         "hard_blockers": blockers,
     })
     kind = _decision_kind(scoring)
+    if maximum_stage is not None:
+        stages = ("PRE", "CONFIRM", "OPEN_NOW")
+        if maximum_stage not in stages:
+            raise DecisionAssemblyUnavailable("maximum_stage must be a canonical signal stage")
+        # A prospective research caller may request an earlier lifecycle stage
+        # while preserving the exact score and every hard gate. This ceiling
+        # cannot promote a weak/rejected setup or change production defaults.
+        if kind in stages and stages.index(kind) > stages.index(maximum_stage):
+            kind = maximum_stage
+            explanations += (f"Research lifecycle request is capped at {maximum_stage}.",)
     normalized_timeframe = timeframe.strip().upper()
     signal_id = None
     if kind in ACTIONABLE_DECISION_KINDS:
