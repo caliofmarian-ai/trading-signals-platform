@@ -251,13 +251,17 @@ def summary(*, now_ts: float) -> dict | None:
     return _summary(state, now_ts) if state is not None else None
 
 
-def _observe_accepted_stage(row, decision, handoff, now_ts: float) -> None:
+def _observe_accepted_stage(row, decision, handoff, now_ts: float) -> dict | None:
+    calibration_entry = None
     if handoff.stage_handoff_ready and handoff.accepted_stage in STAGES:
         opportunities = row["opportunities"]
         stages = opportunities.setdefault(decision.signal_id, {"direction": decision.setup.direction})
         stage = handoff.accepted_stage
         if stage not in stages:
             stages[stage] = now_ts
+            model = decision.time.model_expiry
+            if type(model) in {int, float} and math.isfinite(model) and model > 0:
+                stages.setdefault("model_time_by_stage", {})[stage] = model * 60
             row["accepted_unique_stages"][stage] = row["accepted_unique_stages"].get(stage, 0) + 1
             for name, (before, after) in PAIRS.items():
                 if stage == after and before in stages and stages[before] <= now_ts:
@@ -270,9 +274,15 @@ def _observe_accepted_stage(row, decision, handoff, now_ts: float) -> None:
                         "pre_to_open_seconds": stages["OPEN_NOW"] - stages["PRE"]}
                 row["stage_gap_samples"] = (row["stage_gap_samples"] + [gaps])[-32:]
                 if stage == "OPEN_NOW" and stages["direction"] == decision.setup.direction:
-                    paper.register(row["paper_trades"], decision, handoff, now_ts=now_ts)
+                    if paper.register(row["paper_trades"], decision, handoff, now_ts=now_ts):
+                        calibration_entry = {"level":row["level"], "direction":decision.setup.direction,
+                            "created_ts":now_ts, "pre_ts":stages["PRE"], "confirm_ts":stages["CONFIRM"],
+                            "open_ts":stages["OPEN_NOW"], "model_seconds":model * 60,
+                            "adjusted_seconds":decision.time.t_needed_adjusted * 60,
+                            "confirm_model_seconds":stages.get("model_time_by_stage", {}).get("CONFIRM")}
         while len(opportunities) > 128:
             del opportunities[next(iter(opportunities))]
+    return calibration_entry
 
 
 def _maximum_stage(row: dict, fsm: dict, symbol: str, now_ts: float, direction: str) -> str:
@@ -331,6 +341,7 @@ def observe(evaluation: BinaryStrategyV2Evaluation, params: dict, *, now_ts: flo
         raise ValueError("INVALID_SEVERITY_OBSERVATION_TIME")
     if buffer_mode not in {"SMALL", "MEDIUM", "LARGE"}:
         raise ValueError("INVALID_SEVERITY_BUFFER_MODE")
+    calibration_entries = []
     with storage.with_lock("live_score_severity_research", timeout_sec=0.2):
         loaded = _read(path)
         state = loaded or _new(params, evaluation, now_ts, buffer_mode)
@@ -367,7 +378,9 @@ def observe(evaluation: BinaryStrategyV2Evaluation, params: dict, *, now_ts: flo
                     counts = Counter(row[key])
                     counts.update(items)
                     row[key] = dict(counts)
-                _observe_accepted_stage(row, decision, handoff, now_ts)
+                calibration_entry = _observe_accepted_stage(row, decision, handoff, now_ts)
+                if calibration_entry is not None:
+                    calibration_entries.append(calibration_entry)
             state["last_evaluation_ts"] = now_ts
             observed = True
         slot = int((now_ts - state["started_ts"]) // REPORT_SECONDS)
@@ -378,3 +391,7 @@ def observe(evaluation: BinaryStrategyV2Evaluation, params: dict, *, now_ts: flo
         _save(path, state)
     if report:
         print("TSP_LIVE_SCORE_SEVERITY " + json.dumps(_summary(state, now_ts), sort_keys=True), flush=True)
+    if calibration_entries:
+        from intelligence import execution_expiry_calibration
+        execution_expiry_calibration.capture(calibration_entries, params=params, buffer_mode=buffer_mode,
+            strategy_version=evaluation.strategy_version, canonical_spec=evaluation.canonical_spec, now_ts=now_ts)
