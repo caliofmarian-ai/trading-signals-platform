@@ -53,6 +53,7 @@ def decide(
     cycle_id: Optional[str] = None,
     runtime_blockers: Iterable[str] = (),
     execution_calibration: Optional[ExecutionCalibration] = None,
+    observation_ts: Optional[float] = None,
 ) -> BinaryStrategyV2Evaluation:
     """Evaluate one complete V2 decision cycle from real candle evidence.
 
@@ -70,7 +71,10 @@ def decide(
     ).strip()
     timeframe = str(supplied_context.get("decision_timeframe") or "M1").strip().upper()
 
-    market = evaluate_market(candles_m1, candles_m5, params, buffer_mode=buffer_mode)
+    market = evaluate_market(
+        candles_m1, candles_m5, params, buffer_mode=buffer_mode,
+        observation_ts=observation_ts,
+    )
     corridor = evaluate_corridor(candles_m5, market, params)
     time_result = evaluate_time(market, corridor, params)
     scoring = evaluate_score(market, corridor, time_result, params)

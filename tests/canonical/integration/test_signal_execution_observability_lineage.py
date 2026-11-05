@@ -81,13 +81,23 @@ def test_real_run_once_logging_cannot_abort_before_governed_distribution(
     canonical_runtime_root, monkeypatch, stage, calibrated,
 ):
     from core import signal_engine as engine
+    from core.market_model import M1SpeedWindowEvidence
     from runtime import market_client
 
     state, decision, _, execution_time, expected = _prepare(stage, calibrated)
     evaluation = SimpleNamespace(
         decision=decision, cycle_id=decision.setup.cycle_id, strategy_version="2.0.0",
         canonical_spec="ALGO_SPEC_v3.0.0", execution_time=execution_time,
-        market=SimpleNamespace(evidence=SimpleNamespace(average_m1_range=.0003, minimum_m1_range=.00025, atr_m5=.0008)),
+        market=SimpleNamespace(
+            symbol="EUR/USD", evaluated_ts=NOW,
+            evidence=SimpleNamespace(
+                average_m1_range=.0003, minimum_m1_range=.00025, atr_m5=.0008,
+                m1_speed_window=M1SpeedWindowEvidence(
+                    "COMPLETED_M1_INTERVALS_V1", 21, 20, NOW - 21 * 60,
+                    NOW - 20 * 60, NOW, float(NOW), "PROVIDER_FLAGS_AND_OBSERVATION_TIME",
+                ),
+            ),
+        ),
         corridor=SimpleNamespace(evidence=SimpleNamespace(required_distance=.0008, room_ratio=2.0, support_levels=(1.11,), resistance_levels=(1.12,))),
     )
     monkeypatch.setenv("MARKET_DATA_PROVIDER", "FINNHUB")

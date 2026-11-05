@@ -45,7 +45,8 @@ def normalize(raw: Any, symbol: str, timeframe: str) -> List[Dict[str, Any]]:
         "high": float,
         "low": float,
         "close": float,
-        "volume": float|None
+        "volume": float|None,
+        "complete": bool       # optional; preserve provider closure evidence
       }
 
     Ordering: newest-first (candles[0] is newest).
@@ -90,18 +91,21 @@ def normalize(raw: Any, symbol: str, timeframe: str) -> List[Dict[str, Any]]:
         if ts is None or o is None or h is None or l is None or c is None:
             continue
 
-        out.append(
-            {
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "ts": ts,
-                "open": o,
-                "high": h,
-                "low": l,
-                "close": c,
-                "volume": v,
-            }
-        )
+        candle = {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "ts": ts,
+            "open": o,
+            "high": h,
+            "low": l,
+            "close": c,
+            "volume": v,
+        }
+        if "complete" in it:
+            if not isinstance(it["complete"], bool):
+                raise ValueError("candle.complete must be boolean when supplied")
+            candle["complete"] = it["complete"]
+        out.append(candle)
 
     # Ensure newest-first
     out.sort(key=lambda x: x["ts"], reverse=True)
@@ -127,6 +131,8 @@ def validate(candles: List[Dict[str, Any]]) -> None:
         for k in req:
             if k not in c or c[k] is None:
                 raise ValueError(f"candle[{i}] missing field {k}")
+        if "complete" in c and not isinstance(c["complete"], bool):
+            raise ValueError(f"candle[{i}].complete must be boolean when supplied")
 
     # Newest-first
     for i in range(1, len(candles)):

@@ -191,6 +191,7 @@ def collect_historical_strategy_probe(
             params=params,
             buffer_mode=buffer_mode,
             context={"decision_timeframe": "M1", "cycle_id": "HISTORICAL_READONLY_PROBE"},
+            observation_ts=cutoff_ts,
         )
         if evaluation.canonical_spec != "ALGO_SPEC_v3.0.0" or evaluation.signal_handoff_ready:
             return _report("UNEXPECTED_STRATEGY_AUTHORITY_OR_HANDOFF")

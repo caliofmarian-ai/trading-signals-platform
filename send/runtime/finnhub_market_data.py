@@ -16,7 +16,7 @@ FINNHUB_SYMBOL = "OANDA:EUR_USD"
 MAX_CANDLES = 500
 DEFAULT_MIN_CANDLES = 201
 # M1 feeds RSI and the 20-interval directional-speed window; EMA200 uses M5.
-DEFAULT_MIN_M1_CANDLES = 21
+DEFAULT_MIN_M1_CANDLES = 22  # 21 closed bars plus the currently forming M1 bar
 # Transport guardrails; these never replace quote freshness or history gates.
 STREAM_READ_POLL_SECONDS = 5
 STREAM_PING_INTERVAL_SECONDS = 20
