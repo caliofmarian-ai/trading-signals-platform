@@ -1,0 +1,158 @@
+"""Restart-safe two-hour Owner timing observation, never parameter promotion."""
+
+from __future__ import annotations
+
+from collections import Counter
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import re
+from typing import Any
+
+from core import storage
+
+
+DURATION_SECONDS = 2 * 60 * 60
+REPORT_SECONDS = 15 * 60
+MAX_BYTES = 64 * 1024
+
+
+def _path() -> Path | None:
+    from core.owner_signal_delivery import destination
+    session = os.getenv("OWNER_TIMING_SESSION_ID", "")
+    if destination() is None or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", session) is None:
+        return None
+    return Path(storage.root_path("analytics", "owner_timing_sessions", session + ".json"))
+
+
+def _read(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("INVALID_SESSION_SOURCE")
+    with path.open("rb") as handle:
+        raw = handle.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
+        raise ValueError("SESSION_SOURCE_TOO_LARGE")
+    result = json.loads(raw)
+    if not isinstance(result, dict) or result.get("protocol") != "OWNER_TIMING_SESSION_V1":
+        raise ValueError("INVALID_SESSION_STATE")
+    return result
+
+
+def _new(now_ts: float, parameter_sha256: str) -> dict[str, Any]:
+    return {
+        "protocol": "OWNER_TIMING_SESSION_V1", "started_ts": now_ts,
+        "deadline_ts": now_ts + DURATION_SECONDS, "evaluations": 0,
+        "decision_kinds": {}, "blockers": {}, "fsm_accepted_stage_evaluations": {},
+        "private_published_stages": {}, "execution_expiry_available": 0,
+        "api_request_seconds": [], "last_report_slot": -1,
+        "last_evaluation_ts": None, "last_publication_ts": None,
+        "parameter_sha256": parameter_sha256, "baseline_changed": False,
+        "activity_gate_model": "NORMALIZED_M1_RANGE_OVER_M5_ATR14_020",
+    }
+
+
+def observe_evaluation(decision, handoff, execution_time, *, now_ts: float, parameter_sha256: str) -> None:
+    path = _path()
+    if path is None:
+        return
+    with storage.with_lock("owner_timing_session"):
+        state = _read(path) or _new(now_ts, parameter_sha256)
+        if now_ts < state["started_ts"] or now_ts >= state["deadline_ts"]:
+            return
+        if state["parameter_sha256"] != parameter_sha256:
+            state["baseline_changed"] = True
+            storage.save_json_atomic(str(path), state)
+            return
+        if state["baseline_changed"]:
+            return
+        state["evaluations"] += 1
+        kinds = Counter(state["decision_kinds"])
+        kinds[decision.kind] += 1
+        state["decision_kinds"] = dict(kinds)
+        blockers = Counter(state["blockers"])
+        blockers.update(decision.reject.hard_blockers)
+        state["blockers"] = dict(blockers)
+        if handoff.stage_handoff_ready:
+            stages = Counter(state["fsm_accepted_stage_evaluations"])
+            stages[handoff.accepted_stage] += 1
+            state["fsm_accepted_stage_evaluations"] = dict(stages)
+        state["execution_expiry_available"] += int(execution_time.available)
+        state["last_evaluation_ts"] = now_ts
+        storage.save_json_atomic(str(path), state)
+
+
+def observe_receipt(evidence: dict[str, Any], *, now_ts: float) -> None:
+    path = _path()
+    if path is None:
+        return
+    with storage.with_lock("owner_timing_session"):
+        state = _read(path)
+        if state is None or state["baseline_changed"] or not state["started_ts"] <= now_ts < state["deadline_ts"]:
+            return
+        stages = Counter(state["private_published_stages"])
+        stages[evidence["stage"]] += 1
+        state["private_published_stages"] = dict(stages)
+        # Bounded transport samples; the totals above are not truncated.
+        state["api_request_seconds"] = (state["api_request_seconds"] + [evidence["api_request_seconds"]])[-512:]
+        state["last_publication_ts"] = now_ts
+        storage.save_json_atomic(str(path), state)
+
+
+def _summary(state: dict[str, Any], now_ts: float) -> dict[str, Any]:
+    times = sorted(state["api_request_seconds"])
+    return {
+        **{k: state[k] for k in ("protocol", "started_ts", "deadline_ts", "evaluations",
+                                "decision_kinds", "blockers", "fsm_accepted_stage_evaluations",
+                                "private_published_stages", "execution_expiry_available",
+                                "last_evaluation_ts", "last_publication_ts", "parameter_sha256",
+                                "baseline_changed", "activity_gate_model")},
+        "status": ("COMPLETE" if now_ts >= state["deadline_ts"] else "PAUSED_BASELINE_CHANGED" if state["baseline_changed"] else "OBSERVING"),
+        "api_timing_sample_count": len(times),
+        "api_request_p50_seconds": times[len(times)//2] if times else None,
+        "api_request_p95_seconds": times[min(len(times)-1, int((len(times)-1)*.95))] if times else None,
+        "execution_calibration_proven": False, "parameters_changed": False,
+        "broker_executed": False, "phone_receipt_proven": False,
+    }
+
+
+def summary(*, now_ts: float) -> dict[str, Any] | None:
+    path = _path()
+    if path is None:
+        return None
+    state = _read(path)
+    return _summary(state, now_ts) if state is not None else None
+
+
+def report_if_due(*, now_ts: float) -> dict[str, Any] | None:
+    path = _path()
+    if path is None:
+        return None
+    with storage.with_lock("owner_timing_session"):
+        state = _read(path)
+        if state is None or now_ts < state["started_ts"]:
+            return None
+        slot = min(8, int((now_ts - state["started_ts"]) // REPORT_SECONDS))
+        if slot <= state["last_report_slot"]:
+            return None
+        # Reserve before transport. A restart cannot repeatedly send the same
+        # progress slot; a failed notification is not signal publication.
+        state["last_report_slot"] = slot
+        storage.save_json_atomic(str(path), state)
+        report = _summary(state, now_ts)
+    from core import telegram_publisher
+    from core.owner_signal_delivery import destination
+    counts = report["private_published_stages"]
+    text = ("Timing observation " + ("complete" if report["status"] == "COMPLETE" else f"{slot*15}/120 minutes")
+            + "\nEnds: " + datetime.fromtimestamp(report["deadline_ts"], timezone.utc).strftime("%H:%M:%S UTC")
+            + f"\nReal evaluations: {report['evaluations']}"
+            + f"\nPrivate deliveries: PRE {counts.get('PRE', 0)}, CONFIRM {counts.get('CONFIRM', 0)}, OPEN_NOW {counts.get('OPEN_NOW', 0)}"
+            + "\nExecution-expiry calibration remains unproven. No automatic parameter change.")
+    if report["baseline_changed"]:
+        text += "\nObservation paused after a parameter change; samples were not mixed."
+    result = telegram_publisher.send_message(chat_id=destination(), text=text)
+    report["notification_api_accepted"] = result.get("ok") is True
+    print("TSP_OWNER_TIMING_SESSION " + json.dumps(report, sort_keys=True), flush=True)
+    return report
