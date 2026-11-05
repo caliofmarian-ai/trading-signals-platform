@@ -372,6 +372,20 @@ def private_calibration_evidence() -> dict:
         rows = []
         for path in paths:
             row = _record(root, path.stem, read_budget=budget)
+            # The source validator primarily owns observed outcome truth.
+            # Enforce optional-field types/state here as well so incomplete
+            # or UNKNOWN records cannot export arbitrary text in time fields.
+            for name in ("expiry_ts", "finalized_ts"):
+                if row.get(name) is not None:
+                    _number(row[name])
+            if row["state"] != "FINAL" and (
+                row.get("outcome") is not None or row.get("expiry_sample") is not None
+                or row.get("finalized_ts") is not None):
+                raise ValueError("inconsistent pending research evidence")
+            if row["state"] == "FINAL":
+                _number(row.get("finalized_ts"))
+            if row.get("entry_sample") is None and row.get("expiry_ts") is not None:
+                raise ValueError("expiry without research entry")
             digest = sha256(json.dumps(row, sort_keys=True, separators=(",", ":"),
                                        allow_nan=False).encode()).hexdigest()
             item = {key: row.get(key) for key in (
