@@ -57,3 +57,22 @@ Source acceptance exposed a real Twelve Data REST integration error: the existin
 Updated targeted suite: **122 passed**, including timezone/credential preservation, normal minute-wide cadence and failed-evaluation health regression coverage. Native APK bytes remain unchanged. Deployed source and publication acceptance are tracked separately below.
 
 Live acceptance — 2026-11-05: dedicated app deployment `7490d97a-46f6-479d-a3d2-487a6b66cbf0` reached **SUCCESS** at runtime commit `a344930137ee24990c2b58c0dc291acc5026a057`. At 19:08 UTC the worker emitted `OBSERVING / READY` after its first actual Twelve Data EUR/USD evaluation. The authenticated OWNER Overview visibly showed Market data connected, one completed evaluation, fresh market/evaluation timestamps, last decision **REJECT**, and **Awaiting calibration evidence**. PRE/CONFIRM/OPEN_NOW publication counters remained zero. This proves a real source/evaluation connection, not an accepted live signal or an execution-timing calibration. The UTC correction replaced the prior future-candle rejection without modifying shared strategy code. The owner separately confirmed that the installed 0.1.1 APK opens on their phone; the agent also completed and verified an OWNER browser login. Native background notifications and continuous subscription sync remain pending.
+
+## Both provider sources
+
+The owner requested concurrent use of FINNHUB and Twelve Data. The app now keeps
+its independent Twelve Data engine and accepts current, authenticated status from
+the existing FINNHUB calibration runtime. Separate OWNER cards show each source's
+own data/evaluation evidence. The bridge does not publish signals, open a second
+provider stream, merge candles, or grant member distribution. Local Twelve Data
+REST reservations are bounded by a persistent daily/minute ledger, including
+stream-history bootstrap, without claiming the actual provider account plan.
+
+Targeted app/engine/provider/execution/parameter regression: **78 passed**, two
+dependency warnings, 3.53 seconds. JavaScript syntax validation passed. Added
+coverage includes machine authentication and OWNER access, independent health,
+stale/future/wrong-source rejection, no signal/push writes from bridge evidence,
+restart/UTC-midnight quota behavior, concurrent reservations and no network I/O
+after the cap. Separate existing-runtime startup/provider tests: **72 passed**.
+Production acceptance for this dual-source release is recorded separately once
+the two deployed services and incoming real evidence have been verified.

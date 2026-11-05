@@ -5,7 +5,7 @@
   <meta name="theme-color" content="#101817"><meta name="description" content="Your trading signals, channels and subscription in one place.">
   <link rel="manifest" href="/assets/manifest.webmanifest"><link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/assets/icon-192.png"><link rel="stylesheet" href="/assets/app.css">
-  <title>Trading Signals</title><script src="/assets/app.js?v=source-utc-1" defer></script>
+  <title>Trading Signals</title><script src="/assets/app.js?v=dual-sources-1" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
@@ -74,7 +74,7 @@
         <div class="context-card"><h3>Install in a few taps</h3><p class="muted">On Android, open the browser menu and select “Install app” or “Add to Home screen”. On iPhone, open Safari, choose Share, then “Add to Home Screen”.</p><p class="small muted">Alerts require permission and browser support. On iPhone, install to the Home Screen before enabling alerts.</p></div>
       </section>
       <section id="page-analysis" class="page" hidden>
-        <div class="context-card"><span class="eyebrow">Market connection</span><h2 id="source-title">Waiting for source evidence</h2><p class="muted" id="source-summary"></p><dl id="source-info"></dl></div>
+        <div class="workspace-grid"><div class="context-card"><span class="eyebrow">FINNHUB · Owner calibration</span><h2 id="calibration-title">Waiting for source evidence</h2><p class="muted" id="calibration-summary"></p><dl id="calibration-info"></dl></div><div class="context-card"><span class="eyebrow">Twelve Data · Application engine</span><h2 id="source-title">Waiting for source evidence</h2><p class="muted" id="source-summary"></p><dl id="source-info"></dl></div></div>
         <div id="metrics" class="metrics-grid"></div><div class="workspace-grid"><div class="context-card"><span class="eyebrow">Recorded evidence</span><h2>Signal stages</h2><div id="stage-bars"></div><p class="small muted">Unique signal identifiers per stage, across all recorded history. The same signal in multiple channels counts once.</p></div><div class="context-card"><span class="eyebrow">Strategy source</span><h3>Binary Strategy V2</h3><p class="muted">The application imports the existing engine and canonical contracts. Strategy changes are separate work.</p><dl id="canonical-info"></dl></div></div>
         <div class="context-card"><h3>Connect a Telegram subscriber</h3><p class="muted small">Issue a personal link for an existing, verified subscription. This never grants a plan or creates a payment.</p><form id="invite-form" class="invite-form"><div><label for="invite-email">Member’s app email</label><input id="invite-email" type="email" required></div><div><label for="invite-ref">Verified subscriber reference</label><input id="invite-ref" required maxlength="200"></div><button class="primary" type="submit">Create connection link</button></form><div id="invite-result" class="invite-result" hidden><label for="invite-url">Personal, single-use link</label><input id="invite-url" readonly><button id="copy-invite" class="secondary">Copy link</button></div></div>
       </section>

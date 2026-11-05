@@ -274,8 +274,18 @@ def create_app(directory: Path | None = None, *, public_url: str | None = None,
     def dashboard(request: Request):
         owner(request)
         from .source import snapshot
+        from .paired_sources import sources
         return {"metrics":service.metrics(),"status":service.status(),"canonical":canonical.manifest(),
-                "source":snapshot(store)}
+                "source":snapshot(store),"sources":sources(store)}
+
+    @app.post("/api/internal/source-status")
+    async def source_status(request: Request):
+        source(request)
+        data = await body(request)
+        if len(json.dumps(data)) > 4096:
+            raise ValueError("A bounded source status is required.")
+        from .paired_sources import receive_finnhub_status
+        return receive_finnhub_status(store, data)
 
     @app.post("/api/admin/invites")
     async def invite(request: Request):

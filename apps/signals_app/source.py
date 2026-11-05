@@ -19,14 +19,16 @@ def timestamp(value):
     return int(value) if math.isfinite(value) and value > 0 else None
 
 
-def snapshot(store, now=None):
+def snapshot(store, now=None, *, provider="TWELVE_DATA"):
     now = int(time.time()) if now is None else int(now)
-    raw = store.meta("source_status", {})
+    if provider not in {"TWELVE_DATA", "FINNHUB"}:
+        raise ValueError("Unsupported source provider.")
+    raw = store.meta("source_status" if provider == "TWELVE_DATA" else "source_status_finnhub", {})
     if not isinstance(raw, dict):
         raw = {}
     result = {"state": raw.get("state") if raw.get("state") in STATES else "NOT_CONNECTED",
               "reason": raw.get("reason") if raw.get("reason") in REASONS else "NOT_STARTED",
-              "provider": raw.get("provider") if raw.get("provider") == "TWELVE_DATA" else None,
+              "provider": raw.get("provider") if raw.get("provider") == provider else None,
               "symbols": [s for s in raw.get("symbols", []) if isinstance(s, str) and len(s) <= 20]
                          if isinstance(raw.get("symbols"), list) else [],
               "heartbeat_at": timestamp(raw.get("heartbeat_at")),

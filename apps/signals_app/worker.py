@@ -14,8 +14,8 @@ import traceback
 
 class UtcMarketHttp:
     """Specify the timezone already assumed by the shared REST candle parser."""
-    def __init__(self, delegate, history_url):
-        self.delegate, self.history_url = delegate, history_url
+    def __init__(self, delegate, history_url, budget=None):
+        self.delegate, self.history_url, self.budget = delegate, history_url, budget
 
     def __getattr__(self, name):
         return getattr(self.delegate, name)
@@ -23,6 +23,15 @@ class UtcMarketHttp:
     def get(self, url, **kwargs):
         if url == self.history_url:
             kwargs["params"] = dict(kwargs.get("params") or {}, timezone="UTC")
+            if self.budget is not None:
+                from .provider_budget import FreeTierBudgetExceeded
+                try:
+                    self.budget.reserve()
+                except FreeTierBudgetExceeded:
+                    from runtime import market_client, runtime_status
+                    runtime_status.update_status(market_data_state="MARKET_DATA_LIMITED",
+                        market_data_rate_limit_state="APP_FREE_TIER_CAP_REACHED")
+                    raise market_client.MarketDataRateLimitError("App free-tier request cap reached") from None
         return self.delegate.get(url, **kwargs)
 
 
@@ -91,7 +100,21 @@ def run_engine(monitor):
     from core import market_data_provider_control
     from runtime import market_client
     service = AppService(store)
-    market_client.requests = UtcMarketHttp(market_client.requests, market_client.BASE_URL)
+    from .provider_budget import TwelveDataBudget
+    market_client.requests = UtcMarketHttp(market_client.requests, market_client.BASE_URL,
+                                         TwelveDataBudget(store))
+    # The streaming feed's history bootstrap has a separate HTTP binding.
+    # Route it through the same UTC adapter and durable free-tier ledger.
+    from runtime.twelvedata_market_data import TwelveDataRealtimeFeed
+
+    def app_twelve_data_feed(symbol):
+        normalized = str(symbol).strip().upper().replace("_", "/")
+        if normalized not in market_client._TWELVE_DATA_FEEDS:
+            market_client._TWELVE_DATA_FEEDS[normalized] = TwelveDataRealtimeFeed(
+                symbol=normalized, token=market_client._api_key(), http_get=market_client.requests.get)
+        return market_client._TWELVE_DATA_FEEDS[normalized]
+
+    market_client._twelve_data_feed = app_twelve_data_feed
 
     class AppRouter:
         @staticmethod

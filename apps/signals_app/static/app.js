@@ -136,7 +136,9 @@ function countdowns() {
 async function loadAnalysis() {
   try {
     const data = await api('/api/admin'), m = data.metrics;
-    renderSource(data.source);
+    for (const source of data.sources || [data.source]) {
+      renderSource(source, source?.provider === 'FINNHUB' ? 'calibration' : 'source');
+    }
     const metrics = [['App members',m.members,'Registered application accounts'],['Entry signals',m.stages.OPEN_NOW || 0,'Unique published OPEN NOW signals'],['Market win rate',m.market_win_rate == null ? '—' : (m.market_win_rate*100).toFixed(1)+'%',m.settled_market_sample+' objective settled results'],['Personal reports',Object.values(m.community_reports).reduce((a,b)=>a+b,0),'Self-reports, separate from market evidence']];
     $('metrics').innerHTML = metrics.map(([title,value,note]) => `<div class="metric"><span class="eyebrow">${safe(title)}</span><b>${safe(value)}</b><small>${safe(note)}</small></div>`).join('');
     const max = Math.max(1,...Object.values(m.stages));
@@ -145,7 +147,7 @@ async function loadAnalysis() {
     renderStatus(data.status);
   } catch (error) { notice(error.message,true); }
 }
-function renderSource(source) {
+function renderSource(source, prefix = 'source') {
   if (!source) return;
   const descriptions = {
     NOT_CONNECTED:['Source not connected','The market source has not started.'],
@@ -157,15 +159,23 @@ function renderSource(source) {
     PROVIDER_CONFIGURATION_REQUIRED:['Source setup needed','The market provider configuration needs attention.']
   };
   const [title,summary] = descriptions[source.state] || descriptions.SOURCE_UNAVAILABLE;
-  $('source-title').textContent = title; $('source-summary').textContent = summary;
-  const rows = [['Provider',source.provider ? source.provider.replace('_',' ') : 'Not configured'],
+  $(prefix+'-title').textContent = title;
+  $(prefix+'-summary').textContent = source.provider === 'FINNHUB' && source.state === 'OBSERVING'
+    ? 'The existing FINNHUB stream is being evaluated for owner calibration. Twelve Data runs separately.' : summary;
+  const rows = [['Provider',source.provider ? source.provider.replaceAll('_',' ') : 'Not configured'],
     ['Markets',source.symbols?.join(', ') || 'Not configured'],
     ['Completed evaluations',number(source.evaluations)],
     ['Latest evaluation',source.last_evaluation_at ? dateTime(source.last_evaluation_at) : 'None recorded'],
     ['Latest market data',source.last_market_data_at ? dateTime(source.last_market_data_at) : 'None received'],
     ['Last decision',source.last_decision?.replaceAll('_',' ') || 'None recorded'],
     ['Execution timing',source.execution_timing_available ? 'Calibration available' : 'Awaiting calibration evidence']];
-  $('source-info').innerHTML = rows.map(([label,value]) => `<dt>${safe(label)}</dt><dd>${safe(value)}</dd>`).join('');
+  if (source.request_budget) {
+    const budget = source.request_budget;
+    rows.push(['App request cap',`${budget.reserved_today} / ${budget.daily_limit} reserved today`],
+      ['Cap resets',dateTime(budget.reset_at)+' (UTC midnight)'],
+      ['Provider account plan','Not verified']);
+  }
+  $(prefix+'-info').innerHTML = rows.map(([label,value]) => `<dt>${safe(label)}</dt><dd>${safe(value)}</dd>`).join('');
 }
 async function claimSubscription(token) {
   await api('/api/claim',{method:'POST',body:JSON.stringify({token})});

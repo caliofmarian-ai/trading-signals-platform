@@ -92,3 +92,28 @@ Use a dedicated service, its own volume at `/app-data`, and the feature branch c
 | `PORT` | HTTP listener, default 8765 |
 
 APK builds and server health do not establish store publication, current subscription sync, live data calibration, or real-device notification delivery.
+
+## Concurrent FINNHUB and Twelve Data monitoring
+
+Both existing sources are retained. The OWNER Overview shows two independent cards:
+FINNHUB reports the existing runtime's personal calibration status; Twelve Data
+reports the app engine's own evaluations. Data and evaluation health are checked
+separately. Neither source can make the other's status healthy. The FINNHUB card
+does not claim application signal publication or grant member distribution.
+
+The optional existing-runtime status bridge POSTs only bounded, allowlisted status
+to authenticated `/api/internal/source-status`. No provider key, prices, candles,
+user identity or raw runtime errors cross this boundary. It opens no additional
+FINNHUB connection and changes no strategy/calibration parameters. Unlike the
+earlier app-only release, enabling this opt-in bridge requires deploying its
+small startup adapter to the existing runtime. The app and source remain on
+their existing services/volumes. Missing/stale bridge evidence is shown as unavailable.
+
+All app Twelve Data REST history requests, including stream bootstrap, share a
+durable SQLite request ledger. The default app cap is 700 reservations per UTC
+day and at most 8 per rolling minute. `SIGNALS_APP_TWELVE_DATA_DAILY_LIMIT` can
+lower this cap; it cannot raise it above 800. Reservations occur before network
+I/O and survive restarts. These are app-local caps, not a verification of the
+provider account's subscription or of usage by other clients sharing its key.
+No subscription, payment or automatic upgrade is created. The dashboard shows
+the quota, reset time and unverified account-plan status.

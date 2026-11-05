@@ -142,6 +142,7 @@ def test_existing_engine_candidate_reaches_app_only_transport(tmp_path, monkeypa
     monkeypatch.setattr(core, 'signal_engine', fake, raising=False)
     # The worker's HTTP adapter binding must not escape this process-isolation fixture.
     monkeypatch.setattr(market_client, 'requests', market_client.requests)
+    monkeypatch.setattr(market_client, '_twelve_data_feed', market_client._twelve_data_feed)
     monkeypatch.setitem(sys.modules, 'core.signal_engine', fake)
     monkeypatch.setattr(market_data_provider_control, 'get_active_provider', lambda: 'TWELVE_DATA')
     monkeypatch.setattr(market_data_provider_control, 'provider_ready', lambda _: (True,'READY'))
