@@ -94,6 +94,7 @@ def apply_research_cooldown(before,after,*,now_ts,seconds):
 def _summary(state,now):
     elapsed=max(0,now-state["started_ts"])
     return {"protocol":PROTOCOL,"truth_domain":"LIVE_POLICY_COUNTERFACTUAL_RESEARCH",
+        "provider":"FINNHUB","symbol":"EUR/USD",
         "status":"PAUSED_BASELINE_CHANGED" if state["baseline_changed"] else "OBSERVING",
         "started_ts":state["started_ts"],"last_evaluation_ts":state["last_evaluation_ts"],
         "parameter_sha256":state["parameter_sha256"],"buffer_mode":state["buffer_mode"],
