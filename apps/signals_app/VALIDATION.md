@@ -76,3 +76,33 @@ restart/UTC-midnight quota behavior, concurrent reservations and no network I/O
 after the cap. Separate existing-runtime startup/provider tests: **72 passed**.
 Production acceptance for this dual-source release is recorded separately once
 the two deployed services and incoming real evidence have been verified.
+
+Production acceptance: app runtime commit `76276d8cf31b392b0bba65024984b1c8fe18fd13`
+is live in successful deployment `393f6bb9-7918-4a86-95d3-f16a83815f02`.
+The public entry HTML serves the versioned dual-source script and FINNHUB owner
+card; the published JavaScript consumes the separate `sources` array. Public
+HTML, JavaScript and `/healthz` all returned HTTP 200. At 19:42:02 UTC the app
+worker confirmed an actual Twelve Data EUR/USD evaluation (`OBSERVING`, count 1).
+The configured app caps are 700 REST reservations per UTC day and 8 per minute.
+The provider account's paid/free billing plan remains unverified; no subscription
+or upgrade operation was performed.
+
+The existing-runtime adapter was merged as PR #239 and deployed from main commit
+`9b3a28b0a5879392bd105ec7f8b7fcc693a0c1f8` in successful deployment
+`fe7458ff-f192-431b-a35d-b26fdaf9b016`. Required Repository CI passed on both the
+reviewed branch and merged main. The app authenticated and accepted FINNHUB
+status at 19:46:47 UTC, marked actual evaluation/data evidence `OBSERVING` at
+19:46:52, then correctly became unavailable during a real 14-second quote gap
+at 19:47:07 and returned to `OBSERVING` at 19:47:12. The source's own real-tick
+evidence confirmed the gap and recovery. No additional Finnhub stream, source
+switch, strategy parameter change or broker execution was introduced. This
+establishes concurrent source monitoring and real evaluations, not completed
+execution-expiry calibration or newly published signals.
+
+Validation limitation: isolated startup-preflight tests expose an existing
+cached `/opt/binarybot/config/admin_permissions.json` fixture-path dependency
+(2 failures, 14 passes); the same two failures reproduce on the unchanged
+pre-integration baseline. The full local existing-runtime suite passed 2,168
+tests, and required CI passed with the final merged source. Isolated bridge
+tests passed 3 and current expiry tests passed 20. No unrelated permission
+runtime or fixture change was included in this provider integration.
