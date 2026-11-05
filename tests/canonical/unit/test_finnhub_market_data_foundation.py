@@ -192,6 +192,13 @@ def test_stream_subscribes_to_one_canonical_forex_symbol(tmp_path):
         def send(self, value):
             self.sent.append(json.loads(value))
 
+        def settimeout(self, seconds):
+            assert 0 < seconds <= 5
+
+        def recv_data(self, control_frame=False):
+            assert control_frame
+            return 1, self.recv()  # RFC 6455 text opcode
+
         def recv(self):
             feed._stop_event.set()
             return json.dumps(_trade())

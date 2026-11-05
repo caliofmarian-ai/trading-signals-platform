@@ -15,6 +15,10 @@ SUPPORTED_SYMBOL = "EUR/USD"
 FINNHUB_SYMBOL = "OANDA:EUR_USD"
 MAX_CANDLES = 500
 DEFAULT_MIN_CANDLES = 201
+# Transport guardrails; these never replace quote freshness or history gates.
+STREAM_READ_POLL_SECONDS = 5
+STREAM_PING_INTERVAL_SECONDS = 20
+STREAM_PONG_TIMEOUT_SECONDS = 10
 
 
 class FinnhubConfigurationError(RuntimeError):
@@ -22,6 +26,10 @@ class FinnhubConfigurationError(RuntimeError):
 
 
 class FinnhubMarketDataUnavailable(RuntimeError):
+    pass
+
+
+class FinnhubPingTimeout(FinnhubMarketDataUnavailable):
     pass
 
 
@@ -132,6 +140,12 @@ class FinnhubForexFeed:
         self._last_stream_connected_ts: Optional[int] = None
         self._last_stream_evidence_emit_ts: Dict[str, int] = {}
         self._recovery_after_tick_ms: Optional[int] = None
+        self._transport_clock = time.monotonic
+        self._transport_state = "NOT_CONNECTED"
+        self._transport_idle_read_count = 0
+        self._transport_ping_count = 0
+        self._transport_pong_count = 0
+        self._last_transport_pong_ts: Optional[int] = None
         self._load_store()
 
     def _connect(self):
@@ -339,6 +353,11 @@ class FinnhubForexFeed:
                 "connection_attempts": self._stream_connection_attempts,
                 "failure_count": self._stream_failure_count,
                 "failure_class": self._stream_last_failure_class,
+                "transport_state": self._transport_state,
+                "transport_idle_read_count": self._transport_idle_read_count,
+                "transport_ping_count": self._transport_ping_count,
+                "transport_pong_count": self._transport_pong_count,
+                "last_transport_pong_ts": self._last_transport_pong_ts,
                 "valid_trade_tick_count": self._valid_trade_tick_count,
                 "last_real_tick_ts": self._last_price_ts,
                 "M1_observed_candles": len(self._candles["M1"]),
@@ -363,6 +382,8 @@ class FinnhubForexFeed:
         # Bounded allowlist: never propagate WebSocket exception messages/URLs
         # (the URL contains an API key).
         name = type(exc).__name__
+        if isinstance(exc, FinnhubPingTimeout):
+            return "PING_RESPONSE_TIMEOUT"
         if isinstance(exc, FinnhubMarketDataUnavailable):
             return "PROVIDER_ERROR_FRAME"
         allowed = {
@@ -372,6 +393,54 @@ class FinnhubForexFeed:
             "WebSocketBadStatusException", "WebSocketProtocolException",
         }
         return name if name in allowed else "OTHER_TRANSPORT_ERROR"
+
+    def _receive_stream(self, socket: Any) -> None:
+        """Keep transport alive without turning a quiet feed into fresh prices.
+
+        recv_data preserves websocket-client's fragmentation and automatic
+        peer-Ping handling while exposing Pongs. Only a matching timely Pong
+        confirms our probe; neither it nor a read timeout is a market tick.
+        """
+        from websocket import ABNF, WebSocketTimeoutException
+
+        last_ping_at = self._transport_clock()
+        pending_ping: Optional[bytes] = None
+        while not self._stop_event.is_set():
+            now = self._transport_clock()
+            if pending_ping is not None and now - last_ping_at >= STREAM_PONG_TIMEOUT_SECONDS:
+                raise FinnhubPingTimeout("Finnhub WebSocket probe expired")
+            if pending_ping is None and now - last_ping_at >= STREAM_PING_INTERVAL_SECONDS:
+                pending_ping = os.urandom(8)
+                socket.ping(pending_ping)
+                last_ping_at = self._transport_clock()
+                with self._lock:
+                    self._transport_ping_count += 1
+                    self._transport_state = "WAITING_PONG"
+            # A read must not extend the pending probe's deadline.
+            budget = STREAM_PONG_TIMEOUT_SECONDS if pending_ping is not None else STREAM_PING_INTERVAL_SECONDS
+            socket.settimeout(min(STREAM_READ_POLL_SECONDS,
+                                  max(0.001, last_ping_at + budget - self._transport_clock())))
+            try:
+                opcode, frame = socket.recv_data(control_frame=True)
+            except WebSocketTimeoutException:
+                with self._lock:
+                    self._transport_idle_read_count += 1
+                continue
+            if pending_ping is not None and self._transport_clock() - last_ping_at >= STREAM_PONG_TIMEOUT_SECONDS:
+                raise FinnhubPingTimeout("Finnhub WebSocket probe expired")
+            if opcode == ABNF.OPCODE_CLOSE:
+                raise ConnectionError("Finnhub stream closed")
+            if opcode == ABNF.OPCODE_PONG:
+                if pending_ping is not None and frame == pending_ping:
+                    pending_ping = None
+                    with self._lock:
+                        self._transport_pong_count += 1
+                        self._last_transport_pong_ts = int(self.clock())
+                        self._transport_state = "PONG_CONFIRMED"
+                    self._emit_stream_observation("TRANSPORT_PONG_CONFIRMED")
+                continue
+            if opcode in (ABNF.OPCODE_TEXT, ABNF.OPCODE_BINARY):
+                self.ingest_message(frame)
 
     def _stream_forever(self) -> None:
         while not self._stop_event.is_set():
@@ -384,24 +453,21 @@ class FinnhubForexFeed:
                 with self._lock:
                     self._last_stream_connected_ts = int(self.clock())
                     self._stream_state = "CONNECTED_NOT_SUBSCRIBED"
+                    self._transport_state = "CONNECTED_UNVERIFIED"
                 socket.send(json.dumps({"type": "subscribe", "symbol": self.finnhub_symbol}))
                 with self._lock:
                     self._subscription_state = "SENT_UNVERIFIED"
                     self._stream_state = "SUBSCRIBED_WAITING_REAL_TICK"
                     self._recovery_after_tick_ms = self._last_tick_ms
                 self._emit_stream_observation("SUBSCRIBE_SENT_UNVERIFIED")
-                while not self._stop_event.is_set():
-                    frame = socket.recv()
-                    if frame == "" or frame == b"":
-                        # A clean close is not a market-data tick.
-                        raise ConnectionError("Finnhub stream closed")
-                    self.ingest_message(frame)
+                self._receive_stream(socket)
             except Exception as exc:
                 with self._lock:
                     self._stream_failure_count += 1
                     self._stream_last_failure_class = self._safe_transport_failure_class(exc)
                     self._stream_state = "DISCONNECTED_RETRYING"
                     self._subscription_state = "UNVERIFIED_AFTER_DISCONNECT"
+                    self._transport_state = "DISCONNECTED"
                 self._emit_stream_observation("STREAM_RETRYING")
                 if self._stop_event.wait(2.0):
                     return
@@ -414,6 +480,7 @@ class FinnhubForexFeed:
                 if self._stop_event.is_set():
                     with self._lock:
                         self._stream_state = "STOPPED"
+                        self._transport_state = "STOPPED"
 
     def start(self) -> None:
         with self._lock:
@@ -481,6 +548,13 @@ class FinnhubForexFeed:
             stream_last_failure_class = self._stream_last_failure_class
             valid_trade_tick_count = self._valid_trade_tick_count
             last_stream_connected_ts = self._last_stream_connected_ts
+            transport = {
+                "transport_state": self._transport_state,
+                "transport_idle_read_count": self._transport_idle_read_count,
+                "transport_ping_count": self._transport_ping_count,
+                "transport_pong_count": self._transport_pong_count,
+                "last_transport_pong_ts": self._last_transport_pong_ts,
+            }
             integrity = inspect_history(self._candles)
         if load_state == "ERROR" or write_state == "ERROR":
             persistence_state = "ERROR"
@@ -503,6 +577,7 @@ class FinnhubForexFeed:
             "stream_last_failure_class": stream_last_failure_class,
             "valid_trade_tick_count": valid_trade_tick_count,
             "last_stream_connected_ts": last_stream_connected_ts,
+            **transport,
             "price_age_seconds": age,
             "freshness_limit_seconds": self.freshness_seconds,
             "fresh": age is not None and 0 <= age <= self.freshness_seconds,

@@ -10,6 +10,18 @@ import importlib
 import json
 
 import pytest
+from websocket import ABNF
+
+
+class _ControlSocket:
+    def settimeout(self, seconds):
+        assert 0 < seconds <= 5
+
+    def recv_data(self, control_frame=False):
+        assert control_frame
+        frame = self.recv()
+        opcode = ABNF.OPCODE_CLOSE if frame in ("", b"") else ABNF.OPCODE_TEXT
+        return opcode, frame
 
 
 def _trade():
@@ -36,7 +48,7 @@ def test_new_feed_does_not_invent_connection_or_ticks(tmp_path):
 def test_subscribe_sent_does_not_claim_real_tick_without_trade(tmp_path):
     module = importlib.import_module("runtime.finnhub_market_data")
 
-    class Socket:
+    class Socket(_ControlSocket):
         def send(self, msg):
             assert json.loads(msg) == {
                 "type": "subscribe", "symbol": "OANDA:EUR_USD"
@@ -109,7 +121,7 @@ def test_transport_error_is_classified_without_provider_key(tmp_path):
 def test_error_frame_is_not_ingested_as_price_and_does_not_expose_message(tmp_path):
     module = importlib.import_module("runtime.finnhub_market_data")
 
-    class Socket:
+    class Socket(_ControlSocket):
         def send(self, _message):
             pass
 
@@ -140,7 +152,7 @@ def test_error_frame_is_not_ingested_as_price_and_does_not_expose_message(tmp_pa
 def test_socket_eof_retries_instead_of_busy_loop(tmp_path):
     module = importlib.import_module("runtime.finnhub_market_data")
 
-    class Socket:
+    class Socket(_ControlSocket):
         def send(self, _message):
             pass
 
