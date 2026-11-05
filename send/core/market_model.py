@@ -18,6 +18,10 @@ from .decision_object import MarketContext
 SCHEMA_VERSION = "2.0.0"
 ATR_PERIOD = 14
 ATR_REQUIRED_CANDLES = ATR_PERIOD + 1
+# Restored absorbed adaptive-activity contract: avg M1 range / M5 ATR.
+# These are structural initial semantics, not new runtime tuning controls.
+ACTIVITY_VOL_THRESHOLD = 0.20
+ACTIVITY_LOOKBACK_CANDLES = 10
 
 
 class MarketModelUnavailable(ValueError):
@@ -50,6 +54,13 @@ class IndicatorEvidence:
     latest_body: float
     average_body_last_10: float
     m1_speed_window: M1SpeedWindowEvidence
+    activity_ratio: float
+    activity_threshold: float
+    activity_gate_ok: bool
+    activity_gate_reason: str
+    activity_atr_source: str
+    activity_lookback_candles: int
+    legacy_minimum_m1_range: float
 
 
 @dataclass(frozen=True)
@@ -335,16 +346,19 @@ def evaluate_market(
     buffer_multiplier = _required_number(buffer_multipliers, normalized_mode, "buffer_multipliers")
     buffer_distance = atr_value * buffer_multiplier
 
-    recent_ranges = [float(candle["high"]) - float(candle["low"]) for candle in candles_m1[:10]]
+    recent_ranges = [float(candle["high"]) - float(candle["low"]) for candle in candles_m1[:ACTIVITY_LOOKBACK_CANDLES]]
     average_range = sum(recent_ranges) / len(recent_ranges)
     minimum_ranges = _required_mapping(strategy.get("min_avg_range"), "strategy_v2.min_avg_range")
     if _is_crypto(symbol):
-        minimum_range = _required_number(minimum_ranges, "CRYPTO_USD", "strategy_v2.min_avg_range")
+        legacy_minimum_range = _required_number(minimum_ranges, "CRYPTO_USD", "strategy_v2.min_avg_range")
     elif "JPY" in symbol:
-        minimum_range = _required_number(minimum_ranges, "FOREX_JPY", "strategy_v2.min_avg_range")
+        legacy_minimum_range = _required_number(minimum_ranges, "FOREX_JPY", "strategy_v2.min_avg_range")
     else:
-        minimum_range = _required_number(minimum_ranges, "FOREX_DEFAULT", "strategy_v2.min_avg_range")
-    volatility_state = "ACTIVE" if average_range >= minimum_range else "BELOW_MINIMUM_ACTIVITY"
+        legacy_minimum_range = _required_number(minimum_ranges, "FOREX_DEFAULT", "strategy_v2.min_avg_range")
+    activity_ratio = average_range / atr_value
+    activity_gate_ok = activity_ratio >= ACTIVITY_VOL_THRESHOLD
+    minimum_range = atr_value * ACTIVITY_VOL_THRESHOLD
+    volatility_state = "ACTIVE" if activity_gate_ok else "BELOW_MINIMUM_ACTIVITY"
 
     open_price, high, low = (float(latest[key]) for key in ("open", "high", "low"))
     body = abs(latest_price - open_price)
@@ -408,6 +422,13 @@ def evaluate_market(
             latest_body=body,
             average_body_last_10=average_body_last_10,
             m1_speed_window=speed_window,
+            activity_ratio=activity_ratio,
+            activity_threshold=ACTIVITY_VOL_THRESHOLD,
+            activity_gate_ok=activity_gate_ok,
+            activity_gate_reason=("NORMALIZED_ACTIVITY_SUFFICIENT" if activity_gate_ok else "BELOW_NORMALIZED_ACTIVITY_THRESHOLD"),
+            activity_atr_source="M5_ATR_14",
+            activity_lookback_candles=ACTIVITY_LOOKBACK_CANDLES,
+            legacy_minimum_m1_range=legacy_minimum_range,
         ),
         noise_reasons=tuple(noise_reasons),
     )

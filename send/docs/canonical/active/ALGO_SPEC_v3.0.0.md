@@ -185,6 +185,26 @@ Their detailed formula is governed by `TRADE_PHYSICS_MODEL_SPEC_v1.0.0`.
 
 ---
 
+### 6.1 Absorbed adaptive activity contract — implementation restoration 2026-11-05
+
+The v2 absorbed Adaptive Activity Gate rule remains part of market-context
+derivation. Activity uses `average_m1_range / atr_m5 >= 0.20`, using the existing
+ten most recent decision-window M1 ranges and existing M5 ATR(14). These initial
+structural semantics come from the absorbed intake's recommended 0.20 ratio and
+the current indicator windows; no new production slider is introduced.
+
+The fixed per-asset `strategy_v2.min_avg_range` values are legacy diagnostic
+configuration and cannot veto normalized activity when valid ATR evidence is
+available. The effective minimum M1 range is `atr_m5 * 0.20`. Invalid/non-positive
+ATR remains unavailable; stable but truly small relative activity remains blocked.
+Noise, structure, directional time, scoring, Trade Physics, FSM, expiry and
+distribution guards still apply independently.
+
+Decision evidence records average range, ATR reference, normalized ratio,
+threshold, pass/fail reason, lookback, ATR source and legacy absolute threshold.
+Restoring this absorbed rule does not establish execution-expiry calibration or
+broker equivalence. Change evidence: `audit/owner-signal-timing-20261105/PROPOSAL.md`.
+
 ## 7. SR / CORRIDOR FIRST PRINCIPLE
 
 Before temporal or score conclusions, the strategy must establish the relevant directional structure.

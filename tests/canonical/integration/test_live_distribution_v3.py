@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -402,6 +403,12 @@ def test_finnhub_personal_stages_only_reach_owner_never_channels(tmp_path, monke
         calls.append(kw) or {"ok": True, "result": {"message_id": 42, "date": 1720000100}}
     ))
     candidate = _candidate(stage, "personal-lifecycle")
+    if stage in {"CONFIRM", "OPEN_NOW"}:
+        owner.record_acceptance(_candidate("PRE", "personal-lifecycle"), {"ok": True},
+                                started_ts=time.time()-61, accepted_ts=time.time()-60, transport_seconds=0.1)
+    if stage == "OPEN_NOW":
+        owner.record_acceptance(_candidate("CONFIRM", "personal-lifecycle"), {"ok": True},
+                                started_ts=time.time()-6, accepted_ts=time.time()-5, transport_seconds=0.1)
     summary = router.route(candidate, now_ts=1720000100)
     assert summary["published_count"] == 1
     assert len(summary["route_results"]) == 1
@@ -536,3 +543,20 @@ def test_owner_audit_exports_allowlisted_real_candles_only(tmp_path, monkeypatch
     assert "candles" not in owner.audit_evidence(987654321)
     store.write_text(json.dumps({"provider": "OTHER", "candles": candles}))
     assert owner.audit_evidence(123456789)["status"] == "SOURCE_UNAVAILABLE_OR_INVALID"
+
+
+def test_owner_stage_order_and_30_second_pre_advance(tmp_path, monkeypatch):
+    _, _, _, router, _ = _setup(tmp_path, monkeypatch)
+    owner = _personal(monkeypatch, router)
+    now = 1720000100
+    event = _candidate("OPEN_NOW", "timed-stage")
+    assert owner.stage_block_reason(event, now_ts=now) == "OWNER_STAGE_TIMING_UNAVAILABLE"
+    owner.record_acceptance(_candidate("PRE", "timed-stage"), {"ok": True},
+                            started_ts=now-1, accepted_ts=now, transport_seconds=0.1)
+    assert owner.stage_block_reason(event, now_ts=now+20) == "OWNER_CONFIRM_RECEIPT_REQUIRED"
+    owner.record_acceptance(_candidate("CONFIRM", "timed-stage"), {"ok": True},
+                            started_ts=now+1, accepted_ts=now+2, transport_seconds=0.1)
+    assert owner.stage_block_reason(event, now_ts=now+29.999) == "OWNER_PRE_LEAD_TIME_NOT_MET"
+    assert owner.stage_block_reason(event, now_ts=now+30) is None
+    assert owner.stage_block_reason(event, now_ts=now-1) == "OWNER_STAGE_TIME_ORDER_INVALID"
+    assert owner.stage_block_reason(_candidate("PRE", "another"), now_ts=now) is None

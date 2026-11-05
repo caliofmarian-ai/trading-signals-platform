@@ -412,6 +412,12 @@ def _log_decision_evaluated(evaluation, buffer_mode: str) -> None:
             "minimum_m1_range": evaluation.market.evidence.minimum_m1_range,
             "atr_m5": evaluation.market.evidence.atr_m5,
             "m1_speed_window": vars(evaluation.market.evidence.m1_speed_window),
+            "activity_gate": {
+                key: getattr(evaluation.market.evidence, key, None)
+                for key in ("activity_ratio", "activity_threshold", "activity_gate_ok",
+                            "activity_gate_reason", "activity_atr_source",
+                            "activity_lookback_candles", "legacy_minimum_m1_range")
+            },
         })
     structure = decision_dict.get("structure")
     if isinstance(structure, dict):
