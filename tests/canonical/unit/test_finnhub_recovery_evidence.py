@@ -6,6 +6,16 @@ import importlib
 import json
 
 import pytest
+from websocket import ABNF
+
+
+class _ControlSocket:
+    def settimeout(self, seconds):
+        assert 0 < seconds <= 5
+
+    def recv_data(self, control_frame=False):
+        assert control_frame
+        return ABNF.OPCODE_TEXT, self.recv()
 
 
 def trade(timestamp_ms, *, symbol="OANDA:EUR_USD"):
@@ -46,7 +56,7 @@ def test_reconnect_waits_for_a_new_fresh_quote(tmp_path, capsys, intermediate):
     clock = [1793812200]
     checks = []
 
-    class Socket:
+    class Socket(_ControlSocket):
         def __init__(self, session):
             self.session, self.receives, self.closed = session, 0, False
 
@@ -107,7 +117,7 @@ def test_each_recovery_is_visible_inside_five_minutes_but_not_each_tick(tmp_path
     clock = [1793812200]
     attempts = []
 
-    class Socket:
+    class Socket(_ControlSocket):
         def __init__(self, session):
             self.session, self.reads = session, 0
 
