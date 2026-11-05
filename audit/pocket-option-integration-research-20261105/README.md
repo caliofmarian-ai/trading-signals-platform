@@ -6,6 +6,8 @@ Repository: `caliofmarian-ai/trading-signals-platform`.
 Audited main: `77641158d7abf16a23edcc9bbadd8ab24ab77015`.
 Companion-app comparison: PR [#236](https://github.com/caliofmarian-ai/trading-signals-platform/pull/236), head `9cce08cdfba03296f76c2ba642e694afa16cb713` (open/draft when inspected).
 
+Technical continuation in Romanian: [export evidence, indicator parity, candle coverage and expiry precision](APROFUNDARE_TEHNICA_RO.md). It records later observations and supersedes initial UNKNOWN statements only where direct follow-up evidence is identified, including confirmation of the second EMA 200 label and the XLS export control. A completed export file remains unverified.
+
 ## Rezumat pentru Owner
 
 Proiectul are deja un motor de analiză și instrumente de cercetare utile, dar **nu este încă racordat și validat pentru Pocket Option**. Lipsesc sursa autorizată de cotații Pocket, identificarea exactă a instrumentelor, comparația indicatorilor, expirarea verificată și reconcilierea rezultatelor brokerului. Nu putem transforma rezultatele Finnhub sau Twelve Data în rezultate Pocket OTC prin schimbarea numelui simbolului.
