@@ -1,3 +1,5 @@
 .local/
 __pycache__/
-*.pyc
+.pytest_cache/
+*.sqlite3*
+.env
