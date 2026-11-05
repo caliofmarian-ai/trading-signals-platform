@@ -196,7 +196,7 @@ def audit_evidence(user_id: int) -> dict[str, Any]:
         from intelligence import lifecycle_cadence_research
         try:
             result["lifecycle_cadence_research"]=lifecycle_cadence_research.summary(now_ts=time.time())
-        except (OSError,ValueError,TypeError,KeyError):
+        except (OSError,ValueError,TypeError,KeyError,RuntimeError):
             result["lifecycle_cadence_research"]={"status":"SOURCE_UNAVAILABLE_OR_INVALID"}
         try:
             result["execution_expiry_calibration"] = execution_expiry_calibration.summary(now_ts=time.time())

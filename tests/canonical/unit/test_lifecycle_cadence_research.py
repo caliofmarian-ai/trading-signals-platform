@@ -168,3 +168,12 @@ def test_short_cooldown_cannot_pass_an_invalid_structure(cadence):
     report=module.summary(now_ts=evaluation.market.evaluated_ts+2)
     assert all(r["hard_blockers"]["STRUCTURE_NOT_VALID"]==1 for r in report["policies"])
     assert all(not r["accepted_unique_stages"] for r in report["policies"])
+
+
+def test_private_audit_isolates_invalid_cadence_source(cadence,monkeypatch):
+    module,_,_,_=cadence
+    from core import owner_signal_delivery
+    def invalid(**kwargs):raise RuntimeError("TEST_ONLY_INVALID_FSM_SOURCE")
+    monkeypatch.setattr(module,"summary",invalid)
+    result=owner_signal_delivery.audit_evidence(123456789)
+    assert result["lifecycle_cadence_research"]["status"]=="SOURCE_UNAVAILABLE_OR_INVALID"
