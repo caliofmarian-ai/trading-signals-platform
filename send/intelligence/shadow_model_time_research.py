@@ -66,12 +66,15 @@ def _path(root: Path, record_id: str) -> Path:
     return path
 
 
-def _read(path: Path) -> dict:
+def _read(path: Path, *, read_budget: list[int] | None = None) -> dict:
     if path.is_symlink():
         raise ValueError("research evidence cannot be a symlink")
+    bound = MAX_RECORD_BYTES if read_budget is None else min(MAX_RECORD_BYTES, max(0, read_budget[0]))
     with path.open("rb") as handle:
-        data = handle.read(MAX_RECORD_BYTES + 1)
-    if len(data) > MAX_RECORD_BYTES:
+        data = handle.read(bound + 1)
+    if read_budget is not None:
+        read_budget[0] -= len(data)
+    if len(data) > bound:
         raise ValueError("research evidence exceeds its bound")
     value = json.loads(data)
     if not isinstance(value, dict):
@@ -85,8 +88,8 @@ def _classify(direction: str, entry: float, expiry: float) -> str:
     return "WIN" if (expiry > entry) == (direction == "BUY") else "LOSS"
 
 
-def _record(root: Path, record_id: str) -> dict:
-    record = _read(_path(root, record_id))
+def _record(root: Path, record_id: str, *, read_budget: list[int] | None = None) -> dict:
+    record = _read(_path(root, record_id), read_budget=read_budget)
     if (record.get("protocol") != PROTOCOL or record.get("record_id") != record_id
         or record.get("publication_status") != "NOT_PUBLISHED"
         or record.get("truth_domain") != "HYPOTHETICAL_RESEARCH"
@@ -342,6 +345,74 @@ def snapshot_records() -> list[dict]:
     root = _root()
     with storage.with_lock("shadow_model_time_research", timeout_sec=0.2):
         return [_record(root, path.stem) for path in _files(root)]
+
+
+def private_calibration_evidence() -> dict:
+    """Bounded, read-only projection for the existing exact-Owner audit route.
+
+    No recovery, observation, file writes or arbitrary snapshot fields. Failure
+    is explicit and never represented as an empty completed research cohort.
+    """
+    result = {"status": "UNAVAILABLE", "protocol": PROTOCOL,
+              "truth_domain": "HYPOTHETICAL_RESEARCH", "records": [],
+              "execution_calibration_proven": False, "broker_executed": False,
+              "authoritative_for_strategy_performance": False}
+    try:
+        root = _root()
+        paths, budget = [], [2 * 1024 * 1024]
+        directory = root / "records"
+        if directory.exists():
+            for path in directory.iterdir():
+                if (path.suffix != ".json" or not _ID.fullmatch(path.stem)
+                    or path.is_symlink() or not path.is_file()):
+                    raise ValueError("invalid private research inventory")
+                paths.append(path)
+                if len(paths) > 128:
+                    return {**result, "status": "INVENTORY_BOUND_EXCEEDED"}
+        rows = []
+        for path in paths:
+            row = _record(root, path.stem, read_budget=budget)
+            # The source validator primarily owns observed outcome truth.
+            # Enforce optional-field types/state here as well so incomplete
+            # or UNKNOWN records cannot export arbitrary text in time fields.
+            for name in ("expiry_ts", "finalized_ts"):
+                if row.get(name) is not None:
+                    _number(row[name])
+            if row["state"] != "FINAL" and (
+                row.get("outcome") is not None or row.get("expiry_sample") is not None
+                or row.get("finalized_ts") is not None):
+                raise ValueError("inconsistent pending research evidence")
+            if row["state"] == "FINAL":
+                _number(row.get("finalized_ts"))
+            if row.get("entry_sample") is None and row.get("expiry_ts") is not None:
+                raise ValueError("expiry without research entry")
+            digest = sha256(json.dumps(row, sort_keys=True, separators=(",", ":"),
+                                       allow_nan=False).encode()).hexdigest()
+            item = {key: row.get(key) for key in (
+                "record_id", "direction", "created_ts", "horizon_seconds", "state",
+                "expiry_ts", "finalized_ts", "outcome",
+            )}
+            # Rebuild fixed provenance and samples rather than copying any
+            # unrecognized text, nested DecisionObject or source extensions.
+            item.update(provider="FINNHUB", symbol="EUR/USD",
+                        validated_record_sha256=digest,
+                        horizon_source="UNCALIBRATED_MODEL_TIME")
+            for name in ("entry_sample", "expiry_sample"):
+                sample = row.get(name)
+                item[name] = ({key: sample[key] for key in (
+                    "provider", "symbol", "price", "observed_ts", "source"
+                )} if sample is not None else None)
+            parameter_hash = row.get("parameter_bundle_sha256")
+            item["parameter_bundle_sha256"] = parameter_hash if (
+                isinstance(parameter_hash, str) and _ID.fullmatch(parameter_hash)) else None
+            rows.append(item)
+        rows.sort(key=lambda item: (item["created_ts"], item["record_id"]))
+        return {**result, "status": "VALIDATED_PRIVATE_RESEARCH",
+                "validated_record_count": len(rows), "records": rows[-16:],
+                "records_truncated": len(rows) > 16,
+                "digest_scope": "CANONICAL_JSON_OF_VALIDATED_RECORD_NOT_FILE_BYTES"}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return {**result, "status": "SOURCE_UNAVAILABLE_OR_INVALID"}
 
 
 def persist_summary_status(value: dict, *, observed_at: float) -> None:

@@ -539,10 +539,20 @@ def test_owner_audit_exports_allowlisted_real_candles_only(tmp_path, monkeypatch
     assert evidence["status"] == "PERSONAL_RESEARCH_SNAPSHOT"
     assert evidence["params"] == params
     assert len(evidence["candles"]["M1"]) == 25
+    assert evidence["model_time_research_evidence"]["status"] == "VALIDATED_PRIVATE_RESEARCH"
     assert "secret" not in json.dumps(evidence) and "never-export" not in json.dumps(evidence)
     assert "candles" not in owner.audit_evidence(987654321)
     store.write_text(json.dumps({"provider": "OTHER", "candles": candles}))
     assert owner.audit_evidence(123456789)["status"] == "SOURCE_UNAVAILABLE_OR_INVALID"
+
+
+def test_private_research_export_is_not_invoked_for_another_user(tmp_path, monkeypatch):
+    _, _, _, router, _ = _setup(tmp_path, monkeypatch)
+    owner = _personal(monkeypatch, router)
+    from intelligence import shadow_model_time_research
+    monkeypatch.setattr(shadow_model_time_research, "private_calibration_evidence",
+                        lambda: pytest.fail("non-owner invoked private research export"))
+    assert owner.audit_evidence(987654321) == {"status": "PERSONAL_DELIVERY_NOT_ENABLED_FOR_OWNER"}
 
 
 def test_owner_stage_order_and_30_second_pre_advance(tmp_path, monkeypatch):
