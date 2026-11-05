@@ -24,6 +24,7 @@ from .service import AppService
 from .store import Store, token_hash
 
 STATIC = Path(__file__).parent / "static"
+ANDROID_RELEASE = Path(__file__).parent / "android" / "releases" / "TradingSignals-0.1.1-test.apk"
 COOKIE = "signals_session"
 
 
@@ -69,6 +70,10 @@ def create_app(directory: Path | None = None, *, public_url: str | None = None,
 
     app = FastAPI(title="Trading Signals App",docs_url=None,redoc_url=None,openapi_url=None,lifespan=lifespan)
     app.state.service, app.state.store, app.state.push = service,store,push
+
+    def android_package():
+        # A published, versioned test build takes precedence over the legacy volume upload.
+        return ANDROID_RELEASE if ANDROID_RELEASE.is_file() else store.directory/"TradingSignals-test.apk"
 
     @app.middleware("http")
     async def protection(request: Request, call_next):
@@ -163,7 +168,7 @@ def create_app(directory: Path | None = None, *, public_url: str | None = None,
             configured = bool(db.execute("SELECT 1 FROM users WHERE role='OWNER'").fetchone())
         return {"channels":service.channels,"canonical":canonical.manifest(),
                 "push_public_key":push.public_key,"owner_configured":configured,
-                "android_download": "/download/android" if (store.directory/"TradingSignals-test.apk").is_file() else None,
+                "android_download": "/download/android" if android_package().is_file() else None,
                 "installable":True,"setup_available":bool(setup_token) and not configured}
 
     @app.post("/api/register")
@@ -319,10 +324,10 @@ def create_app(directory: Path | None = None, *, public_url: str | None = None,
 
     @app.get("/download/android")
     def android_download():
-        target = store.directory/"TradingSignals-test.apk"
+        target = android_package()
         if not target.is_file():
             raise HTTPException(404,"The Android test package is not available yet.")
-        return FileResponse(target,filename="TradingSignals-0.1.0-test.apk",
+        return FileResponse(target,filename=target.name,
             media_type="application/vnd.android.package-archive",headers={"Cache-Control":"no-store"})
 
     @app.get("/")

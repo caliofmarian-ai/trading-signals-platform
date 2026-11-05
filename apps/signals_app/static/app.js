@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 let config, session, channel = 'FREE', page = 'signals', mode = 'login';
 let installPrompt, claimToken = '', setupToken = '', serverOffset = 0, polling = false, currentRows = [], lastFeedKey = '';
+const nativeAndroid = /TradingSignalsAndroid\//.test(navigator.userAgent);
 const safe = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const number = value => value == null ? 'Unavailable' : new Intl.NumberFormat(undefined,{maximumFractionDigits:6}).format(value);
 const localTime = value => new Date(value * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
@@ -160,6 +161,7 @@ async function install() {
 }
 async function alerts() {
   try {
+    if (nativeAndroid) throw new Error('Background alerts are not available in this Android test version yet. Signals remain visible while the app is open.');
     if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) throw new Error('This browser cannot enable app alerts. Install the app in a supported browser first.');
     if (await Notification.requestPermission() !== 'granted') throw new Error('Alerts are off. You can allow them in your browser’s settings.');
     const worker = await navigator.serviceWorker.ready;
@@ -209,13 +211,13 @@ $('logout').onclick = async () => {
   try {
     await api('/api/logout',{method:'POST',body:'{}'});
     const worker = await navigator.serviceWorker?.getRegistration(); worker?.active?.postMessage('SIGNED_OUT');
-    const subscription = await worker?.pushManager.getSubscription(); if (subscription) await subscription.unsubscribe();
+    const subscription = await worker?.pushManager?.getSubscription(); if (subscription) await subscription.unsubscribe();
     location.hash = ''; authScreen();
   } catch (error) { notice(error.message,true); }
 };
 $('enable-alerts').onclick = alerts;
 $('disable-alerts').onclick = async () => {
-  try { await api('/api/push',{method:'DELETE',body:'{}'}); const worker = await navigator.serviceWorker?.getRegistration(); const subscription = await worker?.pushManager.getSubscription(); if (subscription) await subscription.unsubscribe(); notice('App alerts are off.'); }
+  try { await api('/api/push',{method:'DELETE',body:'{}'}); const worker = await navigator.serviceWorker?.getRegistration(); const subscription = await worker?.pushManager?.getSubscription(); if (subscription) await subscription.unsubscribe(); notice('App alerts are off.'); }
   catch (error) { notice(error.message,true); }
 };
 ['install-auth','install-side','install-account'].forEach(id => $(id).onclick = install);
@@ -226,6 +228,7 @@ setInterval(() => { if (!document.hidden) loadSignals(); },2000);
 setInterval(countdowns,1000);
 setInterval(async () => { if (session && !document.hidden) { try { await refreshSession(); } catch (error) { if (error.status === 401) authScreen(); } } },30000);
 async function boot() {
+  if (nativeAndroid) ['install-auth','install-side','install-account'].forEach(id => $(id).hidden = true);
   if (location.hash.startsWith('#claim=')) { claimToken = urlCode(location.href); history.replaceState(null,'','/#subscription'); }
   if (location.hash.startsWith('#setup=')) { setupToken = location.hash.slice(7); history.replaceState(null,'','/'); }
   try {

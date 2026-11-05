@@ -195,6 +195,8 @@ def test_manifest_icons_and_service_worker_shell_only(client):
 
 
 def test_android_package_association_and_authenticated_upload(client,monkeypatch):
+    import apps.signals_app.api as app_api
+    monkeypatch.setattr(app_api, "ANDROID_RELEASE", client.app.state.store.directory / "no-bundled-release.apk")
     assert client.get('/.well-known/assetlinks.json').json()==[]
     fingerprint=':'.join(['A1']*32)
     monkeypatch.setenv('SIGNALS_APP_ANDROID_SHA256',fingerprint)
@@ -202,3 +204,17 @@ def test_android_package_association_and_authenticated_upload(client,monkeypatch
     assert client.get('/download/android').status_code==404
     assert client.post('/api/internal/android-apk',content=b'not-an-apk').status_code==401
     assert client.post('/api/internal/android-apk',content=b'not-an-apk',headers={'Authorization':'Bearer '+KEY}).status_code==400
+
+
+def test_published_android_fix_replaces_stale_download(client,monkeypatch,tmp_path):
+    import apps.signals_app.api as app_api
+    package = tmp_path / 'TradingSignals-0.1.1-test.apk'
+    package.write_bytes(b'new-version')
+    (client.app.state.store.directory / 'TradingSignals-test.apk').write_bytes(b'old-version')
+    monkeypatch.setattr(app_api, 'ANDROID_RELEASE', package)
+    response = client.get('/download/android')
+    assert response.status_code == 200
+    assert response.content == b'new-version'
+    assert response.headers['content-type'] == 'application/vnd.android.package-archive'
+    assert 'TradingSignals-0.1.1-test.apk' in response.headers['content-disposition']
+    assert response.headers['cache-control'] == 'no-store'

@@ -1,16 +1,21 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <category android:name="android.intent.category.BROWSABLE"/>
+            <data android:scheme="https"/>
+        </intent>
+    </queries>
     <application android:label="Trading Signals" android:icon="@drawable/ic_launcher"
         android:allowBackup="false" android:supportsRtl="true"
-        android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Translucent.NoTitleBar">
+        android:enableOnBackInvokedCallback="true"
+        android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.NoActionBar">
         <meta-data android:name="asset_statements" android:resource="@string/asset_statements"/>
         <meta-data android:name="web_manifest_url" android:value="https://signals-app-production-ba26.up.railway.app/assets/manifest.webmanifest"/>
-        <activity android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
-            android:exported="true" android:label="Trading Signals">
-            <meta-data android:name="android.support.customtabs.trusted.DEFAULT_URL" android:value="@string/launch_url"/>
-            <meta-data android:name="android.support.customtabs.trusted.STATUS_BAR_COLOR" android:resource="@color/background"/>
-            <meta-data android:name="android.support.customtabs.trusted.NAVIGATION_BAR_COLOR" android:resource="@color/background"/>
+        <activity android:name=".MainActivity" android:exported="true" android:label="Trading Signals"
+            android:launchMode="singleTop" android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -22,13 +27,5 @@
                 <data android:scheme="https" android:host="signals-app-production-ba26.up.railway.app"/>
             </intent-filter>
         </activity>
-        <service android:name="com.google.androidbrowserhelper.trusted.DelegationService"
-            android:enabled="true" android:exported="true">
-            <meta-data android:name="android.support.customtabs.trusted.SMALL_ICON" android:resource="@drawable/ic_launcher"/>
-            <intent-filter>
-                <action android:name="android.support.customtabs.trusted.TRUSTED_WEB_ACTIVITY_SERVICE"/>
-                <category android:name="android.intent.category.DEFAULT"/>
-            </intent-filter>
-        </service>
     </application>
 </manifest>
