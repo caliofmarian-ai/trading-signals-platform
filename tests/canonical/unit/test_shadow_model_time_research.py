@@ -191,6 +191,32 @@ def test_private_export_reader_cannot_exceed_remaining_byte_budget(research):
     assert budget[0] == -1  # At most the bound plus one overflow sentinel.
 
 
+@pytest.mark.parametrize("field,value", [
+    ("outcome", "unexpected-private-text"), ("finalized_ts", "unexpected-private-text"),
+    ("expiry_ts", "unexpected-private-text"), ("expiry_sample", {"price": "unexpected-private-text"}),
+])
+def test_pending_export_cannot_leak_unvalidated_optional_fields(research, field, value):
+    _register(research)
+    path = next((research._root() / "records").glob("*.json"))
+    row = json.loads(path.read_text())
+    row[field] = value
+    path.write_text(json.dumps(row))
+    result = research.private_calibration_evidence()
+    assert result["status"] == "SOURCE_UNAVAILABLE_OR_INVALID" and result["records"] == []
+    assert "unexpected-private-text" not in json.dumps(result)
+
+
+def test_unknown_export_requires_a_numeric_finalization_time(research):
+    _register(research)
+    _cycle(research, 1073)
+    path = next((research._root() / "records").glob("*.json"))
+    row = json.loads(path.read_text())
+    assert row["outcome"] == "UNKNOWN"
+    row["finalized_ts"] = "unexpected-private-text"
+    path.write_text(json.dumps(row))
+    assert research.private_calibration_evidence()["status"] == "SOURCE_UNAVAILABLE_OR_INVALID"
+
+
 @pytest.mark.parametrize("sample", [
     _sample(1063, provider="TWELVE_DATA"), _sample(1063, symbol="GBP/USD"),
     _sample(1063, source="HISTORICAL_CANDLE"), _sample(1065), _sample(1059),
