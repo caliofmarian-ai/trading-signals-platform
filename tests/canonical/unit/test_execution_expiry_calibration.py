@@ -22,7 +22,8 @@ def calibration(canonical_runtime_root, monkeypatch):
 def _entry(stamp=1000, level=0, **changes):
     return {"level":level,"direction":"BUY","created_ts":stamp,"pre_ts":stamp-35,
             "confirm_ts":stamp-30,"open_ts":stamp,"confirm_model_seconds":120,
-            "model_seconds":120,"adjusted_seconds":90,**changes}
+            "model_seconds":120,"adjusted_seconds":90,"buffer_distance":0.00022,
+            "open_decision_id":"synthetic-decision", "open_decision_audit_id":"synthetic-audit",**changes}
 
 
 def _capture(module,params,entries):
@@ -231,6 +232,8 @@ def test_live_pipeline_registers_only_complete_first_stage_chains(canonical_runt
     row=next(iter(module._read(module._path())["records"].values()))
     assert row["levels"]["0"]["confirm_model_seconds"]==evaluation.time.context.model_expiry*60
     assert row["levels"]["0"]["open_ts"]-row["levels"]["0"]["pre_ts"]==30
+    assert row["buffer_snapshot"]["buffer_distance"]==evaluation.market.context.buffer_distance
+    assert row["levels"]["0"]["open_decision_id"].startswith("dec-v1-")
 
 
 def test_calibration_failure_preserves_existing_severity_checkpoint(canonical_runtime_root,monkeypatch):
