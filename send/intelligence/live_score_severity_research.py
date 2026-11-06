@@ -25,6 +25,7 @@ from state_store.state_store import default_fsm_state
 PROTOCOL = "LIVE_SCORE_SEVERITY_CONTINUOUS_V3"
 LEGACY_PROTOCOL = "LIVE_SCORE_SEVERITY_RESEARCH_V2"
 MAX_BYTES = 4 * 1024 * 1024
+PUBLIC_MARKER_MAX_BYTES = 48 * 1024
 REPORT_SECONDS = 60
 MIN_PRE_LEAD_SECONDS = 30
 STAGES = ("PRE", "CONFIRM", "OPEN_NOW")
@@ -197,6 +198,72 @@ def _paper_summary(row: dict) -> dict:
     return result
 
 
+def _distribution(values: list[float]) -> dict:
+    """Bound timing evidence for the public log without losing sample counts."""
+    ordered = sorted(values)
+    if not ordered:
+        return {"sample": 0, "p50": None, "p95": None, "min": None, "max": None}
+    return {"sample": len(ordered),
+            "p50": ordered[math.ceil(.50 * len(ordered)) - 1],
+            "p95": ordered[math.ceil(.95 * len(ordered)) - 1],
+            "min": ordered[0], "max": ordered[-1]}
+
+
+def _public_paper_summary(row: dict) -> dict:
+    """Expose outcome truth, not an unbounded horizon histogram."""
+    result = _paper_summary(row)
+    horizons = result["horizon_seconds_counts"]
+    return {key: result[key] for key in (
+        "protocol", "truth_domain", "registered", "pending", "outcomes", "decisive_sample",
+        "hypothetical_win_rate_percent", "capacity_rejections", "archived_registered"
+    )} | {"horizon_seconds_sample": sum(horizons.values()),
+         "horizon_seconds_distinct": len(horizons),
+         "horizon_seconds_counts_scope": "PRIVATE_FULL_SUMMARY"}
+
+
+def _marker_summary(state: dict, now: float) -> dict:
+    """A complete 21-level aggregate that remains one parseable Railway line."""
+    full = _summary(state, now)
+    levels = []
+    for source, row in zip(full["levels"], state["levels"]):
+        retained_incomplete = sum(
+            any(stage in opportunity for stage in STAGES)
+            and not all(stage in opportunity for stage in STAGES)
+            for opportunity in row["opportunities"].values()
+        )
+        levels.append({key: source[key] for key in (
+            "level", "score_thresholds", "evaluations", "decision_kinds", "blockers",
+            "fsm_reason_families", "accepted_unique_stages", "complete_ordered_chains"
+        )} | {
+            "retained_incomplete_chains": retained_incomplete,
+            "complete_chain_gap_seconds": {
+                name: _distribution([sample[name] for sample in row["stage_gap_samples"]])
+                for name in PAIRS
+            },
+            "stage_pair_gap_seconds": {
+                name: _distribution(row["stage_pair_gap_samples"][name]) for name in PAIRS
+            },
+            "paper_trades": _public_paper_summary(row),
+        })
+    return {key: value for key, value in full.items() if key not in {
+        "levels", "stage_gap_sample_scope", "stage_pair_gap_sample_scope"
+    }} | {
+        "public_marker_contract": "LIVE_SCORE_SEVERITY_AGGREGATE_MARKER_V1",
+        "levels": levels,
+        "complete_chain_gap_scope": "LAST_32_COMPLETE_RESEARCH_CHAINS_PER_LEVEL_AGGREGATED",
+        "stage_pair_gap_scope": "LAST_32_FIRST_ACCEPTED_STAGE_PAIRS_PER_LEVEL_AGGREGATED_INCLUDING_INCOMPLETE_CHAINS",
+        "retained_incomplete_chain_scope": "CURRENT_BOUNDED_128_OPPORTUNITY_IDENTITIES_PER_LEVEL",
+        "private_full_summary_available": True,
+    }
+
+
+def _marker_json(state: dict, now: float) -> str:
+    payload = json.dumps(_marker_summary(state, now), sort_keys=True, separators=(",", ":"), allow_nan=False)
+    if len(payload.encode()) > PUBLIC_MARKER_MAX_BYTES:
+        raise ValueError("SEVERITY_PUBLIC_MARKER_TOO_LARGE")
+    return payload
+
+
 def _save(path: Path, value: dict) -> None:
     if len((json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode()) > MAX_BYTES:
         raise ValueError("SEVERITY_EVIDENCE_TOO_LARGE")
@@ -332,7 +399,7 @@ def advance_paper_trades(*, now_ts: float, active_provider: str, price_loader) -
             return None
         _save(path, state)
         report = _summary(state, now_ts)
-    print("TSP_LIVE_SCORE_PAPER_TRADES " + json.dumps(report, sort_keys=True), flush=True)
+    print("TSP_LIVE_SCORE_PAPER_TRADES " + _marker_json(state, now_ts), flush=True)
     return report
 
 
@@ -393,7 +460,7 @@ def observe(evaluation: BinaryStrategyV2Evaluation, params: dict, *, now_ts: flo
         state["last_report_slot"] = max(slot, state["last_report_slot"])
         _save(path, state)
     if report:
-        print("TSP_LIVE_SCORE_SEVERITY " + json.dumps(_summary(state, now_ts), sort_keys=True), flush=True)
+        print("TSP_LIVE_SCORE_SEVERITY " + _marker_json(state, now_ts), flush=True)
     if calibration_entries:
         from intelligence import execution_expiry_calibration
         execution_expiry_calibration.capture(calibration_entries, params=params, buffer_mode=buffer_mode,
