@@ -18,7 +18,8 @@ from intelligence import shadow_model_time_research as quotes
 from intelligence import buffer_expiry_evidence as buffer_evidence
 from core.market_history_policy import HISTORY_POLICY
 
-PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V2"
+PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V3"
+PREVIOUS_PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V2"
 BIASES = (0.0, 0.05, 0.10, 0.15, 0.20, 0.25)
 MAX_RECORDS = 512
 MAX_BYTES = 4 * 1024 * 1024
@@ -31,6 +32,7 @@ MAX_UNKNOWN_FRACTION = 0.10
 VALIDATION_Z = NormalDist().inv_cdf(1 - 0.05 / 2)
 REPORT_SECONDS = 60
 _last_report: dict[str, int] = {}
+POST_MODEL_OFFSETS = (60, 180, 300)  # existing diagnostic checkpoints; never execution expiry
 
 
 def _buffer_policy():
@@ -82,6 +84,22 @@ def _read(path):
 
 
 def _save(path, state):
+    if state.get("protocol") == PREVIOUS_PROTOCOL and path.exists():
+        original = path.read_bytes()
+        backup_dir = path.parent / "protocol_backups"
+        if backup_dir.is_symlink():
+            raise ValueError("INVALID_PROTOCOL_BACKUP_PATH")
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup = backup_dir / ("physical_v2_" + hashlib.sha256(original).hexdigest() + ".json")
+        if not backup.exists():
+            with backup.open("xb") as handle:
+                handle.write(original)
+                handle.flush()
+                import os
+                os.fsync(handle.fileno())
+        elif backup.read_bytes() != original:
+            raise ValueError("PROTOCOL_BACKUP_MISMATCH")
+    state["protocol"] = PROTOCOL
     validate(state)
     if len(json.dumps(state, allow_nan=False).encode()) > MAX_BYTES:
         raise ValueError("CALIBRATION_SIZE_LIMIT")
@@ -89,7 +107,7 @@ def _save(path, state):
 
 
 def validate(state):
-    if (not isinstance(state, dict) or state.get("protocol") != PROTOCOL
+    if (not isinstance(state, dict) or state.get("protocol") not in {PROTOCOL, PREVIOUS_PROTOCOL}
         or state.get("bias_grid") != list(BIASES) or not isinstance(state.get("records"), dict)
         or len(state["records"]) > MAX_RECORDS or type(state.get("capacity_rejections")) is not int
         or state["capacity_rejections"] < 0):
@@ -125,6 +143,19 @@ def validate(state):
             buffer_evidence.validate_snapshot(frozen, scope["parameter_sha256"])
             if row.get("buffer_snapshot_sha256") != _digest(frozen):
                 raise ValueError("BUFFER_SNAPSHOT_CHANGED")
+        if "decision_snapshot" in row:
+            frozen = row["decision_snapshot"]
+            if (not isinstance(frozen, dict) or row.get("decision_snapshot_sha256") != _digest(frozen)
+                or frozen.get("decision_policy") != "PHYSICAL_ONLY_V3"
+                or frozen.get("history_policy") != HISTORY_POLICY
+                or frozen.get("direction") != row["direction"]
+                or frozen.get("market_context", {}).get("buffer_distance") != row["buffer_snapshot"]["buffer_distance"]):
+                raise ValueError("PHYSICAL_DECISION_SNAPSHOT_CHANGED")
+        for extra, offset in zip(row.get("post_model_observations", []), POST_MODEL_OFFSETS):
+            if extra.get("offset_seconds") != offset or extra.get("horizon_seconds") != model + offset:
+                raise ValueError("CHANGED_POST_MODEL_HORIZON")
+        if "post_model_observations" in row and len(row["post_model_observations"]) != len(POST_MODEL_OFFSETS):
+            raise ValueError("INVALID_POST_MODEL_GRID")
         for policy, context in row["policies"].items():
             if policy != "PHYSICAL_ONLY_V3":
                 raise ValueError("INVALID_CALIBRATION_POLICY")
@@ -133,6 +164,12 @@ def validate(state):
                 or opportunity_id in seen_opportunities):
                 raise ValueError("INVALID_OR_REPEATED_PHYSICAL_OPPORTUNITY")
             seen_opportunities.add(opportunity_id)
+            if "decision_snapshot" in row:
+                snapshot = row["decision_snapshot"]
+                if (snapshot.get("signal_id") != opportunity_id
+                    or snapshot.get("decision_id") != context.get("open_decision_id")
+                    or snapshot.get("decision_audit_id") != context.get("open_decision_audit_id")):
+                    raise ValueError("DECISION_SNAPSHOT_SOURCE_MISMATCH")
             pre, confirm, opened = (_number(context[k]) for k in ("pre_ts", "confirm_ts", "open_ts"))
             _number(context["confirm_model_seconds"])
             for key in ("open_decision_id", "open_decision_audit_id"):
@@ -143,7 +180,7 @@ def validate(state):
         entry = row["entry"]
         if entry is not None:
             stamp = _number(entry.get("observed_ts"))
-            if quotes._sample(entry, stamp) != entry or not created <= stamp <= created + quotes.MAX_ENTRY_DELAY_SECONDS:
+            if _observed_quote(entry, stamp) != entry or not created <= stamp <= created + quotes.MAX_ENTRY_DELAY_SECONDS:
                 raise ValueError("INVALID_CALIBRATION_ENTRY")
         if (row["state"] == "WAITING_ENTRY") != (entry is None and any(c["outcome"] == "PENDING" for c in row["candidates"])):
             raise ValueError("INVALID_CALIBRATION_ENTRY_STATE")
@@ -162,7 +199,7 @@ def validate(state):
             expiry = candidate["quote"]
             if outcome in {"WIN", "LOSS", "DRAW"}:
                 stamp = _number(expiry.get("observed_ts"))
-                if (entry is None or quotes._sample(expiry, stamp) != expiry
+                if (entry is None or _observed_quote(expiry, stamp) != expiry
                     or not entry["observed_ts"] + horizon <= stamp <= entry["observed_ts"] + horizon + quotes.MAX_SAMPLE_DELAY_SECONDS
                     or quotes._classify(row["direction"], entry["price"], expiry["price"]) != outcome):
                     raise ValueError("INVALID_CALIBRATION_LABEL")
@@ -170,6 +207,21 @@ def validate(state):
                 raise ValueError("UNOBSERVED_CALIBRATION_LABEL")
         if (row["state"] == "FINAL") != all(c["outcome"] != "PENDING" for c in candidates):
             raise ValueError("INVALID_CALIBRATION_FINAL_STATE")
+        for extra in row.get("post_model_observations", []):
+            outcome, sample = extra["outcome"], extra["quote"]
+            if outcome not in {"PENDING", "UNKNOWN", "WIN", "LOSS", "DRAW"}:
+                raise ValueError("INVALID_POST_MODEL_OUTCOME")
+            if outcome in {"WIN", "LOSS", "DRAW"}:
+                stamp = _number(sample.get("observed_ts"))
+                if (entry is None or _observed_quote(sample, stamp) != sample
+                    or not entry["observed_ts"] + extra["horizon_seconds"] <= stamp
+                    <= entry["observed_ts"] + extra["horizon_seconds"] + quotes.MAX_SAMPLE_DELAY_SECONDS
+                    or quotes._classify(row["direction"], entry["price"], sample["price"]) != outcome):
+                    raise ValueError("INVALID_POST_MODEL_LABEL")
+            elif sample is not None:
+                raise ValueError("UNOBSERVED_POST_MODEL_LABEL")
+        from intelligence.physical_study_delivery import validate_delivery
+        validate_delivery(row)
 
 
 def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, now_ts):
@@ -240,11 +292,47 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
                        candidates=[{"bias": bias, "horizon_seconds": row["model_seconds"] * (1 - bias),
                                     "outcome": "INFEASIBLE" if row["model_seconds"] * (1 - bias) < row["adjusted_seconds"] else "PENDING",
                                     "reason": None, "quote": None} for bias in BIASES])
+            if item.get("decision_snapshot") is not None:
+                row["decision_snapshot"] = item["decision_snapshot"]
+                row["decision_snapshot_sha256"] = _digest(row["decision_snapshot"])
+                row["post_model_observations"] = [{"offset_seconds": offset,
+                    "horizon_seconds": row["model_seconds"] + offset,
+                    "outcome": "PENDING", "reason": None, "quote": None}
+                    for offset in POST_MODEL_OFFSETS]
+            if item.get("publish_study") is True:
+                row["study_delivery"] = {"entry": None, "result": None}
             state["records"][identity] = row
         _save(path, state)
 
 
-def advance(*, now_ts, active_provider, price_loader):
+def _observed_quote(raw, now):
+    """Accept retained genuine provider ticks separately from fresh poll samples."""
+    if isinstance(raw, dict) and raw.get("source") == "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1":
+        if raw.get("provider") != "FINNHUB" or str(raw.get("symbol", "")).replace("/", "") != "EURUSD":
+            return None
+        try:
+            stamp, price = _number(raw.get("observed_ts")), _number(raw.get("price"))
+        except ValueError:
+            return None
+        if stamp > now:
+            return None
+        return {"provider": "FINNHUB", "symbol": "EUR/USD", "price": price,
+                "observed_ts": stamp, "source": "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1"}
+    return quotes._sample(raw, now)
+
+
+def _window_quote(loader, latest, target, delay, now):
+    if loader is None:
+        sample = latest
+    else:
+        try:
+            sample = _observed_quote(loader("EUR/USD", target, delay), now)
+        except Exception:
+            sample = None
+    return sample if sample and target <= sample["observed_ts"] <= target + delay else None
+
+
+def advance(*, now_ts, active_provider, price_loader, observation_loader=None):
     path = _path()
     if path is None:
         return None
@@ -254,7 +342,8 @@ def advance(*, now_ts, active_provider, price_loader):
         if state is None:
             state = None
         else:
-            pending = [r for r in state["records"].values() if r["state"] != "FINAL"]
+            pending = [r for r in state["records"].values() if r["state"] != "FINAL"
+                       or any(c["outcome"] == "PENDING" for c in r.get("post_model_observations", []))]
             sample = None
             if pending and active_provider == "FINNHUB":
                 try:
@@ -267,12 +356,14 @@ def advance(*, now_ts, active_provider, price_loader):
                     continue
                 reason = "PROVIDER_CHANGED" if active_provider != "FINNHUB" else None
                 if row["entry"] is None and reason is None:
-                    if sample and row["created_ts"] <= sample["observed_ts"] <= row["created_ts"] + quotes.MAX_ENTRY_DELAY_SECONDS:
-                        row.update(entry=dict(sample), state="OBSERVING")
+                    entry_quote = _window_quote(observation_loader, sample, row["created_ts"],
+                                                quotes.MAX_ENTRY_DELAY_SECONDS, now)
+                    if entry_quote:
+                        row.update(entry=entry_quote, state="OBSERVING")
                         changed = True
                     elif now > row["created_ts"] + quotes.MAX_ENTRY_DELAY_SECONDS:
                         reason = "ENTRY_OBSERVATION_MISSING"
-                for candidate in row["candidates"]:
+                for candidate in row["candidates"] + row.get("post_model_observations", []):
                     if candidate["outcome"] != "PENDING":
                         continue
                     if reason:
@@ -280,8 +371,10 @@ def advance(*, now_ts, active_provider, price_loader):
                         changed = True
                     elif row["entry"] is not None:
                         target = row["entry"]["observed_ts"] + candidate["horizon_seconds"]
-                        if sample and target <= sample["observed_ts"] <= target + quotes.MAX_SAMPLE_DELAY_SECONDS:
-                            candidate.update(quote=dict(sample), outcome=quotes._classify(row["direction"], row["entry"]["price"], sample["price"]), reason="OBSERVED_PAIRED_EXPIRY")
+                        expiry_quote = _window_quote(observation_loader, sample, target,
+                                                    quotes.MAX_SAMPLE_DELAY_SECONDS, now)
+                        if expiry_quote:
+                            candidate.update(quote=expiry_quote, outcome=quotes._classify(row["direction"], row["entry"]["price"], expiry_quote["price"]), reason="OBSERVED_PAIRED_EXPIRY")
                             changed = True
                         elif now > target + quotes.MAX_SAMPLE_DELAY_SECONDS:
                             candidate.update(outcome="UNKNOWN", reason="EXPIRY_OBSERVATION_MISSING")
@@ -290,6 +383,16 @@ def advance(*, now_ts, active_provider, price_loader):
                     row["state"] = "FINAL"
             if changed:
                 _save(path, state)
+    if state is not None and any(
+        r["entry"] is not None and isinstance(r.get("study_delivery"), dict)
+        and (r["study_delivery"]["entry"] is None
+             or ((r["study_delivery"]["entry"] or {}).get("status") == "API_ACCEPTED"
+                 and r["study_delivery"]["result"] is None
+                 and r["candidates"][0]["outcome"] not in {"PENDING", "INFEASIBLE"}))
+        for r in state["records"].values()
+    ):
+        from intelligence import physical_study_delivery
+        physical_study_delivery.dispatch_async(now_ts=now, active_provider=active_provider)
     slot = int(now // REPORT_SECONDS)
     if _last_report.get(str(path), -1) < slot:
         report = analyze(state, now_ts=now)
@@ -343,6 +446,25 @@ def analyze(state, *, now_ts):
     report["legacy_directional_only_entries"] = sum("buffer_snapshot" not in r for r in records)
     report["prospective_buffer_entries"] = sum("buffer_snapshot" in r for r in records)
     report["buffer_collection_started_ts"] = state.get("buffer_collection_started_ts")
+    report["decision_snapshot_entries"] = sum("decision_snapshot" in r for r in records)
+    report["entry_quote_sources"] = dict(Counter(r["entry"]["source"] for r in records if r["entry"]))
+    report["expiry_quote_sources"] = dict(Counter(c["quote"]["source"] for r in records
+                                                for c in r["candidates"] if c["quote"]))
+    report["study_open_now_api_accepted"] = sum((r.get("study_delivery") or {}).get("entry", {}).get("status") == "API_ACCEPTED"
+        for r in records if (r.get("study_delivery") or {}).get("entry"))
+    report["study_results_api_accepted"] = sum((r.get("study_delivery") or {}).get("result", {}).get("status") == "API_ACCEPTED"
+        for r in records if (r.get("study_delivery") or {}).get("result"))
+    report["study_delivery_statuses"] = dict(Counter(
+        f"{phase}:{receipt['status']}" for r in records
+        for phase, receipt in (r.get("study_delivery") or {}).items() if receipt))
+    report["post_model_diagnostics"] = [{"offset_seconds": offset, **_counts([
+        {**r, "candidates": r["post_model_observations"]} for r in records
+        if "post_model_observations" in r], index)} for index, offset in enumerate(POST_MODEL_OFFSETS)]
+    report["post_model_execution_authority"] = False
+    report["baseline_model_observations"] = _counts(records, 0)
+    report["by_observed_trend"] = [{"trend_context": trend, "entries": len(group), **_counts(group, 0)}
+        for trend in ("WITH_TREND", "FLAT", "COUNTER_TREND")
+        if (group := [r for r in records if (r.get("decision_snapshot") or {}).get("market_context", {}).get("trend_context") == trend])]
     report["entry_quote_delay_seconds"] = _quantiles([
         r["entry"]["observed_ts"]-r["created_ts"] for r in records if r["entry"] is not None])
     report["paired_expiry_observations"] = [{"pressure_bias":bias, **_counts(records,index),
@@ -450,7 +572,8 @@ def summary(*, now_ts=None):
 
 
 
-def observe_accepted_chain(decision, handoff, params, *, now_ts, provider, buffer_mode):
+def observe_accepted_chain(decision, handoff, params, *, now_ts, provider, buffer_mode,
+                           market_evidence=None, publish_study=True):
     """One prospectively frozen quote experiment per accepted V3 opportunity."""
     if (provider != "FINNHUB" or decision.setup.symbol.replace("/", "") != "EURUSD"
         or handoff.accepted_stage != "OPEN_NOW" or not handoff.stage_handoff_ready or _path() is None):
@@ -459,6 +582,16 @@ def observe_accepted_chain(decision, handoff, params, *, now_ts, provider, buffe
     if row.get("physical_calibration_captured_signal_id") == decision.signal_id:
         return
     from core.strategy_v3 import STRATEGY_VERSION, CANONICAL_SPEC
+    exported = decision.to_dict()
+    frozen = {key: exported[key] for key in ("decision_policy", "history_policy") if key in exported}
+    frozen.update(history_policy=HISTORY_POLICY, direction=decision.setup.direction,
+        decision_kind=decision.kind,
+        signal_id=decision.signal_id, decision_id=decision.decision_id,
+        decision_audit_id=decision.decision_audit_id, candle_ts=decision.setup.evaluated_ts,
+        **{key: exported[key] for key in ("market_context", "structure", "time", "trade_physics")})
+    if market_evidence is not None:
+        frozen["indicators"] = {key: getattr(market_evidence, key, None) for key in
+            ("atr_m5", "activity_ratio", "activity_gate_ok", "ema_fast", "ema_slow", "rsi")}
     capture([{
         "policy": "PHYSICAL_ONLY_V3", "direction": decision.setup.direction,
         "opportunity_signal_id": decision.signal_id,
@@ -469,6 +602,7 @@ def observe_accepted_chain(decision, handoff, params, *, now_ts, provider, buffe
         "adjusted_seconds": decision.time.t_needed_adjusted * 60,
         "buffer_distance": decision.market_context.buffer_distance,
         "open_decision_id": decision.decision_id, "open_decision_audit_id": decision.decision_audit_id,
+        "decision_snapshot": frozen, "publish_study": publish_study,
     }], params=params, buffer_mode=buffer_mode, strategy_version=STRATEGY_VERSION,
        canonical_spec=CANONICAL_SPEC, now_ts=now_ts)
     row["physical_calibration_captured_signal_id"] = decision.signal_id

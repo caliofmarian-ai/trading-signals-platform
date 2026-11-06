@@ -114,6 +114,14 @@ def observe_evaluation(decision, handoff, execution_time, *, now_ts: float, para
             state["fsm_accepted_stage_evaluations"] = dict(stages)
         state["execution_expiry_available"] += int(execution_time.available)
         state["last_evaluation_ts"] = now_ts
+        if decision.kind in {"PRE", "CONFIRM", "OPEN_NOW"} and not getattr(handoff, "stage_handoff_ready", False):
+            reason = getattr(handoff, "reason", "OTHER")
+            if reason not in {"cooldown_active", "watchlist_full", "DUPLICATE_STAGE_CANDLE",
+                "SIGNAL_ID_CONTINUITY_REQUIRED", "PHYSICAL_LIFECYCLE_ORDER_REQUIRED", "CANONICAL_PRE_PATH_REQUIRED"}:
+                reason = "OTHER"
+            reasons = Counter(state.get("fsm_non_handoff_reasons", {}))
+            reasons[reason] += 1
+            state["fsm_non_handoff_reasons"] = dict(reasons)
         storage.save_json_atomic(str(path), state)
 
 
@@ -154,6 +162,7 @@ def _summary(state: dict[str, Any], now_ts: float) -> dict[str, Any]:
                                 "last_evaluation_ts", "last_publication_ts", "parameter_sha256",
                                 "baseline_changed", "activity_gate_model")},
         **({"decision_policy": state["decision_policy"]} if "decision_policy" in state else {}),
+        "fsm_non_handoff_reasons": state.get("fsm_non_handoff_reasons", {}),
         "status": "PAUSED_BASELINE_CHANGED" if state["baseline_changed"] else "OBSERVING",
         "operating_mode": "CONTINUOUS", "automatic_stop_at": None,
         "api_timing_sample_count": len(times),
@@ -200,6 +209,22 @@ def report_if_due(*, now_ts: float) -> dict[str, Any] | None:
             + "\nExecution-expiry calibration remains unproven. No automatic parameter change.")
     if report["baseline_changed"]:
         text += "\nObservation paused after a parameter change; samples were not mixed."
+    from core.physical_params import physical_runtime_enabled
+    if physical_runtime_enabled():
+        try:
+            from intelligence import physical_expiry_calibration
+            observed = physical_expiry_calibration.summary(now_ts=now_ts)
+            baseline = observed.get("baseline_model_observations", {})
+            report["physical_study_progress"] = {key: observed.get(key, 0) for key in
+                ("unique_entry_experiments", "finalized_entry_experiments",
+                 "study_open_now_api_accepted", "study_results_api_accepted")}
+            text += (f"\nOPEN_NOW · STUDIU: {observed.get('study_open_now_api_accepted', 0)}; "
+                     f"rezultate: {observed.get('study_results_api_accepted', 0)}"
+                     f"\nModel: WIN {baseline.get('wins', 0)}, LOSS {baseline.get('losses', 0)}, "
+                     f"UNKNOWN {baseline.get('unknown', 0)}"
+                     f"\nBuffer: atins {baseline.get('buffer_met', 0)}, neatins {baseline.get('buffer_not_met', 0)}")
+        except Exception:
+            text += "\nStudy progress is temporarily unavailable."
     result = telegram_publisher.send_message(chat_id=destination(), text=text)
     report["notification_api_accepted"] = result.get("ok") is True
     print("TSP_OWNER_TIMING_SESSION " + json.dumps(report, sort_keys=True), flush=True)
