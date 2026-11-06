@@ -222,7 +222,8 @@ def _validate_optional_strategy_auditor(settings_path: Path) -> None:
 def _validate_config_tree(base_dir: Path) -> None:
     apply_path_contract(base_dir)
 
-    from core import admin_permissions, distribution_router, runtime_param_gate
+    from core import admin_permissions, distribution_router
+    from core.physical_params import load_physical_runtime_algo_params
     from state_store import state_store as runtime_state_store
 
     paths = runtime_paths(base_dir)
@@ -241,7 +242,7 @@ def _validate_config_tree(base_dir: Path) -> None:
         if not path.is_file():
             raise RailwayInitError(f"Required config file missing: {path}")
 
-    runtime_param_gate.load_runtime_algo_params(path=str(required["algo_params"]))
+    load_physical_runtime_algo_params(path=str(required["algo_params"]))
     runtime_state_store.load_active_symbols(path=str(required["active_symbols"]))
     runtime_state_store.load_settings(path=str(required["admin_settings"]))
     _load_json_object(required["channel_config"], label="channel_config")

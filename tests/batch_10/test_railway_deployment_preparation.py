@@ -153,6 +153,43 @@ def test_initialize_is_idempotent(railway_root: Path, monkeypatch: pytest.Monkey
     assert len(second["preserved_files"]) == 8
 
 
+def test_fresh_process_restart_accepts_already_migrated_physical_v3(railway_root: Path, monkeypatch: pytest.MonkeyPatch):
+    import json
+    _set_base_env(monkeypatch, railway_root)
+    monkeypatch.setenv("MARKET_DATA_PROVIDER", "TWELVE_DATA")
+    _fresh_import("scripts.railway_init").initialize_for_railway()
+    path = railway_root / "config/algo_params.json"
+    migrated = path.read_bytes()
+    params = json.loads(migrated)
+    assert params["algo_version"] == "3.0.0"
+    assert params["decision_policy"] == "PHYSICAL_ONLY_V3"
+    assert "score_thresholds" not in params
+    backup = list((path.parent / "policy_migrations").glob("*.json"))
+    assert len(backup) == 1
+    second = _fresh_import("scripts.railway_init").initialize_for_railway()
+    assert second["seeded_files"] == []
+    assert path.read_bytes() == migrated
+    assert list((path.parent / "policy_migrations").glob("*.json")) == backup
+    report = _fresh_import("runtime.startup_preflight").run_startup_preflight(require_shadow_mode=True)
+    assert report["status"] == "ready" and report["algo_version"] == "3.0.0"
+    assert report["decision_policy"] == "PHYSICAL_ONLY_V3"
+
+
+def test_restart_rejects_reintroduced_scores_without_repair(railway_root: Path, monkeypatch: pytest.MonkeyPatch):
+    import json
+    _set_base_env(monkeypatch, railway_root)
+    _fresh_import("scripts.railway_init").initialize_for_railway()
+    path = railway_root / "config/algo_params.json"
+    params = json.loads(path.read_text())
+    params["score_thresholds"] = {"PRE": 70, "CONFIRM": 75, "OPEN": 80}
+    path.write_text(json.dumps(params))
+    before = path.read_bytes()
+    mod = _fresh_import("scripts.railway_init")
+    with pytest.raises(mod.RailwayInitError, match="physical-only"):
+        mod.initialize_for_railway()
+    assert path.read_bytes() == before
+
+
 def test_initialize_preserves_existing_valid_config(railway_root: Path, monkeypatch: pytest.MonkeyPatch):
     _set_base_env(monkeypatch, railway_root)
     config_dir = railway_root / "config"
