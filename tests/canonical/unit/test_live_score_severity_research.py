@@ -41,6 +41,40 @@ def test_all_live_levels_reuse_canonical_evidence_without_mutating_production(ca
     output = capsys.readouterr().out
     assert "TSP_LIVE_SCORE_SEVERITY" in output and "fsm_state" not in output
     assert "opportunities" not in output and "sig-v2-" not in output
+    payload = output.split("TSP_LIVE_SCORE_SEVERITY ", 1)[1].splitlines()[0]
+    marker = json.loads(payload)
+    assert len(payload.encode()) <= module.PUBLIC_MARKER_MAX_BYTES
+    assert marker["public_marker_contract"] == "LIVE_SCORE_SEVERITY_AGGREGATE_MARKER_V1"
+    assert len(marker["levels"]) == 21
+    assert "stage_gap_samples" not in marker["levels"][0]
+    assert marker["levels"][0]["complete_chain_gap_seconds"]["pre_to_open_seconds"]["sample"] == 0
+    assert "horizon_seconds_counts" not in marker["levels"][0]["paper_trades"]
+
+
+def test_public_marker_stays_parseable_with_full_timing_windows(canonical_runtime_root, monkeypatch):
+    module, evaluation, params = _prepare(canonical_runtime_root, monkeypatch)
+    state = module._new(params, evaluation, 1000, "SMALL")
+    complete = {"pre_to_confirm_seconds": 29.125,
+                "confirm_to_open_seconds": 30.875,
+                "pre_to_open_seconds": 60.0}
+    for row in state["levels"]:
+        row["stage_gap_samples"] = [complete.copy() for _ in range(32)]
+        row["stage_pair_gap_samples"] = {
+            name: [float(index) / 7 for index in range(32)] for name in module.PAIRS
+        }
+        row["opportunities"] = {
+            f"opportunity-{index}": {"direction": "BUY", "PRE": 1000 + index}
+            for index in range(128)
+        }
+    # The exact private projection remains available to /audit_runtime.
+    assert len(module._summary(state, 1001)["levels"][0]["stage_gap_samples"]) == 32
+    payload = module._marker_json(state, 1001)
+    marker = json.loads(payload)
+    assert len(payload.encode()) <= module.PUBLIC_MARKER_MAX_BYTES
+    assert len(marker["levels"]) == 21
+    assert all(level["retained_incomplete_chains"] == 128 for level in marker["levels"])
+    assert all(level["stage_pair_gap_seconds"]["pre_to_confirm_seconds"]["sample"] == 32
+               for level in marker["levels"])
 
 
 def test_fast_projection_matches_full_canonical_pipeline_at_every_level(canonical_runtime_root, monkeypatch):
