@@ -15,6 +15,7 @@ from statistics import NormalDist
 
 from core import storage
 from intelligence import shadow_model_time_research as quotes
+from intelligence import buffer_expiry_evidence as buffer_evidence
 
 PROTOCOL = "PROSPECTIVE_EXECUTION_EXPIRY_CALIBRATION_V1"
 BIASES = (0.0, 0.05, 0.10, 0.15, 0.20, 0.25)
@@ -29,6 +30,20 @@ MAX_UNKNOWN_FRACTION = 0.10
 VALIDATION_Z = NormalDist().inv_cdf(1 - 0.05 / (2 * 21))
 REPORT_SECONDS = 60
 _last_report: dict[str, int] = {}
+
+
+def _buffer_policy():
+    return {"contract": buffer_evidence.CONTRACT, "numeric_policy": buffer_evidence.NUMERIC_POLICY,
+            "primary_target": "BUFFER_MET_AT_EXPIRY", "target_rate": TARGET_WIN_RATE,
+            "selection": "TRAINING_BUFFER_WILSON_95_LOWER_THEN_LESS_PRESSURE",
+            "historical_buffers_backfilled": False}
+
+
+def _install_buffer_policy(state, now):
+    if "buffer_objective" not in state:
+        state.update(buffer_objective=_buffer_policy(), buffer_collection_started_ts=now)
+        return True
+    return False
 
 
 def _number(value, *, zero=False):
@@ -79,6 +94,10 @@ def validate(state):
         or state["capacity_rejections"] < 0):
         raise ValueError("INVALID_CALIBRATION_STATE")
     _number(state["started_ts"])
+    if "buffer_objective" in state:
+        if state["buffer_objective"] != _buffer_policy():
+            raise ValueError("BUFFER_OBJECTIVE_CHANGED")
+        _number(state["buffer_collection_started_ts"])
     scope = state["scope"]
     if (scope.get("provider") != "FINNHUB" or scope.get("symbol") != "EUR/USD"
         or scope.get("buffer_mode") not in {"SMALL", "MEDIUM", "LARGE"}
@@ -94,11 +113,21 @@ def validate(state):
             raise ValueError("INFEASIBLE_CALIBRATION_MODEL")
         if identity != _digest({**{k:row[k] for k in ("direction","created_ts","model_seconds","adjusted_seconds")}, "scope":scope}):
             raise ValueError("CALIBRATION_SOURCE_IDENTITY_CHANGED")
+        if "buffer_snapshot" in row:
+            if "buffer_objective" not in state:
+                raise ValueError("BUFFER_OBJECTIVE_MISSING")
+            frozen = row["buffer_snapshot"]
+            buffer_evidence.validate_snapshot(frozen, scope["parameter_sha256"])
+            if row.get("buffer_snapshot_sha256") != _digest(frozen):
+                raise ValueError("BUFFER_SNAPSHOT_CHANGED")
         for level, context in row["levels"].items():
             if not isinstance(level, str) or not level.isdecimal() or not 0 <= int(level) <= 20:
                 raise ValueError("INVALID_CALIBRATION_LEVEL")
             pre, confirm, opened = (_number(context[k]) for k in ("pre_ts", "confirm_ts", "open_ts"))
             _number(context["confirm_model_seconds"])
+            for key in ("open_decision_id", "open_decision_audit_id"):
+                if key in context and (not isinstance(context[key], str) or not context[key].strip()):
+                    raise ValueError("INVALID_BUFFER_DECISION_SOURCE")
             if not pre <= confirm <= opened == created or opened - pre < 30:
                 raise ValueError("INVALID_CALIBRATION_STAGE_ORDER")
         entry = row["entry"]
@@ -149,6 +178,7 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
                                "started_ts": now, "records": {}, "capacity_rejections": 0}
         if state["scope"] != scope:
             raise ValueError("CALIBRATION_SCOPE_CHANGED")
+        _install_buffer_policy(state, now)
         variants = {str(level):{"score_thresholds":score_thresholds(params,level),
                                "parameter_sha256":algo_params_sha256({**params,"score_thresholds":score_thresholds(params,level)})}
                     for level in range(21)}
@@ -165,8 +195,20 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
             row = {key: item[key] for key in ("direction", "created_ts", "model_seconds", "adjusted_seconds")}
             identity = _digest({**row, "scope": scope})
             context = {key: item[key] for key in ("pre_ts", "confirm_ts", "open_ts", "confirm_model_seconds")}
+            for key in ("open_decision_id", "open_decision_audit_id"):
+                if key in item:
+                    if not isinstance(item[key], str) or not item[key].strip():
+                        raise ValueError("INVALID_BUFFER_DECISION_SOURCE")
+                    context[key] = item[key]
+            frozen = buffer_evidence.snapshot(item.get("buffer_distance"), scope["parameter_sha256"])
             level = str(item["level"])
             if identity in state["records"]:
+                # An old entry is never upgraded using today's ATR/buffer.
+                existing = state["records"][identity]
+                if "buffer_snapshot" in existing and existing["buffer_snapshot"] != frozen:
+                    raise ValueError("BUFFER_SNAPSHOT_REWRITE")
+                if "buffer_snapshot" not in existing:
+                    context = {key: item[key] for key in ("pre_ts", "confirm_ts", "open_ts", "confirm_model_seconds")}
                 prior = state["records"][identity]["levels"].get(level)
                 if prior is not None and prior != context:
                     raise ValueError("CALIBRATION_CHAIN_REWRITE")
@@ -176,6 +218,7 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
                 state["capacity_rejections"] += 1
                 continue
             row.update(levels={level: context}, state="WAITING_ENTRY", entry=None,
+                       buffer_snapshot=frozen, buffer_snapshot_sha256=_digest(frozen),
                        candidates=[{"bias": bias, "horizon_seconds": row["model_seconds"] * (1 - bias),
                                     "outcome": "INFEASIBLE" if row["model_seconds"] * (1 - bias) < row["adjusted_seconds"] else "PENDING",
                                     "reason": None, "quote": None} for bias in BIASES])
@@ -200,7 +243,7 @@ def advance(*, now_ts, active_provider, price_loader):
                     sample = quotes._sample(price_loader("EUR/USD"), now)
                 except Exception:
                     pass
-            changed = False
+            changed = _install_buffer_policy(state, now)
             for row in pending:
                 if now < row["created_ts"]:
                     continue
@@ -249,12 +292,31 @@ def _counts(records, index):
     counter = Counter(row["candidates"][index]["outcome"] for row in records)
     decisive = counter["WIN"] + counter["LOSS"]
     eligible = sum(counter[k] for k in ("WIN", "LOSS", "DRAW", "UNKNOWN"))
+    prospective = [r for r in records if "buffer_snapshot" in r
+                   and r["candidates"][index]["outcome"] in {"WIN", "LOSS", "DRAW", "UNKNOWN"}]
+    measured = [(r, buffer_evidence.measure(r["direction"], r["entry"], r["candidates"][index]["quote"],
+                                          r["buffer_snapshot"])) for r in prospective]
+    met = sum(m["status"] == "MET" for _,m in measured)
+    not_met = sum(m["status"] == "NOT_MET" for _,m in measured)
+    unavailable = len(measured) - met - not_met
+    known = met + not_met
     return {"decisive": decisive, "wins": counter["WIN"], "losses": counter["LOSS"],
             "unknown": counter["UNKNOWN"], "draws": counter["DRAW"],
             "infeasible": counter["INFEASIBLE"],
             "unknown_fraction": counter["UNKNOWN"] / eligible if eligible else None,
             "win_rate": counter["WIN"] / decisive if decisive else None,
-            "wilson_95_lower": _wilson(counter["WIN"], decisive)}
+            "wilson_95_lower": _wilson(counter["WIN"], decisive),
+            "buffer_met":met, "buffer_not_met":not_met, "buffer_unavailable":unavailable,
+            "buffer_sample":known, "buffer_met_rate":met/known if known else None,
+            "buffer_unknown_fraction":unavailable/len(measured) if measured else None,
+            "buffer_wilson_95_lower":_wilson(met, known),
+            "win_buffer_met":sum(r["candidates"][index]["outcome"] == "WIN" and m["status"] == "MET" for r,m in measured),
+            "win_buffer_not_met":sum(r["candidates"][index]["outcome"] == "WIN" and m["status"] == "NOT_MET" for r,m in measured),
+            "win_buffer_unavailable":counter["WIN"]-sum(r["candidates"][index]["outcome"] == "WIN"
+                                                        and m["status"] != "UNAVAILABLE" for r,m in measured),
+            "legacy_buffer_unavailable":sum("buffer_snapshot" not in r and r["candidates"][index]["outcome"]
+                                           in {"WIN", "LOSS", "DRAW", "UNKNOWN"} for r in records),
+            "buffer_coverage":_quantiles([m["buffer_coverage"] for _,m in measured if m["buffer_coverage"] is not None])}
 
 
 def _quantiles(values):
@@ -266,7 +328,7 @@ def _quantiles(values):
 
 
 def _compact(report):
-    return {**report, "levels":[{k:v for k,v in row.items() if k not in {"train_candidates", "proposal_only"}}
+    return {**report, "levels":[{k:v for k,v in row.items() if k not in {"train_candidates", "proposal_only", "buffer_expiry_observations"}}
                                 for row in report["levels"]]}
 
 
@@ -276,9 +338,13 @@ def analyze(state, *, now_ts):
               "unique_entry_experiments": 0, "pending": 0, "levels": [],
               "observed_entry_quotes":0, "finalized_entry_experiments":0,
               "entry_quote_delay_seconds":_quantiles([]), "paired_expiry_observations":[],
+              "buffer_objective":_buffer_policy(), "legacy_directional_only_entries":0,
+              "prospective_buffer_entries":0, "buffer_collection_started_ts":None,
               "readiness_policy": {"minimum_train_decisive": MIN_TRAIN, "minimum_validation_decisive": MIN_VALIDATION,
                                    "fixed_train_entries":TRAIN_ENTRIES, "fixed_holdout_entries":HOLDOUT_ENTRIES,
                                    "target_win_rate": TARGET_WIN_RATE,
+                                   "primary_target":buffer_evidence.CONTRACT,
+                                   "minimum_buffer_validation_familywise_95_lower":TARGET_WIN_RATE,
                                    "minimum_validation_familywise_95_lower": TARGET_WIN_RATE,
                                    "multiple_level_correction":"BONFERRONI_21_LEVELS_FIXED_HOLDOUT",
                                    "maximum_unknown_fraction": MAX_UNKNOWN_FRACTION,
@@ -296,6 +362,9 @@ def analyze(state, *, now_ts):
                   status="CAPACITY_REACHED" if len(records) >= MAX_RECORDS else "COLLECTING")
     report["observed_entry_quotes"] = sum(r["entry"] is not None for r in records)
     report["finalized_entry_experiments"] = sum(r["state"] == "FINAL" for r in records)
+    report["legacy_directional_only_entries"] = sum("buffer_snapshot" not in r for r in records)
+    report["prospective_buffer_entries"] = sum("buffer_snapshot" in r for r in records)
+    report["buffer_collection_started_ts"] = state.get("buffer_collection_started_ts")
     report["entry_quote_delay_seconds"] = _quantiles([
         r["entry"]["observed_ts"]-r["created_ts"] for r in records if r["entry"] is not None])
     report["paired_expiry_observations"] = [{"pressure_bias":bias, **_counts(records,index),
@@ -306,21 +375,25 @@ def analyze(state, *, now_ts):
         for index,bias in enumerate(BIASES)]
     for level in range(21):
         rows = sorted((r for r in records if str(level) in r["levels"]), key=lambda r:r["created_ts"])
+        buffer_rows = [r for r in rows if "buffer_snapshot" in r]
         independent, next_entry = [], 0.0
         # Partition every admitted entry before looking at its eventual outcome.
         # Use the longest declared horizon, even when its quote was missed.
-        for row in rows:
+        for row in buffer_rows:
             if row["created_ts"] >= next_entry:
                 independent.append(row)
                 next_entry = row["created_ts"] + quotes.MAX_ENTRY_DELAY_SECONDS + row["model_seconds"] + quotes.MAX_SAMPLE_DELAY_SECONDS
         train, holdout = independent[:TRAIN_ENTRIES], independent[TRAIN_ENTRIES:TRAIN_ENTRIES+HOLDOUT_ENTRIES]
         train_counts = [_counts(train,i) for i in range(len(BIASES))]
         training_complete = len(train) == TRAIN_ENTRIES and all(r["state"] == "FINAL" for r in train)
-        eligible = [i for i,c in enumerate(train_counts) if training_complete and c["decisive"] >= MIN_TRAIN and c["unknown_fraction"] <= MAX_UNKNOWN_FRACTION]
-        selected = max(eligible,key=lambda i:(train_counts[i]["wilson_95_lower"],-BIASES[i])) if eligible else None
+        eligible = [i for i,c in enumerate(train_counts) if training_complete and c["decisive"] >= MIN_TRAIN
+                    and c["unknown_fraction"] <= MAX_UNKNOWN_FRACTION and c["buffer_sample"] >= MIN_TRAIN
+                    and c["buffer_unknown_fraction"] <= MAX_UNKNOWN_FRACTION]
+        selected = max(eligible,key=lambda i:(train_counts[i]["buffer_wilson_95_lower"],-BIASES[i])) if eligible else None
         validation = _counts(holdout,selected) if selected is not None else None
         if validation is not None:
             validation["familywise_95_lower"] = _wilson(validation["wins"],validation["decisive"],z=VALIDATION_Z)
+            validation["buffer_familywise_95_lower"] = _wilson(validation["buffer_met"],validation["buffer_sample"],z=VALIDATION_Z)
         selected_bias = BIASES[selected] if selected is not None else None
         delta, violations = None, None
         if selected is not None:
@@ -336,7 +409,10 @@ def analyze(state, *, now_ts):
         passed = bool(len(holdout) == HOLDOUT_ENTRIES and all(r["state"] == "FINAL" for r in holdout)
                       and validation and validation["decisive"] >= MIN_VALIDATION
                       and validation["unknown_fraction"] <= MAX_UNKNOWN_FRACTION
-                      and validation["familywise_95_lower"] >= TARGET_WIN_RATE and violations == 0)
+                      and validation["familywise_95_lower"] >= TARGET_WIN_RATE
+                      and validation["buffer_sample"] >= MIN_VALIDATION
+                      and validation["buffer_unknown_fraction"] <= MAX_UNKNOWN_FRACTION
+                      and validation["buffer_familywise_95_lower"] >= TARGET_WIN_RATE and violations == 0)
         variant_scope = state.get("variant_scopes",{}).get(str(level))
         if variant_scope is None:
             passed = False
@@ -351,15 +427,21 @@ def analyze(state, *, now_ts):
             status = "HOLDOUT_SAMPLE_INADEQUATE"
         elif validation["unknown_fraction"] > MAX_UNKNOWN_FRACTION:
             status = "HOLDOUT_DATA_QUALITY_FAILED"
+        elif validation["buffer_sample"] < MIN_VALIDATION or validation["buffer_unknown_fraction"] > MAX_UNKNOWN_FRACTION:
+            status = "HOLDOUT_BUFFER_DATA_QUALITY_FAILED"
         elif violations:
             status = "CONFIRM_INTERVAL_VALIDATION_FAILED"
         elif passed:
             status = "READY_FOR_REVIEW"
+        elif validation["familywise_95_lower"] >= TARGET_WIN_RATE:
+            status = "BUFFER_TARGET_NOT_MET"
         else:
             status = "EFFICACY_TARGET_NOT_MET"
-        row_summary = {"level":level, "unique_entries":len(rows), "nonoverlapping_entries":len(independent),
+        row_summary = {"level":level, "unique_entries":len(rows), "prospective_buffer_entries":len(buffer_rows),
+                       "legacy_directional_only_entries":len(rows)-len(buffer_rows), "nonoverlapping_entries":len(independent),
                        "train_entries":len(train), "holdout_entries":len(holdout),
                        "train_candidates":[{"pressure_bias":b,**c} for b,c in zip(BIASES,train_counts)],
+                       "buffer_expiry_observations":[{"pressure_bias":b,**_counts(rows,i)} for i,b in enumerate(BIASES)],
                        "training_selected_bias":BIASES[selected] if selected is not None else None,
                        "holdout_confirm_interval_violations":violations,
                        "untouched_holdout":validation, "status":status,
@@ -369,6 +451,7 @@ def analyze(state, *, now_ts):
                                                     ("pre_to_open","pre_ts","open_ts"))}}
         if passed:
             row_summary["proposal_only"] = {"pressure_bias":BIASES[selected],
+                "objective_contract":buffer_evidence.CONTRACT, "validated_buffer_target_rate":TARGET_WIN_RATE,
                 "validated_level":level, "validated_parameter_sha256":variant_scope["parameter_sha256"],
                 "validated_score_thresholds":variant_scope["score_thresholds"],
                 "confirm_delta_minutes":delta,

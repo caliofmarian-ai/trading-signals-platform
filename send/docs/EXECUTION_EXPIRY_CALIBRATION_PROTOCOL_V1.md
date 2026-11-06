@@ -4,6 +4,13 @@ Owner task: 5 November 2026, calibrate first; broker integration is a later task
 This is a research protocol implementing observation, not a new active strategy
 canon, production calibration approval or broker authorization.
 
+**Active objective extension, 6 November 2026:**
+[`BUFFER_EXPIRY_OBJECTIVE_CONTRACT_V1.md`](BUFFER_EXPIRY_OBJECTIVE_CONTRACT_V1.md)
+adds frozen OPEN buffer/source snapshots and distinct margin-at-expiry labels.
+Historical entries retain their directional outcomes but cannot validate the
+new buffer target. The storage envelope remains V1 for backward-compatible
+observation preservation; the new objective is `BUFFER_MET_AT_EXPIRY_V1`.
+
 ## Paired prospective evidence
 
 Existing severity 0..20 research FSMs supply complete PRE -> CONFIRM -> OPEN_NOW
@@ -39,11 +46,12 @@ longest declared horizon and quote tolerance. The first 60 admitted intervals
 are training; the next 60 are an untouched holdout. Never select expiry using
 holdout performance or keep extending the holdout until it passes.
 
-Require complete finalization, at least 30 decisive WIN/LOSS samples per split,
-and at most 10% UNKNOWN among eligible observed/unknown results. Select the
-candidate on training Wilson 95% lower bound, breaking ties toward less pressure.
-Report READY_FOR_REVIEW only when the fixed holdout's Wilson lower bound reaches
-the Owner's 80% target, using a Bonferroni correction across the 21 tested levels
+Only prospective buffer-snapshot entries enter the current fixed split. Require
+complete finalization, at least 30 decisive WIN/LOSS and 30 known-buffer samples
+per split, and at most 10% unknown for each target. Select the candidate on the
+training **buffer-at-expiry** Wilson 95% lower bound, ties toward less pressure.
+Report READY_FOR_REVIEW only when both the fixed holdout's buffer and directional
+Wilson lower bounds reach the Owner's 80% target, using a Bonferroni correction across the 21 tested levels
 for 95% familywise confidence. The candidate is selected on training, not by
 testing all six against holdout. DRAW, INFEASIBLE and missing data are separately counted.
 This policy is declared for this experiment, not claimed to be a pre-existing

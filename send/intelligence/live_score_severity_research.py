@@ -279,7 +279,10 @@ def _observe_accepted_stage(row, decision, handoff, now_ts: float) -> dict | Non
                             "created_ts":now_ts, "pre_ts":stages["PRE"], "confirm_ts":stages["CONFIRM"],
                             "open_ts":stages["OPEN_NOW"], "model_seconds":model * 60,
                             "adjusted_seconds":decision.time.t_needed_adjusted * 60,
-                            "confirm_model_seconds":stages.get("model_time_by_stage", {}).get("CONFIRM")}
+                            "confirm_model_seconds":stages.get("model_time_by_stage", {}).get("CONFIRM"),
+                            "buffer_distance":decision.market_context.buffer_distance,
+                            "open_decision_id":decision.decision_id,
+                            "open_decision_audit_id":decision.decision_audit_id}
         while len(opportunities) > 128:
             del opportunities[next(iter(opportunities))]
     return calibration_entry
