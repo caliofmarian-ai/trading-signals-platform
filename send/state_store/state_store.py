@@ -246,7 +246,7 @@ def _normalize_symbol_state(symbol: str, raw: Any) -> Dict[str, Any]:
             normalized[key] = _safe_float(raw[key], f"per_symbol[{symbol}].{key}")
             if normalized[key] is not None and normalized[key] <= 0:
                 raise StateValidationError(f"per_symbol[{symbol}].{key} must be positive")
-    for key in ("physical_signal_id", "physical_calibration_captured_signal_id", "physical_direction"):
+    for key in ("physical_signal_id", "physical_calibration_captured_signal_id", "physical_direction", "physical_history_policy"):
         if key in raw:
             normalized[key] = _safe_str(raw[key], f"per_symbol[{symbol}].{key}")
     return normalized

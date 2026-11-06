@@ -101,6 +101,7 @@ class FinnhubForexFeed:
         store_path: Optional[Path] = None,
         clock: Any = time.time,
         websocket_connector: Any = None,
+        physical_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.token = token or _required_env("FINNHUB_API_KEY")
         self.symbol = normalize_symbol(symbol)
@@ -139,6 +140,18 @@ class FinnhubForexFeed:
             "M1": self.minimum_m1_candles,
             "M5": self.minimum_candles,
         }
+        self.history_policy = "STRICT_CONTIGUOUS_CONTEXT"
+        self.minimum_contiguous_candles_by_timeframe = dict(self.minimum_candles_by_timeframe)
+        if physical_params is not None:
+            from core.market_history_policy import requirements
+            policy = requirements(physical_params)
+            self.history_policy = policy["policy"]
+            self.minimum_candles_by_timeframe = {
+                code: max(count, self.minimum_candles_by_timeframe[code])
+                for code, count in policy["context"].items()
+            }
+            self.minimum_contiguous_candles_by_timeframe = policy["recent_contiguous"]
+            self.minimum_contiguous_candles_by_timeframe["M1"] = self.minimum_candles_by_timeframe["M1"]
         self.store_path = Path(store_path) if store_path is not None else _default_store_path()
         self.clock = clock
         self.websocket_connector = websocket_connector
@@ -369,10 +382,7 @@ class FinnhubForexFeed:
             tick_age = None if self._last_price_ts is None else now_ts - int(self._last_price_ts)
             usable = (
                 integrity["state"] == "VALID"
-                and all(
-                    int(head[code]) >= minimum
-                    for code, minimum in self.minimum_candles_by_timeframe.items()
-                )
+                and self._history_windows_ready(integrity)
                 and self._valid_trade_tick_count > 0
                 and tick_age is not None
                 and 0 <= tick_age <= self.freshness_seconds
@@ -409,6 +419,8 @@ class FinnhubForexFeed:
                     if self.minimum_m1_candles == self.minimum_candles else None
                 ),
                 "required_candles_by_timeframe": dict(self.minimum_candles_by_timeframe),
+                "recent_contiguous_required_by_timeframe": dict(self.minimum_contiguous_candles_by_timeframe),
+                "history_policy": self.history_policy,
                 "no_prices_or_trade_recommendations": True,
                 **self._observation_timing(),
             }
@@ -556,10 +568,16 @@ class FinnhubForexFeed:
                 "Finnhub candle history failed integrity checks: "
                 f"hard_errors={integrity['hard_error_count']}"
             )
-        # Do not feed an old segment across a weekend or silent-tick gap into
-        # temporal physics. A stored bar count is not a usable contiguous count.
+        # Speed and ATR require recent exact-cadence evidence. Older validated
+        # M5 bars remain observed context for EMA and confirmed S/R; they must
+        # not be presented as a continuous temporal measurement window.
         contiguous_count = int(integrity["contiguous_candle_counts"].get(code, 0))
-        minimum = self.minimum_candles_by_timeframe[code]
+        context_minimum = self.minimum_candles_by_timeframe[code]
+        if len(candles) < context_minimum:
+            raise FinnhubInsufficientHistory(
+                f"Finnhub {code} saved context is still collecting: {len(candles)}/{context_minimum} real candles"
+            )
+        minimum = self.minimum_contiguous_candles_by_timeframe[code]
         if contiguous_count < minimum:
             raise FinnhubInsufficientHistory(
                 f"Finnhub {code} history is still collecting: "
@@ -571,9 +589,17 @@ class FinnhubForexFeed:
             raise FinnhubStaleMarketData(
                 f"Finnhub live price is stale: age={age_seconds}s, limit={self.freshness_seconds}s"
             )
-        # Return only the current consecutive real bars. Never synthesize bars
-        # or let an older disjoint interval influence the strategy indicators.
+        if code == "M5" and self.history_policy != "STRICT_CONTIGUOUS_CONTEXT":
+            return candles  # all genuine context; the model bounds temporal math separately
         return candles[:contiguous_count]
+
+    def _history_windows_ready(self, integrity, counts=None) -> bool:
+        counts = counts if counts is not None else {code: len(rows) for code, rows in self._candles.items()}
+        return all(
+            counts[code] >= self.minimum_candles_by_timeframe[code]
+            and int(integrity["contiguous_candle_counts"].get(code, 0)) >= minimum
+            for code, minimum in self.minimum_contiguous_candles_by_timeframe.items()
+        )
 
     def get_latest_price_sample(self, symbol: str) -> Dict[str, Any]:
         """Read one coherent price/timestamp pair under the ingestion lock.
@@ -653,12 +679,11 @@ class FinnhubForexFeed:
             ),
             "minimum_candles": self.minimum_candles,
             "minimum_candles_by_timeframe": dict(self.minimum_candles_by_timeframe),
+            "minimum_contiguous_candles_by_timeframe": dict(self.minimum_contiguous_candles_by_timeframe),
+            "history_policy": self.history_policy,
             "history_ready": (
                 integrity["state"] == "VALID"
-                and all(
-                    int(integrity["contiguous_candle_counts"].get(code, 0)) >= minimum
-                    for code, minimum in self.minimum_candles_by_timeframe.items()
-                )
+                and self._history_windows_ready(integrity, counts)
             ),
             "persistence_state": persistence_state,
             "store_load_state": load_state,

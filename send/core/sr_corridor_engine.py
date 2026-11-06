@@ -74,7 +74,7 @@ def _cluster_levels(levels: Sequence[float], tolerance: float) -> tuple[float, .
     return tuple(clustered)
 
 
-def _structural_levels(candles: Sequence[Mapping[str, Any]]) -> tuple[tuple[float, ...], tuple[float, ...]]:
+def _structural_levels(candles: Sequence[Mapping[str, Any]], *, gap_aware: bool = False) -> tuple[tuple[float, ...], tuple[float, ...]]:
     """Return confirmed local swing levels, not every raw candle extreme.
 
     A raw high/low is not automatically a structural barrier.  Requiring two
@@ -90,7 +90,15 @@ def _structural_levels(candles: Sequence[Mapping[str, Any]]) -> tuple[tuple[floa
     pivot_highs: list[float] = []
     pivot_lows: list[float] = []
     span = STRUCTURAL_PIVOT_SPAN
+    valid_windows = 0
     for index in range(span, len(recent) - span):
+        if gap_aware:
+            window = recent[index-span:index+span+1]
+            if (any(bar.get("complete") is False for bar in window)
+                or any(int(newer["ts"])-int(older["ts"]) != 300
+                       for newer, older in zip(window, window[1:]))):
+                continue
+        valid_windows += 1
         neighboring_highs = highs[index - span:index] + highs[index + 1:index + span + 1]
         neighboring_lows = lows[index - span:index] + lows[index + 1:index + span + 1]
         if highs[index] >= max(neighboring_highs) and any(
@@ -103,9 +111,9 @@ def _structural_levels(candles: Sequence[Mapping[str, Any]]) -> tuple[tuple[floa
             pivot_lows.append(lows[index])
     # A repeatedly tested horizontal boundary is structurally relevant even
     # when it forms a perfectly flat plateau with no single strict pivot.
-    if not pivot_highs and max(highs) - min(highs) <= tolerance:
+    if valid_windows and not pivot_highs and max(highs) - min(highs) <= tolerance:
         pivot_highs.append(highs[0])
-    if not pivot_lows and max(lows) - min(lows) <= tolerance:
+    if valid_windows and not pivot_lows and max(lows) - min(lows) <= tolerance:
         pivot_lows.append(lows[0])
     return _cluster_levels(pivot_lows, tolerance), _cluster_levels(pivot_highs, tolerance)
 
@@ -137,7 +145,8 @@ def evaluate_corridor(
         raise CorridorUnavailable("required structural distance cannot be established")
 
     price = market.context.latest_price
-    support_levels, resistance_levels = _structural_levels(candles_m5)
+    support_levels, resistance_levels = _structural_levels(candles_m5,
+        gap_aware=params.get("decision_policy") == "PHYSICAL_ONLY_V3")
     support_candidates = [level for level in support_levels if level < price]
     resistance_candidates = [level for level in resistance_levels if level > price]
     support = max(support_candidates) if support_candidates else None

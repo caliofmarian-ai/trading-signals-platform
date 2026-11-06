@@ -163,6 +163,7 @@ def advance_persistent_fsm(
         pre_ts = symbol_state.get("physical_pre_ts")
         confirm_ts = symbol_state.get("physical_confirm_ts")
         ordered = (symbol_state.get("physical_signal_id") == decision.signal_id
+                   and symbol_state.get("physical_history_policy") == decision.fsm_inputs.get("history_policy")
                    and symbol_state.get("physical_direction") == decision.setup.direction
                    and isinstance(pre_ts, (int, float)) and not isinstance(pre_ts, bool)
                    and 0 <= pre_ts < now_ts)
@@ -339,6 +340,7 @@ def advance_persistent_fsm(
         row = next_state["per_symbol"][decision.setup.symbol]
         if accepted_stage == "PRE":
             row.update(physical_signal_id=decision.signal_id, physical_pre_ts=now_ts,
+                       physical_history_policy=decision.fsm_inputs.get("history_policy"),
                        physical_confirm_ts=None, physical_confirm_model_seconds=None,
                        physical_calibration_captured_signal_id=None, physical_direction=decision.setup.direction)
         elif accepted_stage == "CONFIRM" and row.get("physical_confirm_ts") is None:

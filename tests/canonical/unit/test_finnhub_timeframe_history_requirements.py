@@ -141,4 +141,6 @@ def test_provider_without_timeframe_minima_clears_previous_finnhub_requirements(
     assert _history_status_evidence({"minimum_candles": 201}) == {
         "market_data_minimum_candles_by_timeframe": {"M1": 201, "M5": 201},
         "market_data_contiguous_candle_counts": None,
+        "market_data_recent_contiguous_required": None,
+        "market_data_history_policy": None,
     }

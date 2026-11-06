@@ -164,6 +164,8 @@ def assemble_decision(
         for key in ("score_total", "score_tier", "TPS"):
             inputs.pop(key)
         inputs["decision_policy"] = "PHYSICAL_ONLY_V3"
+        from .market_history_policy import HISTORY_POLICY
+        inputs["history_policy"] = HISTORY_POLICY
         if physical_stage not in {"PRE", "CONFIRM", "OPEN_NOW"}:
             raise DecisionAssemblyUnavailable("physical lifecycle stage is required")
         kind = physical_stage if scoring.eligible and not blockers else "REJECT"
@@ -188,7 +190,7 @@ def assemble_decision(
         if opportunity_signal_id is not None:
             signal_id = opportunity_signal_id.strip()
         elif physical_only:
-            identity = f"{market.symbol}|{normalized_timeframe}|{market.evaluated_ts}|{market.direction_bias}|{cycle_id}"
+            identity = f"{market.symbol}|{normalized_timeframe}|{market.evaluated_ts}|{market.direction_bias}|{cycle_id}|{HISTORY_POLICY}"
             signal_id = "sig-v3-" + sha256(identity.encode()).hexdigest()[:24]
         else:
             signal_id = _stable_signal_id(

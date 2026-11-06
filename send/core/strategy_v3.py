@@ -16,9 +16,10 @@ from .market_model import evaluate_market
 from .sr_corridor_engine import evaluate_corridor
 from .time_model import evaluate_time
 from .trade_physics import evaluate_trade_physics
+from .market_history_policy import HISTORY_POLICY
 
 STRATEGY_VERSION = "3.0.0"
-CANONICAL_SPEC = "V3_SCORELESS_OWNER_AMENDMENT_v1.0.0"
+CANONICAL_SPEC = "V3_SCORELESS_OWNER_AMENDMENT_v1.1.0"
 DECISION_POLICY = "PHYSICAL_ONLY_V3"
 MIN_PRE_LEAD_SECONDS = 30
 
@@ -57,6 +58,7 @@ def lifecycle_context(state: Mapping[str, Any], symbol: str, *, now_ts: float,
     row = (state.get("per_symbol") or {}).get(symbol, {})
     current_id = row.get("current_signal_id")
     bound = (row.get("physical_signal_id") == current_id and isinstance(current_id, str)
+             and row.get("physical_history_policy") == HISTORY_POLICY
              and current_id.startswith("sig-v3-") and row.get("state") in {"WATCHLIST", "CONFIRMED"})
     if not bound or row.get("physical_pre_ts") is None:
         return {"physical_stage": "PRE", "decision_timeframe": "M1"}
@@ -77,7 +79,8 @@ def decide(candles_m1, candles_m5, params, buffer_mode="MEDIUM", want_open_now=F
            context=None, *, cycle_id=None, runtime_blockers=(), execution_calibration=None,
            observation_ts=None):
     del want_open_now
-    if params.get("algo_version") != STRATEGY_VERSION or "score_thresholds" in params:
+    if (params.get("algo_version") != STRATEGY_VERSION or "score_thresholds" in params
+        or params.get("history_policy") != HISTORY_POLICY):
         raise ValueError("active V3 requires a validated scoreless parameter bundle")
     supplied = dict(context or {})
     resolved_cycle_id = str(cycle_id or supplied.get("cycle_id") or
