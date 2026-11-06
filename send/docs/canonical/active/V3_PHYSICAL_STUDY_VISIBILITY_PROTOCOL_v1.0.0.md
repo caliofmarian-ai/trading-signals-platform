@@ -69,3 +69,21 @@ remain preserved across restart. The in-process quote buffer cannot reconstruct
 ticks missed during an outage; those observations remain unavailable.
 Study transport uses one separate sender so API latency does not block the
 sampling worker. Reservations are persisted independently of quote measurement.
+
+## Prospective lifecycle diagnosis
+
+`PHYSICAL_V3_OPPORTUNITY_TRACE_V1` observes the first internally accepted PRE,
+CONFIRM and OPEN, and an observed FSM rejection that releases a traced opportunity
+to cooldown. It records the exact rejection/noise/structure reasons, Model Time,
+room-to-buffer ratio, candle phase, genuine PRE API receipt age at evaluation,
+and declared cooldown. It cannot publish, alter gates, score, or release a trade.
+First PRE must be observed prospectively; prior chains receive no manufactured
+history. A first PRE observed after a failed publication is internal acceptance,
+not proof of delivery. API receipt availability at evaluation is explicit.
+Trace storage is separate and parameter-scoped, bounded to 32 episodes/256 KiB;
+cumulative observed-event counts and retained episodes remain distinct. An
+unobserved ending stays incomplete, never a fabricated rejection or market loss.
+Trace timestamps preserve evaluation time separately from collector time. Logs
+contain derived measurements and hashed opportunities, without quotes or private
+destination IDs. This diagnostic does not change expiry-study observations or
+establish strategy efficacy.
