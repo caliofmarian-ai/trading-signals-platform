@@ -273,6 +273,30 @@ def test_calibration_crash_retry_cannot_duplicate_an_opportunity(physical_calibr
     assert len(module._read(module._path())["records"]) == 1
 
 
+def test_provider_eurusd_identity_admits_exactly_one_physical_chain(physical_calibration, physical):
+    _, module, params = physical_calibration
+    _, m1, m5, _ = physical
+    from core.strategy_v3 import decide, lifecycle_context
+    from core.v2_fsm_orchestrator import advance_persistent_fsm
+    from state_store.state_store import default_fsm_state
+    for candle in m1 + m5:
+        candle["symbol"] = "EURUSD"  # actual runtime identity from Finnhub normalization
+    state = default_fsm_state()
+    for stamp in (1000, 1002, 1031):
+        result = decide(m1, m5, params, buffer_mode="SMALL",
+                        context=lifecycle_context(state, "EURUSD", now_ts=stamp))
+        handoff = advance_persistent_fsm(state, result.decision, now_ts=stamp)
+        state = handoff.next_state
+    assert handoff.accepted_stage == "OPEN_NOW"
+    assert module.observe_accepted_chain(result.decision, handoff, params, now_ts=1031,
+        provider="FINNHUB", buffer_mode="SMALL") is True
+    module.observe_accepted_chain(result.decision, handoff, params, now_ts=1032,
+        provider="FINNHUB", buffer_mode="SMALL")
+    captured = module._read(module._path())
+    assert captured["scope"]["symbol"] == "EUR/USD"
+    assert len(captured["records"]) == 1
+
+
 def test_physical_calibration_real_quote_contract_buffer_and_missingness(physical_calibration):
     _, module, params = physical_calibration
     _capture(module, params)

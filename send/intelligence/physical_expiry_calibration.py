@@ -447,7 +447,7 @@ def summary(*, now_ts=None):
 
 def observe_accepted_chain(decision, handoff, params, *, now_ts, provider, buffer_mode):
     """One prospectively frozen quote experiment per accepted V3 opportunity."""
-    if (provider != "FINNHUB" or decision.setup.symbol != "EUR/USD"
+    if (provider != "FINNHUB" or decision.setup.symbol.replace("/", "") != "EURUSD"
         or handoff.accepted_stage != "OPEN_NOW" or not handoff.stage_handoff_ready or _path() is None):
         return
     row = handoff.next_state["per_symbol"][decision.setup.symbol]
