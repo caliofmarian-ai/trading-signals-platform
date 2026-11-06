@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import secrets
 import socket
 import sys
 import tempfile
@@ -298,7 +299,7 @@ def _reclaim_stale_lock(lock_path: str, lock_name: str) -> bool:
 
 @contextlib.contextmanager
 def with_lock(lock_name: str, base_dir: Optional[str] = None, timeout_sec: float = 10.0) -> Iterator[None]:
-    """Cross-process exclusive lock using O_EXCL lockfile creation.
+    """Cross-process exclusive lock using atomic hard-link publication.
 
     Ownership metadata written to the lock file enables safe stale-lock
     detection and reclaim when:
@@ -324,49 +325,85 @@ def with_lock(lock_name: str, base_dir: Optional[str] = None, timeout_sec: float
     lock_path = os.path.join(lock_dir, f"{lock_name}.lock")
 
     start = time.time()
-    fd: Optional[int] = None
+    acquired_identity: Optional[tuple[int, int]] = None
+    owner_token = secrets.token_hex(16)
 
-    while True:
-        try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            break
-        except FileExistsError:
-            elapsed = time.time() - start
-            if elapsed >= timeout_sec:
-                # One last stale check before giving up — the PID may have died
-                # during our wait and the reclaim was not triggered yet.
+    # Build and durably write the complete ownership record before publishing
+    # the well-known lock path.  The former O_EXCL-then-write sequence exposed
+    # an empty file to contenders and deliberately ignored write failures.  A
+    # failed write could therefore leave a live process represented by an empty
+    # lock that was reclaimed after 60 seconds.
+    candidate_fd, candidate_path = tempfile.mkstemp(
+        prefix=f".{lock_name}.", suffix=".locktmp", dir=lock_dir
+    )
+    try:
+        meta_line = (
+            f"pid={os.getpid()} "
+            f"ts={time.time():.3f} "
+            f"deploy={_current_deployment_id()} "
+            f"host={_safe_hostname()} "
+            f"owner={owner_token}\n"
+        )
+        with os.fdopen(candidate_fd, "w", encoding="utf-8") as candidate:
+            candidate.write(meta_line)
+            candidate.flush()
+            os.fsync(candidate.fileno())
+
+        while True:
+            try:
+                # link(2) creates the destination only when it does not already
+                # exist.  Because the source is complete, readers can observe
+                # either no lock or the full ownership record, never a partial
+                # publication window.
+                os.link(candidate_path, lock_path)
+                published = os.stat(lock_path, follow_symlinks=False)
+                acquired_identity = (published.st_dev, published.st_ino)
+                _fsync_dir(lock_dir)
+                break
+            except FileExistsError:
+                elapsed = time.time() - start
+                if elapsed >= timeout_sec:
+                    # One last stale check before giving up — the PID may have died
+                    # during our wait and the reclaim was not triggered yet.
+                    if _lock_is_stale(lock_path):
+                        _reclaim_stale_lock(lock_path, lock_name)
+                        continue
+                    raise TimeoutError(
+                        f"Timed out acquiring lock '{lock_name}' after {elapsed:.1f}s"
+                    )
+                # Check for stale lock on every contention cycle.
                 if _lock_is_stale(lock_path):
                     _reclaim_stale_lock(lock_path, lock_name)
                     continue
-                raise TimeoutError(
-                    f"Timed out acquiring lock '{lock_name}' after {elapsed:.1f}s"
-                )
-            # Check for stale lock on every contention cycle.
-            if _lock_is_stale(lock_path):
-                _reclaim_stale_lock(lock_path, lock_name)
-                continue
-            time.sleep(0.05)
-
-    try:
-        # Write rich ownership metadata for stale-detection on future acquisitions.
+                time.sleep(0.05)
+    finally:
+        # The published path is a separate hard link to the same inode.
+        # Removing this private candidate never releases the acquired lock.
         try:
-            meta_line = (
-                f"pid={os.getpid()} "
-                f"ts={time.time():.3f} "
-                f"deploy={_current_deployment_id()} "
-                f"host={_safe_hostname()}\n"
-            )
-            os.write(fd, meta_line.encode("utf-8"))
+            if os.path.exists(candidate_path):
+                os.remove(candidate_path)
         except Exception:
             pass
+
+    try:
         yield
     finally:
         try:
-            if fd is not None:
-                os.close(fd)
-        except Exception:
+            current = os.stat(lock_path, follow_symlinks=False)
+            current_identity = (current.st_dev, current.st_ino)
+            current_owner = _read_lock_metadata(lock_path).get("owner")
+            # Never unlink a replacement lock acquired after this holder's path
+            # was reclaimed or otherwise removed.  Filesystems may immediately
+            # reuse an inode, so both inode identity and an unguessable ownership
+            # token must still match.
+            if (
+                acquired_identity is not None
+                and current_identity == acquired_identity
+                and current_owner == owner_token
+            ):
+                os.remove(lock_path)
+                _fsync_dir(lock_dir)
+        except FileNotFoundError:
             pass
-        try:
-            os.remove(lock_path)
         except Exception:
             pass

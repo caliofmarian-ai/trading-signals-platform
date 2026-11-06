@@ -358,8 +358,53 @@ class TestStaleLockRecovery:
                 assert "ts=" in content
                 assert "deploy=" in content
                 assert "host=" in content
+                assert "owner=" in content
 
         _acquire()
+
+    def test_lock_metadata_is_complete_when_path_becomes_visible(self, tmp_path):
+        """The published lock path never exposes an empty metadata window."""
+        lock_dir = str(tmp_path / "locks")
+        observed = []
+        original_link = os.link
+
+        def _checked_link(source, destination):
+            source_meta = _storage_mod._read_lock_metadata(source)
+            assert {"pid", "ts", "deploy", "host", "owner"} <= set(source_meta)
+            result = original_link(source, destination)
+            observed.append(_storage_mod._read_lock_metadata(destination))
+            return result
+
+        with patch.object(_storage_mod.os, "link", side_effect=_checked_link):
+            with _storage_mod.with_lock("atomic_meta", base_dir=lock_dir):
+                pass
+
+        assert len(observed) == 1
+        assert {"pid", "ts", "deploy", "host", "owner"} <= set(observed[0])
+
+    def test_lock_metadata_write_failure_is_not_published(self, tmp_path):
+        """A failed metadata write leaves no empty well-known lock behind."""
+        lock_dir = str(tmp_path / "locks")
+        lock_path = os.path.join(lock_dir, "write_failure.lock")
+
+        with patch.object(_storage_mod.os, "fsync", side_effect=OSError("disk failure")):
+            with pytest.raises(OSError, match="disk failure"):
+                with _storage_mod.with_lock("write_failure", base_dir=lock_dir):
+                    pass
+
+        assert not os.path.exists(lock_path)
+        assert not list(Path(lock_dir).glob(".write_failure.*.locktmp"))
+
+    def test_holder_does_not_release_replacement_inode(self, tmp_path):
+        """Context exit cannot unlink a replacement lock at the reused path."""
+        lock_dir = str(tmp_path / "locks")
+        lock_path = os.path.join(lock_dir, "replacement.lock")
+
+        with _storage_mod.with_lock("replacement", base_dir=lock_dir):
+            os.remove(lock_path)
+            _write_lock(lock_path, pid=os.getpid(), ts=time.time(), deploy="replacement")
+
+        assert os.path.exists(lock_path)
 
 
 # ===========================================================================
