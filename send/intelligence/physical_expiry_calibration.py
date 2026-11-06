@@ -434,9 +434,13 @@ def analyze(state, *, now_ts):
               "actual_telegram_publications": 0, "decision_policy": "PHYSICAL_ONLY_V3",
               "history_policy": HISTORY_POLICY}
     if state is None:
+        from intelligence.same_symbol_sequences import summarize
+        report["same_symbol_10min_sequences"] = summarize([])
         return report
     validate(state)
     records = list(state["records"].values())
+    from intelligence.same_symbol_sequences import summarize
+    report["same_symbol_10min_sequences"] = summarize(records)
     report.update(scope=state["scope"], unique_entry_experiments=len(records),
                   pending=sum(r["state"] != "FINAL" for r in records),
                   capacity_rejections=state["capacity_rejections"],

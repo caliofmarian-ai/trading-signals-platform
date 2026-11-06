@@ -12,6 +12,7 @@ import threading
 from core import owner_signal_delivery as owner, storage, telegram_publisher
 from intelligence import buffer_expiry_evidence
 from intelligence import physical_expiry_calibration as study
+from core.signal_presentation import direction_label
 
 STATUSES = {"RESERVED", "API_ACCEPTED", "FAILED", "UNKNOWN", "SKIPPED_STALE", "SKIPPED_STAGE_GUARD"}
 _DELIVERY_IN_FLIGHT = threading.Lock()
@@ -54,13 +55,15 @@ def _stamp(value):
 def render_entry(identity, row):
     entry = row["entry"]
     return ("🧪 OPEN_NOW · STUDIU V3\n"
-            f"EUR/USD · {row['direction']}\n"
+            f"EUR/USD · {direction_label(row['direction'])}\n"
             f"Preț observat: {entry['price']:.15g}\n"
             f"Început observare: {_stamp(entry['observed_ts'])}\n"
             f"Expirare simulată: {row['model_seconds']/60:.15g} min · "
             f"{_stamp(entry['observed_ts'] + row['model_seconds'])}\n"
             f"Buffer urmărit: {row['buffer_snapshot']['buffer_distance']:.15g}\n"
+            "Buffer = marja de deplasare urmărită; nu garantează rezultatul.\n"
             "Simulare pe cotații reale · calibrare în colectare\n"
+            "Durata este de studiu; expirarea de execuție nu este validată.\n"
             f"ID studiu: {identity[:12]}")
 
 
@@ -71,7 +74,7 @@ def render_result(identity, row):
     label = {"MET": "ATINS", "NOT_MET": "NEATINS", "UNAVAILABLE": "DATE INDISPONIBILE"}[measured["status"]]
     observed = _stamp(baseline["quote"]["observed_ts"]) if baseline["quote"] else "cotație lipsă"
     return ("🧪 REZULTAT STUDIU V3\n"
-            f"EUR/USD · {row['direction']} · {row['model_seconds']/60:.15g} min\n"
+            f"EUR/USD · {direction_label(row['direction'])} · {row['model_seconds']/60:.15g} min\n"
             f"Observație la expirare: {observed}\n"
             f"Direcție la expirare: {baseline['outcome']}\n"
             f"Buffer la expirare: {label}\n"

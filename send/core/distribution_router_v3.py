@@ -94,6 +94,10 @@ def _format_minutes(value: float) -> str:
 def _render_signal_text(event: Dict[str, Any], tier_label: str) -> str:
     """Render timing without inventing or rounding trader-facing expiry."""
 
+    if (event.get("payload") or {}).get("decision_policy") == "PHYSICAL_ONLY_V3":
+        from core.signal_presentation import render_physical_signal
+        return render_physical_signal(event, tier_label)
+
     stage = str(event.get("stage") or "").upper()
     symbol = event.get("symbol")
     direction = event.get("direction")

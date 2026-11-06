@@ -246,7 +246,8 @@ def _normalize_symbol_state(symbol: str, raw: Any) -> Dict[str, Any]:
             normalized[key] = _safe_float(raw[key], f"per_symbol[{symbol}].{key}")
             if normalized[key] is not None and normalized[key] <= 0:
                 raise StateValidationError(f"per_symbol[{symbol}].{key} must be positive")
-    for key in ("physical_signal_id", "physical_calibration_captured_signal_id", "physical_direction", "physical_history_policy"):
+    for key in ("physical_signal_id", "physical_calibration_captured_signal_id", "physical_direction", "physical_history_policy",
+                "physical_closed_signal_id"):
         if key in raw:
             normalized[key] = _safe_str(raw[key], f"per_symbol[{symbol}].{key}")
     return normalized
@@ -289,6 +290,18 @@ def validate_fsm_state(raw: Any) -> Dict[str, Any]:
     normalized["version"] = str(raw.get("version") or FSM_STATE_VERSION)
     normalized["watchlist"] = watchlist
     normalized["per_symbol"] = per_symbol
+    attention = raw.get("physical_attention")
+    if attention is not None:
+        if not isinstance(attention, dict) or set(attention) != {"policy", "symbol", "started_ts", "until_ts"}:
+            raise StateValidationError("Invalid physical attention window")
+        started = _safe_int(attention["started_ts"], "physical_attention.started_ts")
+        until = _safe_int(attention["until_ts"], "physical_attention.until_ts")
+        symbol = _safe_str(attention["symbol"], "physical_attention.symbol")
+        if (attention["policy"] != "SAME_SYMBOL_FREE_CROSS_SYMBOL_120S_V1" or not symbol
+            or started is None or started <= 0 or until != started + 120):
+            raise StateValidationError("Invalid physical attention policy or duration")
+        normalized["physical_attention"] = {"policy": attention["policy"], "symbol": symbol,
+                                            "started_ts": started, "until_ts": until}
     normalized["mode"] = "FOCUS_MODE" if watchlist else "WIDE_SCAN"
     normalized["last_updated_ts"] = _safe_int(raw.get("last_updated_ts"), "FSM.last_updated_ts") or _now_ts()
     return normalized

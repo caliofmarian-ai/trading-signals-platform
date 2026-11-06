@@ -11,6 +11,11 @@ Supersedes: `CANONICAL_MASTER_INDEX_v1.0.0.md`
 
 ## 0. Active authority declaration
 
+Owner focus/presentation amendment 2026-11-06:
+[V3_FOCUS_AND_SIGNAL_PRESENTATION_OWNER_AMENDMENT_v1.0.0.md](V3_FOCUS_AND_SIGNAL_PRESENTATION_OWNER_AMENDMENT_v1.0.0.md)
+supersedes physical same-symbol cooldown policy with distinct-opportunity dedup
+and a two-minute cross-symbol attention window, and defines scoreless signal UI.
+
 Owner amendment 2026-11-06: [V3_SCORELESS_OWNER_AMENDMENT_v1.1.0.md](V3_SCORELESS_OWNER_AMENDMENT_v1.1.0.md)
 has priority over score/TPS selection and ranking wording in the existing
 functional domains. The active V3 runtime uses physical criteria and ordered
