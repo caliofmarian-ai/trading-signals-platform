@@ -300,8 +300,13 @@ def _counts(records, index):
     not_met = sum(m["status"] == "NOT_MET" for _,m in measured)
     unavailable = len(measured) - met - not_met
     known = met + not_met
+    known_reasons = {"ENTRY_OBSERVATION_MISSING", "EXPIRY_OBSERVATION_MISSING", "PROVIDER_CHANGED"}
+    unknown_reasons = Counter(r["candidates"][index].get("reason")
+        if r["candidates"][index].get("reason") in known_reasons else "OTHER"
+        for r in records if r["candidates"][index]["outcome"] == "UNKNOWN")
     return {"decisive": decisive, "wins": counter["WIN"], "losses": counter["LOSS"],
             "unknown": counter["UNKNOWN"], "draws": counter["DRAW"],
+            "unknown_reasons":dict(unknown_reasons),
             "infeasible": counter["INFEASIBLE"],
             "unknown_fraction": counter["UNKNOWN"] / eligible if eligible else None,
             "win_rate": counter["WIN"] / decisive if decisive else None,
