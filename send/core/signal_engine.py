@@ -858,6 +858,13 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                                     provider=market_client.configured_provider(), buffer_mode=buffer_mode)
             if params.get("decision_policy") == "PHYSICAL_ONLY_V3":
                 try:
+                    from intelligence import physical_opportunity_trace
+                    physical_opportunity_trace.observe(evaluation, persistent_fsm, params,
+                        decision_ts=now_ts, provider=market_client.configured_provider())
+                except Exception as trace_exc:
+                    print("TSP_PHYSICAL_V3_OPPORTUNITY_TRACE_UNAVAILABLE " + json.dumps({
+                        "error_class": type(trace_exc).__name__}), flush=True)
+                try:
                     from intelligence import physical_expiry_calibration
                     captured = physical_expiry_calibration.observe_accepted_chain(decision, persistent_fsm, params,
                         now_ts=time.time(), provider=market_client.configured_provider(), buffer_mode=buffer_mode,
