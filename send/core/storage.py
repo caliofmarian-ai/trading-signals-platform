@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import secrets
 import socket
 import sys
 import tempfile
@@ -325,6 +326,7 @@ def with_lock(lock_name: str, base_dir: Optional[str] = None, timeout_sec: float
 
     start = time.time()
     acquired_identity: Optional[tuple[int, int]] = None
+    owner_token = secrets.token_hex(16)
 
     # Build and durably write the complete ownership record before publishing
     # the well-known lock path.  The former O_EXCL-then-write sequence exposed
@@ -339,7 +341,8 @@ def with_lock(lock_name: str, base_dir: Optional[str] = None, timeout_sec: float
             f"pid={os.getpid()} "
             f"ts={time.time():.3f} "
             f"deploy={_current_deployment_id()} "
-            f"host={_safe_hostname()}\n"
+            f"host={_safe_hostname()} "
+            f"owner={owner_token}\n"
         )
         with os.fdopen(candidate_fd, "w", encoding="utf-8") as candidate:
             candidate.write(meta_line)
@@ -388,9 +391,16 @@ def with_lock(lock_name: str, base_dir: Optional[str] = None, timeout_sec: float
         try:
             current = os.stat(lock_path, follow_symlinks=False)
             current_identity = (current.st_dev, current.st_ino)
+            current_owner = _read_lock_metadata(lock_path).get("owner")
             # Never unlink a replacement lock acquired after this holder's path
-            # was reclaimed or otherwise removed.
-            if acquired_identity is not None and current_identity == acquired_identity:
+            # was reclaimed or otherwise removed.  Filesystems may immediately
+            # reuse an inode, so both inode identity and an unguessable ownership
+            # token must still match.
+            if (
+                acquired_identity is not None
+                and current_identity == acquired_identity
+                and current_owner == owner_token
+            ):
                 os.remove(lock_path)
                 _fsync_dir(lock_dir)
         except FileNotFoundError:

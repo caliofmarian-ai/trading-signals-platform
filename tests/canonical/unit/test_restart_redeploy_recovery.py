@@ -358,6 +358,7 @@ class TestStaleLockRecovery:
                 assert "ts=" in content
                 assert "deploy=" in content
                 assert "host=" in content
+                assert "owner=" in content
 
         _acquire()
 
@@ -369,7 +370,7 @@ class TestStaleLockRecovery:
 
         def _checked_link(source, destination):
             source_meta = _storage_mod._read_lock_metadata(source)
-            assert {"pid", "ts", "deploy", "host"} <= set(source_meta)
+            assert {"pid", "ts", "deploy", "host", "owner"} <= set(source_meta)
             result = original_link(source, destination)
             observed.append(_storage_mod._read_lock_metadata(destination))
             return result
@@ -379,7 +380,7 @@ class TestStaleLockRecovery:
                 pass
 
         assert len(observed) == 1
-        assert {"pid", "ts", "deploy", "host"} <= set(observed[0])
+        assert {"pid", "ts", "deploy", "host", "owner"} <= set(observed[0])
 
     def test_lock_metadata_write_failure_is_not_published(self, tmp_path):
         """A failed metadata write leaves no empty well-known lock behind."""
