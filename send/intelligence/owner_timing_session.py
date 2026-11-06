@@ -27,7 +27,9 @@ def _path() -> Path | None:
     from core.owner_signal_delivery import destination
     if destination() is None:
         return None
-    path = Path(storage.root_path("analytics", "owner_timing_continuous", "state.json"))
+    from core.physical_params import physical_runtime_enabled
+    folder = "owner_timing_physical_v3" if physical_runtime_enabled() else "owner_timing_continuous"
+    path = Path(storage.root_path("analytics", folder, "state.json"))
     if path.is_symlink() or path.parent.is_symlink():
         raise ValueError("INVALID_TIMING_SOURCE")
     return path
@@ -35,6 +37,8 @@ def _path() -> Path | None:
 
 def _read(path: Path) -> dict[str, Any] | None:
     if not path.exists():
+        if path.parent.name == "owner_timing_physical_v3":
+            return None
         session = os.getenv("OWNER_TIMING_SESSION_ID", "")
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", session) is None:
             return None
@@ -81,6 +85,8 @@ def observe_evaluation(decision, handoff, execution_time, *, now_ts: float, para
         return
     with storage.with_lock("owner_timing_session"):
         state = _read(path) or _new(now_ts, parameter_sha256)
+        if getattr(decision, "fsm_inputs", {}).get("decision_policy") == "PHYSICAL_ONLY_V3":
+            state["decision_policy"] = "PHYSICAL_ONLY_V3"
         if now_ts < state["started_ts"] or (state["last_evaluation_ts"] is not None
                                           and now_ts <= state["last_evaluation_ts"]):
             return
@@ -142,6 +148,7 @@ def _summary(state: dict[str, Any], now_ts: float) -> dict[str, Any]:
                                 "private_published_stages", "execution_expiry_available",
                                 "last_evaluation_ts", "last_publication_ts", "parameter_sha256",
                                 "baseline_changed", "activity_gate_model")},
+        **({"decision_policy": state["decision_policy"]} if "decision_policy" in state else {}),
         "status": "PAUSED_BASELINE_CHANGED" if state["baseline_changed"] else "OBSERVING",
         "operating_mode": "CONTINUOUS", "automatic_stop_at": None,
         "api_timing_sample_count": len(times),

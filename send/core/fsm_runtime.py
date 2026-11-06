@@ -296,9 +296,10 @@ def apply_transition(
 
     if kind == "PRE":
         watchlist = list(state.get("watchlist", []))
-        incoming_score = float(decision.get("score_total") or 0.0)
+        physical_only = decision.get("decision_policy") == "PHYSICAL_ONLY_V3"
+        incoming_score = None if physical_only else float(decision.get("score_total") or 0.0)
         if symbol not in watchlist and len(watchlist) >= MAX_WATCHLIST:
-            victim = _best_replacement_victim(state, symbol, incoming_score)
+            victim = None if physical_only else _best_replacement_victim(state, symbol, incoming_score)
             if victim is None:
                 return state, _transition_event(
                     symbol,
@@ -331,8 +332,8 @@ def apply_transition(
         symbol_state["last_pre_candle_ts"] = candle_ts
         symbol_state["focus_enter_ts"] = symbol_state.get("focus_enter_ts") or now_ts
         symbol_state["focus_ttl_seconds"] = _derive_focus_ttl(decision)
-        symbol_state["replacement_score"] = float(decision.get("score_total") or 0.0)
-        symbol_state["replacement_score_ts"] = now_ts
+        symbol_state["replacement_score"] = incoming_score
+        symbol_state["replacement_score_ts"] = None if physical_only else now_ts
         symbol_state["last_transition_ts"] = now_ts
         _recompute_mode(state)
         enforce_invariants(state)

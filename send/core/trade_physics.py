@@ -153,6 +153,8 @@ def evaluate_trade_physics(
     market: MarketModelResult,
     corridor: CorridorResult,
     time: TimeModelResult,
+    *,
+    include_scores: bool = True,
 ) -> TradePhysicsResult:
     """Compute deterministic TPS from canonical synchronized upstream evidence."""
 
@@ -260,6 +262,20 @@ def evaluate_trade_physics(
     atr_speed_reference = atr_m5 / ATR_REFERENCE_MINUTES
     directional_speed_ratio = directional_speed / atr_speed_reference
     movement_stress = required_space / atr_m5
+
+    if not include_scores:
+        return TradePhysicsResult(
+            schema_version="2.0.0", symbol=market.symbol, evaluated_ts=market.evaluated_ts,
+            readiness_state="READY", available_space=available_space, required_space=required_space,
+            space_to_buffer_ratio=space_to_buffer_ratio, trade_space_margin_atr=trade_space_margin_atr,
+            time_to_buffer_ratio=time_to_buffer_ratio, directional_effective_speed=directional_speed,
+            weighted_gross_speed=weighted_gross_speed, flow_efficiency=flow_efficiency,
+            atr_speed_reference=atr_speed_reference, directional_speed_ratio=directional_speed_ratio,
+            movement_stress=movement_stress, S=None, T=None, P=None, V=None, TPS=None,
+            interpretation_band=None, formula_version="V3_PHYSICAL_ONLY_1.0.0",
+            weights_version="NOT_APPLICABLE",
+            explanation="Synchronized physical measurements; eligibility uses hard conditions without scores.",
+        )
 
     S = _clamp(space_to_buffer_ratio, 0.0, SPACE_CAP) / SPACE_CAP
     T = _clamp(time_to_buffer_ratio, 0.0, TIME_CAP) / TIME_CAP

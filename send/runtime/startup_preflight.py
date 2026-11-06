@@ -248,7 +248,8 @@ def run_startup_preflight(
             )
 
         try:
-            params = runtime_param_gate.load_runtime_algo_params(
+            from core.physical_params import load_physical_runtime_algo_params
+            params = load_physical_runtime_algo_params(
                 storage.config_path("algo_params.json")
             )
         except Exception as exc:
@@ -277,6 +278,7 @@ def run_startup_preflight(
         return {
             "status": "ready",
             "algo_version": str(params.get("algo_version")),
+            "decision_policy": params.get("decision_policy"),
             "buffer_mode": state["settings"].get("buffer_mode"),
             "active_symbol_count": len(active_symbols),
             "active_provider": provider["active_provider"],

@@ -28,7 +28,8 @@ from core import runtime_param_gate
 from core import runtime_execution_calibration
 from core.decision_object import ACTIONABLE_DECISION_KINDS
 from core.signal_execution_gate import prepare_signal_execution
-from core.strategy_v2 import decide
+from core.strategy_v3 import decide, lifecycle_context
+from core.physical_params import load_physical_runtime_algo_params
 from core.v2_fsm_orchestrator import advance_persistent_fsm, current_opportunity_signal_id
 from core import storage
 from state_store import state_store as runtime_state_store
@@ -71,6 +72,8 @@ def _load_execution_calibration(*, now_ts, provider, symbol, buffer_mode, params
 
 
 def _observe_timebox_diagnostics(decision, handoff, execution_time, *, now_ts) -> None:
+    if getattr(decision, "fsm_inputs", {}).get("decision_policy") == "PHYSICAL_ONLY_V3":
+        return
     if not timebox_research.enabled():
         return
     global _TIMEBOX_RESEARCH_LAST_WARNING_TS
@@ -86,6 +89,8 @@ def _observe_timebox_diagnostics(decision, handoff, execution_time, *, now_ts) -
 
 def _observe_shadow_research(decision, handoff, *, params=None) -> None:
     """Isolate private research failures from canonical signal execution."""
+    if getattr(decision, "fsm_inputs", {}).get("decision_policy") == "PHYSICAL_ONLY_V3":
+        return
     if not shadow_research.enabled() or decision.kind != "OPEN_NOW":
         return
     global _SHADOW_RESEARCH_LAST_WARNING_TS
@@ -130,6 +135,8 @@ def _observe_owner_timing_session(decision, handoff, execution_time, params) -> 
 
 
 def _observe_score_severity(evaluation, params, *, now_ts: float, provider: str, buffer_mode: str) -> None:
+    if params.get("decision_policy") == "PHYSICAL_ONLY_V3":
+        return  # archived scored cohorts must not admit scoreless observations
     global _SEVERITY_RESEARCH_LAST_WARNING_TS
     try:
         from intelligence import live_score_severity_research
@@ -334,7 +341,7 @@ def _load_settings() -> Dict[str, Any]:
 
 def _load_algo_params() -> Dict[str, Any]:
     """Load the live strategy bundle through the canonical fail-closed gate."""
-    return runtime_param_gate.load_runtime_algo_params(ALGO_PARAMS_PATH)
+    return load_physical_runtime_algo_params(ALGO_PARAMS_PATH)
 
 
 def _load_validated_params_or_block(now_ts: int) -> Optional[Dict[str, Any]]:
@@ -403,6 +410,9 @@ def _build_v3_event(
 ) -> Dict[str, Any]:
     """Build one canonical v3 event while legacy modules remain v2-compatible."""
 
+    if ((data.get("decision_object") or {}).get("decision_policy") == "PHYSICAL_ONLY_V3"
+        or (data.get("payload") or {}).get("decision_policy") == "PHYSICAL_ONLY_V3"):
+        data = {key: value for key, value in data.items() if key not in {"score_total", "score_tier", "TPS"}}
     event = observability_logger.build_event(
         event_type,
         data,
@@ -414,6 +424,8 @@ def _build_v3_event(
 
 
 def _trade_physics_dict(decision_dict: Dict[str, Any]) -> Dict[str, Any]:
+    if decision_dict.get("decision_policy") == "PHYSICAL_ONLY_V3":
+        return dict(decision_dict.get("trade_physics") or {})
     score = decision_dict.get("score")
     if not isinstance(score, dict):
         return {}
@@ -431,6 +443,8 @@ def _emit_m1_speed_window_evidence(evaluation) -> None:
         return
     print("TSP_M1_COMPLETED_SPEED_EVIDENCE " + json.dumps({
         "component": "market_model_completed_m1_speed",
+        "decision_policy": evaluation.decision.fsm_inputs.get("decision_policy"),
+        "strategy_version": evaluation.strategy_version,
         "symbol": symbol,
         "observed_at": observed,
         "evaluation_candle_ts": evaluation.market.evaluated_ts,
@@ -485,7 +499,7 @@ def _log_decision_evaluated(evaluation, buffer_mode: str) -> None:
         {
             "decision_kind": decision.kind,
             "strategic_kind": decision.kind,
-            "strategy": "BINARY_STRATEGY_V2",
+            "strategy": "BINARY_STRATEGY_V3" if evaluation.strategy_version == "3.0.0" else "BINARY_STRATEGY_V2",
             "strategy_version": evaluation.strategy_version,
             "canonical_spec": evaluation.canonical_spec,
             "score_total": decision.score.total,
@@ -517,8 +531,9 @@ def _log_decision_evaluated(evaluation, buffer_mode: str) -> None:
             last_strategy_candle_ts=decision.setup.evaluated_ts,
             last_strategy_decision_kind=decision.kind,
             last_strategy_score_total=decision.score.total,
-            last_strategy_score_tier=decision.score.tier,
+            last_strategy_score_tier=decision.score.tier if decision.score.total is not None else None,
             last_strategy_tps=trade_physics.get("TPS"),
+            last_strategy_decision_policy=decision.fsm_inputs.get("decision_policy"),
             last_strategy_hard_blockers=list(hard_blockers),
         )
     except Exception as exc:
@@ -766,16 +781,19 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                 buffer_mode=buffer_mode,
                 params=params,
             )
+            from core.owner_signal_delivery import pre_receipt_ts, destination as owner_destination
+            active_opportunity = current_opportunity_signal_id(state, symbol)
+            physical_context = lifecycle_context(state, symbol, now_ts=now_ts,
+                owner_pre_ts=pre_receipt_ts(active_opportunity),
+                owner_confirm_ts=pre_receipt_ts(active_opportunity, "CONFIRM"),
+                require_owner_receipts=owner_destination() is not None)
             evaluation = decide(
                 candles_m1=candles_m1,
                 candles_m5=candles_m5,
                 params=params,
                 buffer_mode=buffer_mode,
                 want_open_now=bool(symbol_in_focus),
-                context={
-                    "decision_timeframe": "M1",
-                    "opportunity_signal_id": current_opportunity_signal_id(state, symbol),
-                },
+                context=physical_context,
                 execution_calibration=execution_calibration,
                 observation_ts=now_ts,
             )
@@ -835,6 +853,16 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
             # independent research projection cannot alter its handoff/state.
             _observe_score_severity(evaluation, params, now_ts=time.time(),
                                     provider=market_client.configured_provider(), buffer_mode=buffer_mode)
+            if params.get("decision_policy") == "PHYSICAL_ONLY_V3":
+                try:
+                    from intelligence import physical_expiry_calibration
+                    captured = physical_expiry_calibration.observe_accepted_chain(decision, persistent_fsm, params,
+                        now_ts=time.time(), provider=market_client.configured_provider(), buffer_mode=buffer_mode)
+                    if captured:
+                        fsm_runtime.save_state(state)
+                except Exception as calibration_exc:
+                    print("TSP_PHYSICAL_V3_CALIBRATION_UNAVAILABLE " + json.dumps({
+                        "error_class": type(calibration_exc).__name__}), flush=True)
 
         except Exception as exc:
             if isinstance(exc, MarketDataRateLimitError):

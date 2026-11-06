@@ -507,6 +507,8 @@ def _load_raw_algo_params() -> Dict[str, Any]:
 def _set_threshold(field: str, value: int) -> str:
     with _storage.with_lock("algo_params"):
         params = _load_raw_algo_params()
+        if params.get("decision_policy") == "PHYSICAL_ONLY_V3":
+            return "V3 folosește criterii fizice. Pragurile de scor sunt eliminate."
         params.setdefault("score_thresholds", {})
         params["score_thresholds"][field.upper()] = value
         _save_algo_params_validated(params)
@@ -1087,7 +1089,10 @@ def handle_audit_runtime(user_id: int) -> Tuple[Optional[str], str]:
     config_summary: Dict[str, Any] = {}
     try:
         params = _load_algo_params()
-        config_summary["score_thresholds"] = params.get("score_thresholds")
+        if params.get("decision_policy") == "PHYSICAL_ONLY_V3":
+            config_summary["decision_policy"] = "PHYSICAL_ONLY_V3"
+        else:
+            config_summary["score_thresholds"] = params.get("score_thresholds")
         config_summary["sr_required_multiplier"] = params.get("sr_required_multiplier")
         config_summary["strategy_profile"] = get_current_strategy_profile_observation()
         config_summary["market_data_provider"] = _provider_control.provider_summary()

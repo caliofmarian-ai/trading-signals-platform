@@ -193,6 +193,17 @@ def telemetry_market_loop(
             )
         if shadow_research.enabled():
             try:
+                from core.physical_params import physical_runtime_enabled
+                if physical_runtime_enabled():
+                    from intelligence import physical_expiry_calibration
+                    physical_expiry_calibration.advance(now_ts=float(clock()),
+                        active_provider=market_client.configured_provider(),
+                        price_loader=market_client.get_latest_price_sample)
+            except Exception as exc:
+                _warn_once_per_window(warning_cache, "physical_v3_expiry", now_ts=float(clock()),
+                    warn_type="PHYSICAL_V3_CALIBRATION_UNAVAILABLE", message="Physical V3 quote observations unavailable",
+                    context={"error_class": type(exc).__name__})
+            try:
                 from intelligence import lifecycle_cadence_research
                 lifecycle_cadence_research.advance(now_ts=float(clock()),
                     active_provider=market_client.configured_provider(),price_loader=market_client.get_latest_price_sample)

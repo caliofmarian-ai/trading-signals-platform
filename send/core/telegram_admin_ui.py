@@ -330,6 +330,13 @@ def status_markup() -> dict[str, list[list[dict[str, str]]]]:
 
 
 def strategy_markup() -> dict[str, list[list[dict[str, str]]]]:
+    from core.physical_params import physical_runtime_enabled
+    if physical_runtime_enabled():
+        return _kb([
+            [_btn("📐 S/R", "SR"), _btn("⚡ Spike Filter", "SPIKE")],
+            [_btn("💱 Symbols", "SYMBOLS"), _btn("⬅️ Operations", "OPERATIONS")],
+            [_knowledge_btn("strategy", "STRATEGY")],
+        ])
     return _kb(
         [
             [_btn("🎯 Thresholds", "THRESHOLDS"), _btn("📐 S/R", "SR")],
@@ -344,6 +351,9 @@ def strategy_parameter_markup(
     knowledge_key: str,
     refresh_action: str,
 ) -> dict[str, list[list[dict[str, str]]]]:
+    from core.physical_params import physical_runtime_enabled
+    if knowledge_key == "thresholds" and physical_runtime_enabled():
+        knowledge_key, refresh_action = "strategy", "STRATEGY"
     return _kb([
         [_btn("🔄 Refresh", refresh_action)],
         [_knowledge_btn(knowledge_key, refresh_action)],

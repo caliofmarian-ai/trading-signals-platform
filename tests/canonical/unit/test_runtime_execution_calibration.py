@@ -241,9 +241,11 @@ def test_runtime_wires_source_preserves_evaluation_and_existing_publication_bloc
     from core.v2_fsm_orchestrator import advance_persistent_fsm
     from state_store.state_store import default_fsm_state
 
-    params = _params(canonical_runtime_root)
+    from core.physical_params import load_physical_runtime_algo_params
+    params = load_physical_runtime_algo_params(str(canonical_runtime_root / "config/algo_params.json"))
     path = canonical_runtime_root / "config/execution_calibration.json"
     artifact = _artifact(params)
+    artifact["strategy_version"] = "3.0.0"
     if artifact_state == "expired":
         artifact["valid_until_ts"] = NOW
     if artifact_state != "missing":

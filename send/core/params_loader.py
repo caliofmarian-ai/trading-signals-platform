@@ -167,6 +167,10 @@ def validate_algo_params(params: Dict[str, Any]) -> None:
     if not isinstance(params, dict):
         raise ParamsValidationError("params must be a dict")
 
+    if params.get("algo_version") == "3.0.0":
+        from .physical_params import validate_physical_params
+        validate_physical_params(params)
+        return
     _validate_no_unknown_top_level_keys(params)
     _validate_required_top_level_keys(params)
     _validate_algo_version(params)

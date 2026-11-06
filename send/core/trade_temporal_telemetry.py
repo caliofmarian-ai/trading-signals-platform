@@ -194,7 +194,8 @@ def _build_trade_record(
     open_ts = _require_int(event.get("created_ts"), "created_ts")
     candle_ts = _require_int(event.get("candle_ts"), "candle_ts")
     entry_price, entry_price_source = _extract_entry_price(event)
-    score_total = _require_number(event.get("score_total"), "score_total")
+    physical_only = (event.get("payload") or {}).get("decision_policy") == "PHYSICAL_ONLY_V3"
+    score_total = None if physical_only else _require_number(event.get("score_total"), "score_total")
     provider = _require_str(market_provider, "market_provider").upper()
     publication = _normalize_publication_evidence(publication_evidence)
     payload = dict(event.get("payload")) if isinstance(event.get("payload"), Mapping) else {}

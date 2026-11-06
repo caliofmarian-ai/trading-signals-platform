@@ -50,6 +50,8 @@ def canonical_runtime_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
         dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
     monkeypatch.setenv("BINARYBOT_BASE_DIR", str(root))
+    monkeypatch.setenv("ADMIN_ROLES_CONFIG", str(root / "config" / "admin_roles.json"))
+    monkeypatch.setenv("ADMIN_PERMISSIONS_CONFIG", str(root / "config" / "admin_permissions.json"))
     monkeypatch.setenv("OBS_DIR", str(root / "observability"))
     monkeypatch.setenv("ENGINE_EVENTS_LOG", str(root / "observability" / "engine_events.jsonl"))
     monkeypatch.setenv("FSM_EVENTS_LOG", str(root / "observability" / "fsm_events.jsonl"))

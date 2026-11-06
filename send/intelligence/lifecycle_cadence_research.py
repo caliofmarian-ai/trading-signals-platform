@@ -159,6 +159,9 @@ def observe(evaluation,params,*,now_ts,provider,buffer_mode):
 
 
 def _report_if_due(path,state,now):
+    from core.physical_params import physical_runtime_enabled
+    if physical_runtime_enabled():
+        return None
     slot=int(now//REPORT_SECONDS)
     if _last_report.get(str(path),-1)<slot:
         report=_summary(state,now)

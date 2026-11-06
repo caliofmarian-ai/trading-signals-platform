@@ -242,7 +242,10 @@ class TradePhysicsContext:
                 raise ValueError(f"trade_physics.{name} must be between 0 and 1")
         if self.TPS is not None and self.TPS > 100:
             raise ValueError("trade_physics.TPS must be between 0 and 100")
-        if self.readiness_state == "READY" and self.TPS is None:
+        physical_only = self.formula_version == "V3_PHYSICAL_ONLY_1.0.0"
+        if physical_only and any(getattr(self, name) is not None for name in ("S", "T", "P", "V", "TPS", "interpretation_band")):
+            raise ValueError("physical-only evidence must not contain scores")
+        if self.readiness_state == "READY" and self.TPS is None and not physical_only:
             raise ValueError("READY Trade Physics requires TPS")
         if self.readiness_state != "READY" and self.TPS is not None:
             raise ValueError("non-READY Trade Physics must not expose authoritative TPS")
@@ -252,14 +255,22 @@ class TradePhysicsContext:
 
 @dataclass(frozen=True)
 class ScoreContext:
-    total: float
-    normalized: float
+    total: Optional[float]
+    normalized: Optional[float]
     components: Mapping[str, float]
     penalties: Mapping[str, float] = field(default_factory=dict)
     tier: str = "UNAVAILABLE"
     trade_physics: Optional[TradePhysicsContext] = None
 
     def __post_init__(self) -> None:
+        # Compatibility container for typed historical consumers. V3 never
+        # computes a score, including a synthetic zero or a replacement TPS.
+        if self.tier in {"PHYSICAL_READY", "PHYSICAL_BLOCKED"}:
+            if self.total is not None or self.normalized is not None or self.components or self.penalties:
+                raise ValueError("physical-only eligibility must not contain scores")
+            if self.trade_physics is not None and self.trade_physics.formula_version != "V3_PHYSICAL_ONLY_1.0.0":
+                raise ValueError("physical-only eligibility requires scoreless physical evidence")
+            return
         _finite_non_negative(self.total, "score.total")
         _finite_non_negative(self.normalized, "score.normalized")
         if self.normalized > 1:
@@ -356,4 +367,14 @@ class DecisionObject:
         object.__setattr__(self, "decision_audit_id", decision_audit_id)
 
     def to_dict(self) -> Dict[str, Any]:
-        return _plain(asdict(self))
+        result = _plain(asdict(self))
+        if self.fsm_inputs.get("decision_policy") == "PHYSICAL_ONLY_V3":
+            result.pop("score")
+            physical = _plain(asdict(self.score.trade_physics)) if self.score.trade_physics else {}
+            for key in ("S", "T", "P", "V", "TPS", "interpretation_band"):
+                physical.pop(key, None)
+            result["trade_physics"] = physical
+            result["decision_policy"] = "PHYSICAL_ONLY_V3"
+            result["eligibility"] = {"eligible": not self.reject.hard_blockers,
+                                     "hard_blockers": list(self.reject.hard_blockers)}
+        return result

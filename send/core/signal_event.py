@@ -74,7 +74,7 @@ class SignalEvent:
     symbol: str
     timeframe: str
     direction: str
-    score_total: float
+    score_total: Optional[float]
     buffer_mode: str
     buffer_distance: float
     model_expiry: float
@@ -114,7 +114,11 @@ class SignalEvent:
             raise SignalEventUnavailable("direction must be BUY or SELL")
         if self.buffer_mode not in ALLOWED_BUFFER_MODES:
             raise SignalEventUnavailable("buffer_mode must be SMALL, MEDIUM, or LARGE")
-        _non_negative_number(self.score_total, "score_total")
+        if isinstance(self.payload, Mapping) and self.payload.get("decision_policy") == "PHYSICAL_ONLY_V3":
+            if self.score_total is not None:
+                raise SignalEventUnavailable("physical-only signals cannot contain a score")
+        else:
+            _non_negative_number(self.score_total, "score_total")
         _non_negative_number(self.buffer_distance, "buffer_distance")
         _positive_number(self.model_expiry, "model_expiry")
         _positive_number(self.entry_price, "entry_price")
@@ -192,6 +196,8 @@ class SignalEvent:
         result["buffer_price"] = self.buffer_price
         result["expiry_minutes"] = self.expiry_minutes
         result["payload"] = dict(self.payload)
+        if self.payload.get("decision_policy") == "PHYSICAL_ONLY_V3":
+            result.pop("score_total")
         return result
 
 
@@ -199,7 +205,7 @@ def _trade_physics_payload(decision: DecisionObject) -> Dict[str, Any] | None:
     trade_physics = decision.score.trade_physics
     if trade_physics is None:
         return None
-    return {
+    result = {
         "readiness_state": trade_physics.readiness_state,
         "available_space": trade_physics.available_space,
         "required_space": trade_physics.required_space,
@@ -221,6 +227,10 @@ def _trade_physics_payload(decision: DecisionObject) -> Dict[str, Any] | None:
         "formula_version": trade_physics.formula_version,
         "feature_schema_version": trade_physics.feature_schema_version,
     }
+    if decision.fsm_inputs.get("decision_policy") == "PHYSICAL_ONLY_V3":
+        for key in ("S", "T", "P", "V", "TPS", "interpretation_band"):
+            result.pop(key)
+    return result
 
 
 def _execution_snapshot(
@@ -271,7 +281,7 @@ def _semantic_payload(
     execution_attempt_id: Optional[str],
     fsm_transition_id: Optional[str],
 ) -> Dict[str, Any]:
-    return {
+    result = {
         "strategy": "Binary Trading",
         "strategy_version": "2.0.0",
         "canonical_specification": "ALGO_SPEC_v3.0.0",
@@ -302,6 +312,11 @@ def _semantic_payload(
         "source": decision.setup.source,
         "cycle_id": decision.setup.cycle_id,
     }
+    if decision.fsm_inputs.get("decision_policy") == "PHYSICAL_ONLY_V3":
+        result.pop("score_tier")
+        result.update(strategy_version="3.0.0", decision_policy="PHYSICAL_ONLY_V3",
+                      canonical_specification="V3_SCORELESS_OWNER_AMENDMENT_v1.0.0")
+    return result
 
 
 def build_signal_event(
@@ -338,7 +353,7 @@ def build_signal_event(
         symbol=decision.setup.symbol,
         timeframe=decision.setup.timeframe,
         direction=decision.setup.direction,
-        score_total=float(decision.score.total),
+        score_total=float(decision.score.total) if decision.score.total is not None else None,
         buffer_mode=normalized_buffer_mode,
         buffer_distance=float(decision.market_context.buffer_distance),
         model_expiry=model_expiry,

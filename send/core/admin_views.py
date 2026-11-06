@@ -43,6 +43,11 @@ def render_admin_home(identity: Dict[str, Any]) -> str:
 
 
 def render_strategy_status(params: Dict[str, Any]) -> str:
+    if params.get("decision_policy") == "PHYSICAL_ONLY_V3":
+        return _lines(["Strategy V3", "", "Decision policy: physical criteria",
+            "Activity and stability; confirmed S/R space >= buffer; positive directional speed; feasible time.",
+            "Lifecycle: PRE -> CONFIRM -> OPEN_NOW; minimum PRE lead: 30 seconds.",
+            "OPEN_NOW requires governed execution-expiry calibration."])
     thresholds = params.get("score_thresholds", {})
     spike = params.get("spike_filters", {})
 
@@ -116,6 +121,9 @@ def render_debug_last(
     time_context = decision_object.get("time") if isinstance(decision_object.get("time"), dict) else {}
     score = decision_object.get("score") if isinstance(decision_object.get("score"), dict) else {}
     trade_physics = score.get("trade_physics") if isinstance(score.get("trade_physics"), dict) else {}
+    physical_only = decision_object.get("decision_policy") == "PHYSICAL_ONLY_V3"
+    if physical_only:
+        trade_physics = decision_object.get("trade_physics") or {}
     reject = decision_object.get("reject") if isinstance(decision_object.get("reject"), dict) else {}
     debug = data.get("debug", {}) if isinstance(data.get("debug"), dict) else {}
     gates = data.get("gates", {}) if isinstance(data.get("gates"), dict) else {}
@@ -209,6 +217,8 @@ def render_debug_last(
             ]
         )
 
+    if physical_only:
+        lines = [line for line in lines if not line.startswith(("SCORE:", "SCORE TIER:", "TPS:", "S/T/P/V:"))]
     return _lines(lines)
 
 
@@ -282,6 +292,11 @@ def render_research_analytics_panel(recent_events: Optional[List[Dict[str, Any]]
     if recent_events is None:
         return _lines(["Research & Analytics", "", "UNAVAILABLE (engine event log absent or invalid)."])
     raw_decisions = _v3_decisions(recent_events)
+    physical_decisions = [event for event in raw_decisions
+                          if (event["data"].get("decision_object") or {}).get("decision_policy") == "PHYSICAL_ONLY_V3"]
+    physical_only = bool(physical_decisions)
+    if physical_only:
+        raw_decisions = physical_decisions
     decisions = _unique_candle_decisions(raw_decisions)
     if not decisions:
         return _lines([
@@ -319,6 +334,9 @@ def render_research_analytics_panel(recent_events: Optional[List[Dict[str, Any]]
         "Descriptive only. The window and sample count are shown explicitly.",
         "No threshold or production-strategy change is authorized by this view.",
     ])
+    if physical_only:
+        lines = [line for line in lines if not line.startswith(("Average classical score:", "Average ready TPS:"))]
+        lines.insert(2, "Decision policy: physical V3; historical cohorts excluded.")
     return _lines(lines)
 
 
