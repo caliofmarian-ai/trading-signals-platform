@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+from collections import deque
 import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from runtime.market_history_integrity import inspect_history, summarize_gap_distribution
+from runtime.observation_timing import WINDOW, distribution
 
 
 FINNHUB_WS_URL = "wss://ws.finnhub.io"
@@ -143,6 +146,8 @@ class FinnhubForexFeed:
         self._candles: Dict[str, List[Dict[str, Any]]] = {"M1": [], "M5": []}
         self._last_price_ts: Optional[int] = None
         self._last_tick_ms: Optional[int] = None
+        self._tick_intervals = deque(maxlen=WINDOW)
+        self._tick_receive_ages = deque(maxlen=WINDOW)
         self._store_load_state = "NOT_ATTEMPTED"
         self._store_write_state = "NOT_ATTEMPTED"
         self._restored_candle_counts: Dict[str, int] = {"M1": 0, "M5": 0}
@@ -267,17 +272,25 @@ class FinnhubForexFeed:
         for row in rows:
             if not isinstance(row, dict) or row.get("s") != self.finnhub_symbol:
                 continue
+            if any(isinstance(row.get(key),bool) for key in ("t","p","v")):
+                continue
             try:
                 tick_ms = int(row["t"])
                 price = float(row["p"])
                 volume = float(row.get("v") or 0)
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, OverflowError):
                 continue
-            if tick_ms <= 0 or price <= 0:
+            if (not 0<tick_ms<2**53 or not math.isfinite(price) or price<=0
+                    or not math.isfinite(volume) or volume<0):
                 continue
             with self._lock:
                 if self._last_tick_ms is not None and tick_ms < self._last_tick_ms:
                     continue
+                if self._last_tick_ms is not None and tick_ms > self._last_tick_ms:
+                    self._tick_intervals.append((tick_ms-self._last_tick_ms)/1000)
+                receive_age=float(self.clock())-tick_ms/1000
+                if math.isfinite(receive_age):
+                    self._tick_receive_ages.append(receive_age)
                 first_trade_seen = first_trade_seen or self._valid_trade_tick_count == 0
                 self._last_tick_ms = tick_ms
                 self._last_price_ts = tick_ms // 1000
@@ -397,6 +410,7 @@ class FinnhubForexFeed:
                 ),
                 "required_candles_by_timeframe": dict(self.minimum_candles_by_timeframe),
                 "no_prices_or_trade_recommendations": True,
+                **self._observation_timing(),
             }
         try:
             print("TSP_FINNHUB_STREAM_EVIDENCE " + json.dumps(record, sort_keys=True), flush=True)
@@ -561,6 +575,29 @@ class FinnhubForexFeed:
         # or let an older disjoint interval influence the strategy indicators.
         return candles[:contiguous_count]
 
+    def get_latest_price_sample(self, symbol: str) -> Dict[str, Any]:
+        """Read one coherent price/timestamp pair under the ingestion lock.
+
+        Retain existing real-history/freshness checks and second-resolution
+        timestamps. Restored candles alone can never become a live sample.
+        """
+        normalized=normalize_symbol(symbol)
+        with self._lock:
+            self.get_candles(normalized,"M1")
+            newest=self._candles["M1"][0]
+            if not newest["ts"]<=self._last_price_ts<newest["ts"]+60:
+                raise FinnhubMarketDataUnavailable("Finnhub live observation does not match current M1 candle")
+            return {"provider":"FINNHUB","symbol":normalized,"price":float(newest["close"]),
+                    "observed_ts":float(self._last_price_ts),"source":"LIVE_STREAM_CURRENT_M1_CLOSE"}
+
+    def _observation_timing(self):
+        # Caller holds the same lock as ingestion; no price or raw tick history.
+        return {"quote_sample_contract":"ATOMIC_REAL_TICK_PRICE_TIMESTAMP_V1",
+                "tick_timing_scope":"LAST_128_POSITIVE_PROVIDER_TIMESTAMP_STEPS_AND_ACCEPTED_TICK_RECEIVE_AGES_IN_THIS_PROCESS",
+                "provider_tick_interval_seconds":distribution(self._tick_intervals),
+                "provider_tick_receive_age_seconds":distribution(self._tick_receive_ages),
+                "provider_tick_intervals_gt_2s":sum(value>2 for value in self._tick_intervals)}
+
     def health(self) -> Dict[str, Any]:
         with self._lock:
             last_price_ts = self._last_price_ts
@@ -584,6 +621,7 @@ class FinnhubForexFeed:
                 "last_transport_pong_ts": self._last_transport_pong_ts,
             }
             integrity = inspect_history(self._candles)
+            observation_timing=self._observation_timing()
         if load_state == "ERROR" or write_state == "ERROR":
             persistence_state = "ERROR"
         elif load_state == "LOADED" or write_state == "OK":
@@ -629,4 +667,5 @@ class FinnhubForexFeed:
             "last_persisted_ts": last_persisted_ts,
             "integrity_state": integrity["state"],
             "integrity_report": integrity,
+            **observation_timing,
         }

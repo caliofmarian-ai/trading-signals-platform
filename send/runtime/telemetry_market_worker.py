@@ -11,6 +11,7 @@ from runtime import runtime_status
 from intelligence import shadow_model_time_research as shadow_research
 from intelligence import shadow_gate_sweep_research as gate_research
 from intelligence import shadow_gate_timebox_research as timebox_research
+from runtime.observation_timing import LoopTimingEvidence
 
 
 TELEMETRY_POLL_SECONDS = 1.0
@@ -118,6 +119,10 @@ def telemetry_market_loop(
     last_timebox_update = None
     timebox_finished = False
     try:
+        loop_timing=LoopTimingEvidence(poll_seconds)
+    except Exception:
+        loop_timing=None
+    try:
         recovery = trade_temporal_telemetry.recover_after_restart(int(clock()))
         if recovery.get("evidence_gap_count"):
             observability_logger.log_warning(
@@ -136,6 +141,11 @@ def telemetry_market_loop(
 
     while True:
         now = float(clock())
+        if loop_timing is not None:
+            try:
+                loop_timing.begin()
+            except Exception:
+                loop_timing=None
         try:
             result = run_telemetry_cycle(now_ts=now)
             if result.get("skipped_provider_mismatch_count"):
@@ -290,4 +300,12 @@ def telemetry_market_loop(
                         "observed_at": timebox_now, "error_class": type(exc).__name__,
                     }, sort_keys=True), flush=True)
                     last_timebox_update = timebox_now
+        if loop_timing is not None:
+            try:
+                evidence=loop_timing.finish(now_ts=float(clock()),provider=market_client.configured_provider())
+                if evidence is not None:
+                    print("TSP_TELEMETRY_LOOP_TIMING "+json.dumps(evidence,sort_keys=True,allow_nan=False),flush=True)
+            except Exception:
+                # Optional diagnostics cannot interrupt observation or sleep.
+                loop_timing=None
         sleep(float(poll_seconds))
