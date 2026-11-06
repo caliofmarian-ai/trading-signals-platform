@@ -1205,10 +1205,17 @@ def render_status_page(
         )
     if not isinstance(requirements, dict):
         requirements = {code: minimum_candles for code in ("M1", "M5")}
+    if snapshot.get("market_data_history_policy") == "RECENT_PHYSICS_WITH_SAVED_CONTEXT_V1":
+        if isinstance(candle_counts, dict):
+            current_state += (f"\nSaved market context: M1 {candle_counts.get('M1')}/{requirements.get('M1')}; "
+                              f"M5 {candle_counts.get('M5')}/{requirements.get('M5')}")
+        requirements = snapshot.get("market_data_recent_contiguous_required") or {}
     history_label = "Real history"
     if isinstance(contiguous_counts, dict):
         candle_counts = contiguous_counts
         history_label = "Real contiguous history"
+        if snapshot.get("market_data_history_policy") == "RECENT_PHYSICS_WITH_SAVED_CONTEXT_V1":
+            history_label = "Recent physical window"
     if isinstance(candle_counts, dict):
         m1_count = candle_counts.get("M1")
         m5_count = candle_counts.get("M5")

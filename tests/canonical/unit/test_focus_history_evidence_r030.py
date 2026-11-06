@@ -238,6 +238,7 @@ def test_invalid_time_fails_closed(clock):
 
 
 def test_analytics_get_focus_history_replaces_placeholder(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("time.time", lambda: NOW)
     import core
     from core import analytics_engine
 
@@ -252,6 +253,7 @@ def test_analytics_get_focus_history_replaces_placeholder(tmp_path: Path, monkey
 
 
 def test_research_panel_focus_history_requires_admin_permission(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("time.time", lambda: NOW)
     import core
     from core import admin_permissions, bot_service, publication_evidence
     from core import lifecycle_funnel_evidence, market_outcome_evidence

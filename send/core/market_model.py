@@ -61,6 +61,10 @@ class IndicatorEvidence:
     activity_atr_source: str
     activity_lookback_candles: int
     legacy_minimum_m1_range: float
+    m5_context_candles: int = 0
+    m5_recent_contiguous_candles: int = 0
+    m5_context_gap_count: int = 0
+    ema_context_policy: str = "OBSERVED_BAR_CONTEXT"
 
 
 @dataclass(frozen=True)
@@ -429,6 +433,11 @@ def evaluate_market(
             activity_atr_source="M5_ATR_14",
             activity_lookback_candles=ACTIVITY_LOOKBACK_CANDLES,
             legacy_minimum_m1_range=legacy_minimum_range,
+            m5_context_candles=len(candles_m5),
+            m5_recent_contiguous_candles=len(temporal_m5),
+            m5_context_gap_count=sum(int(newer["ts"])-int(older["ts"]) != 300
+                                     for newer, older in zip(candles_m5, candles_m5[1:])),
+            ema_context_policy="OBSERVED_BAR_CONTEXT_WITH_EXPLICIT_GAPS",
         ),
         noise_reasons=tuple(noise_reasons),
     )

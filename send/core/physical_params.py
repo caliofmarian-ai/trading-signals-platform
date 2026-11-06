@@ -6,6 +6,7 @@ from pathlib import Path
 
 from . import params_loader as legacy
 from . import storage
+from .market_history_policy import HISTORY_POLICY
 
 POLICY = "PHYSICAL_ONLY_V3"
 MARKET_KEYS = {"ema_fast", "ema_slow", "rsi_period", "min_avg_range"}
@@ -22,11 +23,13 @@ def physical_runtime_enabled():
 
 def validate_physical_params(params):
     required = {"algo_version", "decision_policy", "market_model", "expiry_limits_minutes", "buffer_multipliers"}
-    allowed = required | (set(legacy.OPTIONAL_TOP_LEVEL_KEYS) - {"strategy_v2"})
+    allowed = required | {"history_policy"} | (set(legacy.OPTIONAL_TOP_LEVEL_KEYS) - {"strategy_v2"})
     if set(params) - allowed or required - set(params):
         raise legacy.ParamsValidationError("V3 parameter keys must be physical-only and complete")
     if params.get("algo_version") != "3.0.0" or params.get("decision_policy") != POLICY:
         raise legacy.ParamsValidationError("V3 physical policy/version mismatch")
+    if params.get("history_policy", HISTORY_POLICY) != HISTORY_POLICY:
+        raise legacy.ParamsValidationError("V3 history_policy is unsupported")
     model = params["market_model"]
     if not isinstance(model, dict) or set(model) != MARKET_KEYS:
         raise legacy.ParamsValidationError("V3 market_model requires only physical indicator parameters")
@@ -58,7 +61,7 @@ def migrate_physical_params(params):
     result.pop("score_thresholds")
     strategy = result.pop("strategy_v2")
     result["market_model"] = {key: strategy[key] for key in MARKET_KEYS}
-    result.update(algo_version="3.0.0", decision_policy=POLICY)
+    result.update(algo_version="3.0.0", decision_policy=POLICY, history_policy=HISTORY_POLICY)
     validate_physical_params(result)
     return result
 
@@ -70,11 +73,16 @@ def load_physical_runtime_algo_params(path):
             params = legacy.load_algo_params(path)
             if params.get("algo_version") == "3.0.0":
                 validate_physical_params(params)
-                return params
-            migrated = migrate_physical_params(params)
+                if params.get("history_policy") == HISTORY_POLICY:
+                    return params
+                migrated = {**deepcopy(params), "history_policy": HISTORY_POLICY}
+                prefix = "v3_before_recent_history_"
+            else:
+                migrated = migrate_physical_params(params)
+                prefix = "v2_before_physical_v3_"
             original = Path(path).read_bytes()
             digest = sha256(original).hexdigest()
-            backup = Path(path).parent / "policy_migrations" / ("v2_before_physical_v3_" + digest + ".json")
+            backup = Path(path).parent / "policy_migrations" / (prefix + digest + ".json")
             if backup.exists() and backup.read_bytes() != original:
                 raise ValueError("physical migration backup mismatch")
             if not backup.exists():
@@ -90,6 +98,7 @@ def load_physical_runtime_algo_params(path):
                 raise ValueError("physical migration readback mismatch")
             print("TSP_PHYSICAL_V3_POLICY " + json.dumps({"decision_policy": POLICY,
                   "algo_version": "3.0.0", "scoring_enabled": False,
+                  "history_policy": HISTORY_POLICY,
                   "migration_backup_sha256": digest}), flush=True)
             return verified
     except Exception as exc:

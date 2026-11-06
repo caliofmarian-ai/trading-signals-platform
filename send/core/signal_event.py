@@ -315,7 +315,8 @@ def _semantic_payload(
     if decision.fsm_inputs.get("decision_policy") == "PHYSICAL_ONLY_V3":
         result.pop("score_tier")
         result.update(strategy_version="3.0.0", decision_policy="PHYSICAL_ONLY_V3",
-                      canonical_specification="V3_SCORELESS_OWNER_AMENDMENT_v1.0.0")
+                      canonical_specification="V3_SCORELESS_OWNER_AMENDMENT_v1.1.0",
+                      history_policy=decision.fsm_inputs.get("history_policy"))
     return result
 
 

@@ -57,8 +57,11 @@ def _finnhub_feed():
     global _FINNHUB_FEED
     if _FINNHUB_FEED is None:
         from runtime.finnhub_market_data import FinnhubForexFeed
-
-        _FINNHUB_FEED = FinnhubForexFeed()
+        from core.physical_params import physical_runtime_enabled, load_physical_runtime_algo_params
+        from core import storage
+        params = (load_physical_runtime_algo_params(storage.config_path("algo_params.json"))
+                  if physical_runtime_enabled() else None)
+        _FINNHUB_FEED = FinnhubForexFeed(physical_params=params) if params is not None else FinnhubForexFeed()
     return _FINNHUB_FEED
 
 
@@ -260,6 +263,8 @@ def _history_status_evidence(health):
     return {
         "market_data_minimum_candles_by_timeframe": dict(requirements),
         "market_data_contiguous_candle_counts": health.get("contiguous_candle_counts"),
+        "market_data_recent_contiguous_required": health.get("minimum_contiguous_candles_by_timeframe"),
+        "market_data_history_policy": health.get("history_policy"),
     }
 
 

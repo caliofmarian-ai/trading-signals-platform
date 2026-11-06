@@ -11,7 +11,7 @@ Supersedes: `CANONICAL_MASTER_INDEX_v1.0.0.md`
 
 ## 0. Active authority declaration
 
-Owner amendment 2026-11-06: [V3_SCORELESS_OWNER_AMENDMENT_v1.0.0.md](V3_SCORELESS_OWNER_AMENDMENT_v1.0.0.md)
+Owner amendment 2026-11-06: [V3_SCORELESS_OWNER_AMENDMENT_v1.1.0.md](V3_SCORELESS_OWNER_AMENDMENT_v1.1.0.md)
 has priority over score/TPS selection and ranking wording in the existing
 functional domains. The active V3 runtime uses physical criteria and ordered
 lifecycle evidence, without scores. This amendment does not add a functional domain.

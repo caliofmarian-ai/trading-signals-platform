@@ -296,6 +296,8 @@ def build_status_snapshot(
         "market_data_minimum_candles_by_timeframe": evidence.get(
             "market_data_minimum_candles_by_timeframe"
         ),
+        "market_data_recent_contiguous_required": evidence.get("market_data_recent_contiguous_required"),
+        "market_data_history_policy": evidence.get("market_data_history_policy"),
         "market_data_contiguous_candle_counts": evidence.get(
             "market_data_contiguous_candle_counts"
         ),

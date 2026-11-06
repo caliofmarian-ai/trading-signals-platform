@@ -29,6 +29,11 @@ def _path() -> Path | None:
         return None
     from core.physical_params import physical_runtime_enabled
     folder = "owner_timing_physical_v3" if physical_runtime_enabled() else "owner_timing_continuous"
+    if physical_runtime_enabled():
+        from core.market_history_policy import HISTORY_POLICY
+        params = storage.load_json(storage.config_path("algo_params.json"), default={})
+        if params.get("history_policy") == HISTORY_POLICY:
+            folder = "owner_timing_physical_v3_recent_history"
     path = Path(storage.root_path("analytics", folder, "state.json"))
     if path.is_symlink() or path.parent.is_symlink():
         raise ValueError("INVALID_TIMING_SOURCE")
@@ -37,7 +42,7 @@ def _path() -> Path | None:
 
 def _read(path: Path) -> dict[str, Any] | None:
     if not path.exists():
-        if path.parent.name == "owner_timing_physical_v3":
+        if path.parent.name in {"owner_timing_physical_v3", "owner_timing_physical_v3_recent_history"}:
             return None
         session = os.getenv("OWNER_TIMING_SESSION_ID", "")
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", session) is None:

@@ -444,6 +444,7 @@ def _emit_m1_speed_window_evidence(evaluation) -> None:
     print("TSP_M1_COMPLETED_SPEED_EVIDENCE " + json.dumps({
         "component": "market_model_completed_m1_speed",
         "decision_policy": evaluation.decision.fsm_inputs.get("decision_policy"),
+        "history_policy": evaluation.decision.fsm_inputs.get("history_policy"),
         "strategy_version": evaluation.strategy_version,
         "symbol": symbol,
         "observed_at": observed,
@@ -467,6 +468,8 @@ def _log_decision_evaluated(evaluation, buffer_mode: str) -> None:
             "average_m1_range": evaluation.market.evidence.average_m1_range,
             "minimum_m1_range": evaluation.market.evidence.minimum_m1_range,
             "atr_m5": evaluation.market.evidence.atr_m5,
+            "history_context": {key: getattr(evaluation.market.evidence, key, None) for key in
+                ("m5_context_candles", "m5_recent_contiguous_candles", "m5_context_gap_count", "ema_context_policy")},
             "m1_speed_window": vars(evaluation.market.evidence.m1_speed_window),
             "activity_gate": {
                 key: getattr(evaluation.market.evidence, key, None)

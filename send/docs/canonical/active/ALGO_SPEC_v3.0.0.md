@@ -1,7 +1,7 @@
 # ALGO_SPEC_v3.0.0
 
 > Active Owner amendment, 2026-11-06:
-> [V3_SCORELESS_OWNER_AMENDMENT_v1.0.0.md](V3_SCORELESS_OWNER_AMENDMENT_v1.0.0.md)
+> [V3_SCORELESS_OWNER_AMENDMENT_v1.1.0.md](V3_SCORELESS_OWNER_AMENDMENT_v1.1.0.md)
 > overrides this document's classical score/TPS decision and stage-band rules.
 > Active V3 uses physical eligibility and the ordered opportunity lifecycle.
 

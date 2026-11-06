@@ -16,8 +16,9 @@ from statistics import NormalDist
 from core import storage
 from intelligence import shadow_model_time_research as quotes
 from intelligence import buffer_expiry_evidence as buffer_evidence
+from core.market_history_policy import HISTORY_POLICY
 
-PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V1"
+PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V2"
 BIASES = (0.0, 0.05, 0.10, 0.15, 0.20, 0.25)
 MAX_RECORDS = 512
 MAX_BYTES = 4 * 1024 * 1024
@@ -60,7 +61,7 @@ def _path():
     from core.owner_signal_delivery import destination
     if destination() is None or not quotes.enabled():
         return None
-    path = Path(storage.root_path("analytics", "physical_v3_expiry_calibration", "state.json"))
+    path = Path(storage.root_path("analytics", "physical_v3_expiry_calibration", "recent_history_state.json"))
     if path.is_symlink() or path.parent.is_symlink():
         raise ValueError("INVALID_CALIBRATION_PATH")
     return path
@@ -100,6 +101,7 @@ def validate(state):
         _number(state["buffer_collection_started_ts"])
     scope = state["scope"]
     if (scope.get("provider") != "FINNHUB" or scope.get("symbol") != "EUR/USD"
+        or scope.get("history_policy") != HISTORY_POLICY
         or scope.get("buffer_mode") not in {"SMALL", "MEDIUM", "LARGE"}
         or not isinstance(scope.get("parameter_sha256"), str) or len(scope["parameter_sha256"]) != 64):
         raise ValueError("INVALID_CALIBRATION_SCOPE")
@@ -175,13 +177,15 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
     path = _path()
     if path is None or not entries:
         return
-    if params.get("decision_policy") != "PHYSICAL_ONLY_V3" or "score_thresholds" in params:
+    if (params.get("decision_policy") != "PHYSICAL_ONLY_V3" or "score_thresholds" in params
+        or params.get("history_policy") != HISTORY_POLICY):
         raise ValueError("PHYSICAL_POLICY_REQUIRED")
     from core.physical_params import validate_physical_params
     validate_physical_params(params)
     now = _number(now_ts)
     from core.runtime_execution_calibration import algo_params_sha256
     scope = {"provider": "FINNHUB", "symbol": "EUR/USD", "buffer_mode": buffer_mode,
+             "history_policy": HISTORY_POLICY,
              "parameter_sha256": algo_params_sha256(params), "strategy_version": strategy_version,
              "canonical_spec": canonical_spec, "model_limits_minutes": params["expiry_limits_minutes"]}
     with storage.with_lock("physical_v3_expiry_calibration", timeout_sec=0.2):
@@ -324,7 +328,8 @@ def analyze(state, *, now_ts):
                                    "split": "CHRONOLOGICAL_NONOVERLAPPING_TRAIN_THEN_UNTOUCHED_HOLDOUT"},
               "execution_calibration_proven": False, "automatic_activation_allowed": False,
               "production_parameters_changed": False, "broker_executed": False,
-              "actual_telegram_publications": 0, "decision_policy": "PHYSICAL_ONLY_V3"}
+              "actual_telegram_publications": 0, "decision_policy": "PHYSICAL_ONLY_V3",
+              "history_policy": HISTORY_POLICY}
     if state is None:
         return report
     validate(state)
