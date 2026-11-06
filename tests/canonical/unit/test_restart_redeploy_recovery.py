@@ -273,6 +273,33 @@ class TestStaleLockRecovery:
                 with _storage_mod.with_lock("livelock", base_dir=lock_dir, timeout_sec=0.1):
                     pass  # Should never reach here
 
+    def test_11b_aged_live_pid_lock_not_stolen(self, tmp_path):
+        """A long operation remains authoritative while its same-deploy PID is alive."""
+        lock_dir = str(tmp_path / "locks")
+        lock_path = os.path.join(lock_dir, "aged_livelock.lock")
+        old_ts = time.time() - _storage_mod._LOCK_STALE_AGE_SEC - 60.0
+        _write_lock(lock_path, pid=os.getpid(), ts=old_ts, deploy="same-deploy")
+
+        with patch.object(_storage_mod, "_current_deployment_id", return_value="same-deploy"):
+            assert not _storage_mod._lock_is_stale(lock_path)
+            with pytest.raises(TimeoutError):
+                with _storage_mod.with_lock(
+                    "aged_livelock", base_dir=lock_dir, timeout_sec=0.1
+                ):
+                    pass
+
+    def test_11c_reclaim_rechecks_fresh_candidate_before_unlink(self, tmp_path):
+        """A fresh lock at a reused path is not removed by a delayed reclaimer."""
+        lock_dir = str(tmp_path / "locks")
+        lock_path = os.path.join(lock_dir, "reused.lock")
+        _write_lock(lock_path, pid=os.getpid(), ts=time.time(), deploy="same-deploy")
+
+        with patch.object(_storage_mod, "_current_deployment_id", return_value="same-deploy"):
+            reclaimed = _storage_mod._reclaim_stale_lock(lock_path, "reused")
+
+        assert not reclaimed
+        assert os.path.exists(lock_path)
+
     def test_12_different_deployment_lock_reclaimed(self, tmp_path):
         """Lock from a different Railway deployment is always stale."""
         lock_dir = str(tmp_path / "locks")

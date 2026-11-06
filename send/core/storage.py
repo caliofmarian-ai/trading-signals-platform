@@ -194,8 +194,9 @@ def _is_pid_alive(pid: int) -> bool:
         return False
 
 
-# A lock is always considered stale when it is older than this threshold,
-# even if the PID appears alive (e.g. PID reuse).
+# Age is a fallback only when ownership cannot be validated.  A demonstrably
+# live owner in the current deployment must never be displaced solely because
+# a legitimate operation lasts longer than this threshold.
 _LOCK_STALE_AGE_SEC: float = 300.0
 
 
@@ -205,8 +206,9 @@ def _lock_is_stale(lock_path: str) -> bool:
     A lock is stale when ANY of the following are true:
     1. Its owning PID is no longer running in this OS context.
     2. Its deployment ID differs from the current deployment (different Redeploy).
-    3. It is older than ``_LOCK_STALE_AGE_SEC`` seconds.
-    4. Its metadata is malformed and it is at least 60 seconds old.
+    3. Ownership cannot be validated and it is older than
+       ``_LOCK_STALE_AGE_SEC`` seconds.
+    4. Its metadata is empty and it is at least 60 seconds old.
 
     A lock is NOT reclaimed when the PID is alive AND the deployment matches.
     """
@@ -230,20 +232,24 @@ def _lock_is_stale(lock_path: str) -> bool:
         if lock_deploy and current_deploy and lock_deploy != current_deploy:
             return True
 
-        # Explicit age threshold (handles PID reuse on long-lived systems).
+        # A valid live PID in the current deployment is authoritative.  The
+        # former age-first check could steal a lock from PID 1 after five
+        # minutes and contradicted this function's safety contract.
+        if lock_pid_str:
+            try:
+                lock_pid = int(lock_pid_str)
+                if _is_pid_alive(lock_pid):
+                    return False
+                return True
+            except ValueError:
+                pass
+
+        # Ownership is not verifiable.  Age is a conservative fallback for
+        # truncated metadata or legacy lock files that have no valid PID.
         if lock_ts_str:
             try:
                 lock_age = time.time() - float(lock_ts_str)
                 if lock_age > _LOCK_STALE_AGE_SEC:
-                    return True
-            except ValueError:
-                pass
-
-        # Dead PID.
-        if lock_pid_str:
-            try:
-                lock_pid = int(lock_pid_str)
-                if not _is_pid_alive(lock_pid):
                     return True
             except ValueError:
                 pass
@@ -253,13 +259,17 @@ def _lock_is_stale(lock_path: str) -> bool:
         return False
 
 
-def _reclaim_stale_lock(lock_path: str, lock_name: str) -> None:
-    """Atomically remove a lock file that has been confirmed stale.
+def _reclaim_stale_lock(lock_path: str, lock_name: str) -> bool:
+    """Remove a lock file only while it still evaluates as stale.
 
-    Emits a structured diagnostic to stderr so that Railway log aggregation
-    captures the reclaim event without requiring a full logging stack.
+    The contender's first stale check and this function are separate filesystem
+    operations.  Re-checking here prevents the common release/reacquire race
+    from deleting a fresh lock that appeared at the same path in between.
+    Returns True only when this call removed the stale candidate.
     """
     try:
+        if not _lock_is_stale(lock_path):
+            return False
         meta = _read_lock_metadata(lock_path)
         payload = {
             "event": "stale_lock_reclaimed",
@@ -278,11 +288,12 @@ def _reclaim_stale_lock(lock_path: str, lock_name: str) -> None:
         except Exception:
             pass
         os.remove(lock_path)
+        return True
     except FileNotFoundError:
         # Already removed by a concurrent reclaim — that is fine.
-        pass
+        return False
     except Exception:
-        pass
+        return False
 
 
 @contextlib.contextmanager
