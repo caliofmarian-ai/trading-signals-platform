@@ -145,11 +145,14 @@ def observe(evaluation, handoff, params, *, decision_ts, provider, observed_at=N
                         counts = Counter(state[key]); counts.update(values); state[key] = dict(counts)
             counts = Counter(state["event_totals"]); counts[label] += 1; state["event_totals"] = dict(counts)
             emitted.append({"event": label, "opportunity_hash": identity[:12], **snapshot})
-            while len(records) > MAX_RECORDS:
+            def stored_size():
+                return len((json.dumps(state, ensure_ascii=False, indent=2, sort_keys=False,
+                                       allow_nan=False) + "\n").encode())
+            while len(records) > MAX_RECORDS or stored_size() > MAX_BYTES:
+                if len(records) <= 1:
+                    raise ValueError("TRACE_SIZE_LIMIT")
                 oldest = min(records, key=lambda key: min(e["decision_ts"] for e in records[key]["events"].values()))
                 del records[oldest]
-            if len(json.dumps(state, allow_nan=False).encode()) > MAX_BYTES:
-                raise ValueError("TRACE_SIZE_LIMIT")
             storage.save_json_atomic(str(path), state)
     for payload in emitted:
         print("TSP_PHYSICAL_V3_OPPORTUNITY_TRACE " + json.dumps({

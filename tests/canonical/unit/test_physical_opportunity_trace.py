@@ -139,6 +139,8 @@ def test_trace_bounds_and_evicts_by_time_even_after_sorted_json_restart(tracing)
         source_evaluation = replace(result, decision=replace(result.decision, signal_id=signal_id))
         trace.observe(source_evaluation, source_handoff, params, decision_ts=base+index,
                       observed_at=base+index+.6, provider="FINNHUB")
+        if index == trace.MAX_RECORDS//2:
+            trace._path(trace.algo_params_sha256(params)).write_text(json.dumps(saved(), sort_keys=True))
     state = saved()
     assert len(state["records"]) == trace.MAX_RECORDS
     assert state["event_totals"]["PRE"] == trace.MAX_RECORDS + 3
@@ -191,3 +193,21 @@ def test_a_rejection_after_observed_open_is_not_a_failed_confirm(tracing, monkey
     assert state["event_totals"]["EXIT_AFTER_OPEN"] == 1
     assert "EXIT_BEFORE_OPEN" not in state["event_totals"]
     assert state["exit_blockers"] == state["exit_noise_reasons"] == {}
+
+
+def test_byte_bound_matches_indented_atomic_storage_and_keeps_new_evidence(tracing, monkeypatch):
+    trace, cycle, saved, base, params, _ = tracing
+    result, handoff = cycle(base)
+    path = trace._path(trace.algo_params_sha256(params))
+    monkeypatch.setattr(trace, "MAX_BYTES", path.stat().st_size + 256)
+    for index in range(1,4):
+        signal_id = "sig-v3-next-" + str(index)
+        state = deepcopy(handoff.next_state)
+        state["per_symbol"]["EUR/USD"]["physical_signal_id"] = signal_id
+        trace.observe(replace(result, decision=replace(result.decision, signal_id=signal_id)),
+            replace(handoff, signal_id=signal_id, next_state=state), params,
+            decision_ts=base+index, observed_at=base+index+.6, provider="FINNHUB")
+        assert path.stat().st_size <= trace.MAX_BYTES
+        assert saved()["event_totals"]["PRE"] == index+1
+        assert sha256(signal_id.encode()).hexdigest() in saved()["records"]
+    assert len(saved()["records"]) == 1
