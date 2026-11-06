@@ -67,7 +67,7 @@ def _snapshot(evaluation, handoff, decision_ts, observed_at, signal_id):
             "pre_api_age_seconds": decision_ts - pre_api if pre_available else None,
             "remaining_pre_lead_seconds": max(0., 30 - (decision_ts - pre_api)) if pre_available else None,
             "cooldown_remaining_seconds": max(0., row["cooldown_until_ts"] - decision_ts)
-                if _number(row.get("cooldown_until_ts")) is not None else None,
+                if _number(row.get("cooldown_until_ts")) is not None else 0.,
             "hard_blockers": list(decision.reject.hard_blockers),
             "noise_reasons": list(evaluation.market.noise_reasons),
             "structure_state": decision.structure.feasibility_state,
@@ -124,7 +124,7 @@ def observe(evaluation, handoff, params, *, decision_ts, provider, observed_at=N
             if stage in {"PRE", "CONFIRM", "OPEN_NOW"} and stage not in trace["events"]:
                 event = stage
             elif (decision.kind == "REJECT" and handoff.prior_state in {"WATCHLIST", "CONFIRMED"}
-                  and handoff.resulting_state == "COOLDOWN"
+                  and handoff.resulting_state in {"COOLDOWN", "WATCHLIST"}
                   and (handoff.transition_event or {}).get("trigger") == "reject_released"):
                 event = "EXIT"
                 trace["closed"] = True

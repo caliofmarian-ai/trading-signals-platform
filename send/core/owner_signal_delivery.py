@@ -100,6 +100,8 @@ def stage_block_reason(event: dict[str, Any], *, now_ts: float) -> str | None:
 
 
 def render_text(event: dict[str, Any], text: str) -> str:
+    if (event.get("payload") or {}).get("decision_policy") == "PHYSICAL_ONLY_V3":
+        return "🧪 OBSERVARE PRIVATĂ · SHADOW MODE\n" + text
     created = event.get("created_ts")
     stamp = (
         datetime.fromtimestamp(created, timezone.utc).strftime("%H:%M:%S UTC")

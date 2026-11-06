@@ -58,6 +58,7 @@ def lifecycle_context(state: Mapping[str, Any], symbol: str, *, now_ts: float,
     row = (state.get("per_symbol") or {}).get(symbol, {})
     current_id = row.get("current_signal_id")
     bound = (row.get("physical_signal_id") == current_id and isinstance(current_id, str)
+             and row.get("physical_closed_signal_id") != current_id
              and row.get("physical_history_policy") == HISTORY_POLICY
              and current_id.startswith("sig-v3-") and row.get("state") in {"WATCHLIST", "CONFIRMED"})
     if not bound or row.get("physical_pre_ts") is None:

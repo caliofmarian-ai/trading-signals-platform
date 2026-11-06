@@ -60,7 +60,7 @@ def test_trace_explains_real_fsm_exit_before_pre_lead_without_mutating_decisions
     cycle(base+2)
     _reject_noise(tracing, monkeypatch)
     result, handoff = cycle(base+7)
-    assert result.decision.kind == "REJECT" and handoff.resulting_state == "COOLDOWN"
+    assert result.decision.kind == "REJECT" and handoff.resulting_state == "WATCHLIST"
     state = saved()
     assert state["event_totals"] == {"PRE":1,"CONFIRM":1,"EXIT_BEFORE_OPEN":1}
     row = next(iter(state["records"].values()))
@@ -72,7 +72,7 @@ def test_trace_explains_real_fsm_exit_before_pre_lead_without_mutating_decisions
     assert end["remaining_pre_lead_seconds"] == 23.25
     assert end["since_first_observed_pre_seconds"] == 7
     assert end["since_first_observed_confirm_seconds"] == 5
-    assert end["cooldown_remaining_seconds"] == 300
+    assert end["cooldown_remaining_seconds"] == 0
     assert end["noise_reasons"] == ["WICK_BODY_RATIO"]
     assert end["evaluation_candle_age_seconds"] == 17
     assert state["exit_noise_reasons"] == {"WICK_BODY_RATIO":1}

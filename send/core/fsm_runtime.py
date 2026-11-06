@@ -14,6 +14,8 @@ STATE_PATH = runtime_state_store.FOCUS_STATE_PATH
 MAX_WATCHLIST = 2
 DEFAULT_FOCUS_TTL_SECONDS = 15 * 60
 DEFAULT_COOLDOWN_SECONDS = 5 * 60
+PHYSICAL_FOCUS_POLICY = "SAME_SYMBOL_FREE_CROSS_SYMBOL_120S_V1"
+CROSS_SYMBOL_ATTENTION_SECONDS = 120
 
 
 def _default_symbol_state() -> Dict[str, Any]:
@@ -170,6 +172,23 @@ def _release_to_cooldown(
     cooldown_seconds: int,
 ) -> Dict[str, Any]:
     prev_state = str(symbol_state.get("state") or "IDLE")
+    if symbol_state.get("physical_signal_id"):
+        # Close this idea, not the symbol. A fresh, distinct setup can start
+        # immediately; the focus lease keeps the symbol on the fast scan.
+        expired = trigger == "focus_lease_expired"
+        if expired:
+            _clear_from_watchlist(state, symbol)
+        symbol_state["state"] = "IDLE" if expired else "WATCHLIST"
+        symbol_state["physical_closed_signal_id"] = symbol_state.get("physical_signal_id")
+        symbol_state["cooldown_until_ts"] = None
+        if expired:
+            symbol_state["focus_enter_ts"] = None
+            symbol_state["focus_ttl_seconds"] = None
+        symbol_state["last_exit_reason"] = trigger
+        symbol_state["last_transition_ts"] = now_ts
+        _recompute_mode(state)
+        return _transition_event(symbol, prev_state, symbol_state["state"], trigger,
+            signal_id=signal_id, candle_ts=candle_ts, now_ts=now_ts)
     _clear_from_watchlist(state, symbol)
     symbol_state["state"] = "COOLDOWN"
     symbol_state["cooldown_until_ts"] = now_ts + max(cooldown_seconds, 1)
@@ -198,6 +217,18 @@ def reconcile_state(
     enforce_invariants(state)
     active_set = {str(symbol) for symbol in active_symbols or []}
     events: List[Dict[str, Any]] = []
+
+    # Existing physical cooldowns are retired on upgrade. Preserve opportunity
+    # identity so restart cannot revive the closed idea or invent a new PRE.
+    for symbol, row in state.get("per_symbol", {}).items():
+        if row.get("state") == "COOLDOWN" and row.get("physical_signal_id"):
+            row["state"] = "IDLE"
+            row["cooldown_until_ts"] = None
+            row["physical_closed_signal_id"] = row["physical_signal_id"]
+            row["last_exit_reason"] = "physical_cooldown_retired"
+            row["last_transition_ts"] = now_ts
+            events.append(_transition_event(symbol, "COOLDOWN", "IDLE", "physical_cooldown_retired",
+                signal_id=row.get("current_signal_id"), candle_ts=now_ts, now_ts=now_ts))
 
     for symbol in list(state.get("watchlist", [])):
         symbol_state = _ensure_symbol_state(state, symbol)
@@ -297,9 +328,24 @@ def apply_transition(
     if kind == "PRE":
         watchlist = list(state.get("watchlist", []))
         physical_only = decision.get("decision_policy") == "PHYSICAL_ONLY_V3"
+        attention = state.get("physical_attention") or {}
+        if (physical_only and symbol not in watchlist and attention
+            and symbol != attention["symbol"] and now_ts < attention["until_ts"]):
+            return state, _transition_event(symbol, prev_state, prev_state, "cross_symbol_attention_active",
+                signal_id=signal_id, candle_ts=candle_ts, now_ts=now_ts)
         incoming_score = None if physical_only else float(decision.get("score_total") or 0.0)
         if symbol not in watchlist and len(watchlist) >= MAX_WATCHLIST:
-            victim = None if physical_only else _best_replacement_victim(state, symbol, incoming_score)
+            if physical_only:
+                # Retained fast-scan focus for a closed idea must not occupy
+                # capacity ahead of a genuinely new eligible opportunity.
+                closed = [item for item in watchlist if (
+                    state["per_symbol"][item].get("physical_closed_signal_id")
+                    and state["per_symbol"][item].get("physical_closed_signal_id")
+                    == state["per_symbol"][item].get("current_signal_id"))]
+                victim = min(closed, key=lambda item: (
+                    state["per_symbol"][item].get("last_transition_ts") or 0, item)) if closed else None
+            else:
+                victim = _best_replacement_victim(state, symbol, incoming_score)
             if victim is None:
                 return state, _transition_event(
                     symbol,
@@ -335,6 +381,10 @@ def apply_transition(
         symbol_state["replacement_score"] = incoming_score
         symbol_state["replacement_score_ts"] = None if physical_only else now_ts
         symbol_state["last_transition_ts"] = now_ts
+        if physical_only and (not attention or now_ts >= attention["until_ts"]):
+            state["physical_attention"] = {"policy": PHYSICAL_FOCUS_POLICY,
+                "symbol": symbol, "started_ts": now_ts,
+                "until_ts": now_ts + CROSS_SYMBOL_ATTENTION_SECONDS}
         _recompute_mode(state)
         enforce_invariants(state)
         return state, _transition_event(symbol, prev_state, "WATCHLIST", trigger, signal_id=signal_id, candle_ts=candle_ts, now_ts=now_ts)

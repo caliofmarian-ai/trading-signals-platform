@@ -159,6 +159,14 @@ def advance_persistent_fsm(
     prior_state = _symbol_state_name(working, decision.setup.symbol)
     requested_stage = decision.kind if decision.kind in ACTIONABLE_DECISION_KINDS else None
     physical_only = decision.fsm_inputs.get("decision_policy") == "PHYSICAL_ONLY_V3"
+    if (physical_only and decision.kind in ACTIONABLE_DECISION_KINDS
+        and symbol_state.get("physical_closed_signal_id") == decision.signal_id):
+        return _result(decision, accepted=True, state_changed=False,
+            requested_stage=requested_stage, accepted_stage=None, signal_id=decision.signal_id,
+            prior_state=prior_state, resulting_state=prior_state,
+            reason="DUPLICATE_CLOSED_OPPORTUNITY", reason_family="DUPLICATE",
+            stage_handoff_ready=False, trade_execution_ready=False,
+            next_state=state, transition_event=None)
     if physical_only and decision.kind in {"CONFIRM", "OPEN_NOW"}:
         pre_ts = symbol_state.get("physical_pre_ts")
         confirm_ts = symbol_state.get("physical_confirm_ts")
@@ -252,6 +260,10 @@ def advance_persistent_fsm(
             raise RuntimeError("FSM invariant violated: missing per-symbol state for OPEN_NOW")
         symbol_state["last_open_candle_ts"] = decision.setup.evaluated_ts
         symbol_state["last_transition_ts"] = now_ts
+        if physical_only:
+            # Internal OPEN acceptance closes the idea for deduplication only.
+            # It makes no claim of external publication or a broker execution.
+            symbol_state["physical_closed_signal_id"] = decision.signal_id
         state_changed = working != state
 
         return _result(
@@ -310,7 +322,12 @@ def advance_persistent_fsm(
     resulting_state = _symbol_state_name(next_state, decision.setup.symbol)
     state_changed = next_state != state
 
-    if trigger == "cooldown_active":
+    if trigger == "cross_symbol_attention_active":
+        accepted = False
+        accepted_stage = None
+        reason_family = "ATTENTION"
+        handoff = False
+    elif trigger == "cooldown_active":
         accepted = False
         accepted_stage = None
         reason_family = "COOLDOWN"
