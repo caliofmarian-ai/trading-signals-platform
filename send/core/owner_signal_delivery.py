@@ -56,6 +56,20 @@ def _timing_path() -> Path:
     return Path(storage.root_path("state", "owner_signal_timing.json"))
 
 
+def pre_receipt_ts(signal_id, stage="PRE"):
+    """Actual first Owner API receipt, never an invented internal timestamp."""
+    if destination() is None or not isinstance(signal_id, str):
+        return None
+    try:
+        ledger = _read_object(_timing_path(), MAX_TIMING_BYTES)
+        key = hashlib.sha256(signal_id.encode()).hexdigest()
+        value = ledger["opportunities"].get(key, {}).get(stage, {}).get("api_accepted_ts")
+        import math
+        return value if type(value) in (int, float) and math.isfinite(value) and value > 0 else None
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
 def stage_block_reason(event: dict[str, Any], *, now_ts: float) -> str | None:
     """Keep the Owner's requested visible order and minimum PRE advance.
 
@@ -149,6 +163,8 @@ def record_acceptance(event: dict[str, Any], response: dict[str, Any], *,
         "generated_to_api_seconds": receipt["generated_to_api_seconds"],
         **gaps, "phone_receipt_proven": False, "broker_executed": False,
     }
+    if (event.get("payload") or {}).get("decision_policy") == "PHYSICAL_ONLY_V3":
+        evidence["decision_policy"] = "PHYSICAL_ONLY_V3"
     print("TSP_OWNER_SIGNAL_TIMING " + json.dumps(evidence, sort_keys=True), flush=True)
     from intelligence import owner_timing_session
     owner_timing_session.observe_receipt(evidence, now_ts=accepted_ts)
@@ -189,20 +205,27 @@ def audit_evidence(user_id: int) -> dict[str, Any]:
         from intelligence import owner_timing_session
         result["timing_session"] = owner_timing_session.summary(now_ts=time.time())
         from intelligence import shadow_model_time_research
-        result["model_time_research_evidence"] = shadow_model_time_research.private_calibration_evidence()
-        from intelligence import live_score_severity_research
-        result["live_score_severity_research"] = live_score_severity_research.summary(now_ts=time.time())
-        from intelligence import execution_expiry_calibration
-        from intelligence import lifecycle_cadence_research
-        try:
-            result["lifecycle_cadence_research"]=lifecycle_cadence_research.summary(now_ts=time.time())
-        except (OSError,ValueError,TypeError,KeyError,RuntimeError):
-            result["lifecycle_cadence_research"]={"status":"SOURCE_UNAVAILABLE_OR_INVALID"}
-        try:
-            result["execution_expiry_calibration"] = execution_expiry_calibration.summary(now_ts=time.time())
-        except (OSError, ValueError, TypeError, KeyError):
-            result["execution_expiry_calibration"] = {"status":"SOURCE_UNAVAILABLE_OR_INVALID",
-                "execution_calibration_proven":False, "broker_executed":False}
+        from core.physical_params import physical_runtime_enabled, load_physical_runtime_algo_params
+        if physical_runtime_enabled():
+            from intelligence import physical_expiry_calibration
+            result["decision_policy"] = "PHYSICAL_ONLY_V3"
+            result["physical_expiry_calibration"] = physical_expiry_calibration.summary(now_ts=time.time())
+            result["historical_score_cohorts"] = "RETIRED_PRESERVED_SEPARATELY"
+        else:
+            result["model_time_research_evidence"] = shadow_model_time_research.private_calibration_evidence()
+            from intelligence import live_score_severity_research
+            result["live_score_severity_research"] = live_score_severity_research.summary(now_ts=time.time())
+            from intelligence import execution_expiry_calibration
+            from intelligence import lifecycle_cadence_research
+            try:
+                result["lifecycle_cadence_research"]=lifecycle_cadence_research.summary(now_ts=time.time())
+            except (OSError,ValueError,TypeError,KeyError,RuntimeError):
+                result["lifecycle_cadence_research"]={"status":"SOURCE_UNAVAILABLE_OR_INVALID"}
+            try:
+                result["execution_expiry_calibration"] = execution_expiry_calibration.summary(now_ts=time.time())
+            except (OSError, ValueError, TypeError, KeyError):
+                result["execution_expiry_calibration"] = {"status":"SOURCE_UNAVAILABLE_OR_INVALID",
+                    "execution_calibration_proven":False, "broker_executed":False}
         path = _timing_path()
         result["delivery_timing"] = _read_object(path, MAX_TIMING_BYTES) if path.exists() else {"opportunities": {}}
         from core import market_data_provider_control, runtime_param_gate
@@ -232,8 +255,9 @@ def audit_evidence(user_id: int) -> dict[str, Any]:
         from runtime.market_history_integrity import inspect_history
         if inspect_history(cleaned)["state"] != "VALID":
             raise ValueError("INVALID_CANDLE_HISTORY")
+        loader = load_physical_runtime_algo_params if physical_runtime_enabled() else runtime_param_gate.load_runtime_algo_params
         result.update(status="PERSONAL_RESEARCH_SNAPSHOT", provider="FINNHUB", candles=cleaned,
-                      params=runtime_param_gate.load_runtime_algo_params(str(root / "config" / "algo_params.json")),
+                      params=loader(str(root / "config" / "algo_params.json")),
                       observed_at_ts=time.time(), provider_provenance="PERSISTED_FEED_LABEL")
     except (OSError, ValueError, TypeError, KeyError):
         result["status"] = "SOURCE_UNAVAILABLE_OR_INVALID"

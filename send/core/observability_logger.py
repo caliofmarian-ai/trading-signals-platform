@@ -361,7 +361,13 @@ def validate_event(event: Dict[str, Any]) -> Dict[str, Any]:
     _validate_object(event, {"required": required, "optional": optional}, path="event")
     _validate_object(event["source"], schema["source"], path="event.source")
     _validate_object(event["host"], schema["host"], path="event.host")
-    _validate_object(event["data"], event_spec["data"], path="event.data")
+    data = event["data"]
+    physical = ((data.get("decision_object") or {}).get("decision_policy") == "PHYSICAL_ONLY_V3"
+                or (data.get("payload") or {}).get("decision_policy") == "PHYSICAL_ONLY_V3")
+    data_spec = event_spec["data"]
+    if physical and event_type in {"signal_event", "decision_evaluated"}:
+        data_spec = event_spec["physical_v3_data"]
+    _validate_object(data, data_spec, path="event.data")
     return event
 
 

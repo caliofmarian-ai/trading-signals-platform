@@ -286,7 +286,7 @@ def evaluate_market(
     closed candles. That compatibility contract is explicit in speed evidence.
     """
 
-    strategy = _required_mapping(params.get("strategy_v2"), "strategy_v2")
+    strategy = _required_mapping(params.get("market_model", params.get("strategy_v2")), "market_model")
     ema_fast_period = int(_required_number(strategy, "ema_fast", "strategy_v2"))
     ema_slow_period = int(_required_number(strategy, "ema_slow", "strategy_v2"))
     rsi_period = int(_required_number(strategy, "rsi_period", "strategy_v2"))

@@ -58,7 +58,7 @@ def _symbol_state_name(state: Dict[str, Any], symbol: str) -> str:
 
 def _runtime_input(decision: DecisionObject, state: Dict[str, Any]) -> Dict[str, Any]:
     current_id = current_opportunity_signal_id(state, decision.setup.symbol)
-    return {
+    payload = {
         "kind": decision.kind,
         "signal_id": decision.signal_id or current_id,
         "symbol": decision.setup.symbol,
@@ -68,6 +68,10 @@ def _runtime_input(decision: DecisionObject, state: Dict[str, Any]) -> Dict[str,
         # strategic evidence and is not silently repurposed as lifecycle TTL.
         "expiry_minutes": None,
     }
+    if decision.fsm_inputs.get("decision_policy") == "PHYSICAL_ONLY_V3":
+        payload.pop("score_total")
+        payload["decision_policy"] = "PHYSICAL_ONLY_V3"
+    return payload
 
 
 def _materialize_fsm_transition_id(
@@ -154,6 +158,24 @@ def advance_persistent_fsm(
     symbol_state = (working.get("per_symbol") or {}).get(decision.setup.symbol, {})
     prior_state = _symbol_state_name(working, decision.setup.symbol)
     requested_stage = decision.kind if decision.kind in ACTIONABLE_DECISION_KINDS else None
+    physical_only = decision.fsm_inputs.get("decision_policy") == "PHYSICAL_ONLY_V3"
+    if physical_only and decision.kind in {"CONFIRM", "OPEN_NOW"}:
+        pre_ts = symbol_state.get("physical_pre_ts")
+        confirm_ts = symbol_state.get("physical_confirm_ts")
+        ordered = (symbol_state.get("physical_signal_id") == decision.signal_id
+                   and symbol_state.get("physical_direction") == decision.setup.direction
+                   and isinstance(pre_ts, (int, float)) and not isinstance(pre_ts, bool)
+                   and 0 <= pre_ts < now_ts)
+        if decision.kind == "OPEN_NOW":
+            ordered = (ordered and isinstance(confirm_ts, (int, float)) and not isinstance(confirm_ts, bool)
+                       and pre_ts < confirm_ts < now_ts and now_ts - pre_ts >= 30)
+        if not ordered:
+            return _result(decision, accepted=False, state_changed=False,
+                requested_stage=requested_stage, accepted_stage=None, signal_id=decision.signal_id,
+                prior_state=prior_state, resulting_state=prior_state,
+                reason="PHYSICAL_LIFECYCLE_ORDER_REQUIRED", reason_family="LIFECYCLE",
+                stage_handoff_ready=False, trade_execution_ready=False,
+                next_state=state, transition_event=None)
 
     last_stage_candle_field = {
         "PRE": "last_pre_candle_ts",
@@ -259,6 +281,9 @@ def advance_persistent_fsm(
         and current_id != decision.signal_id
     ):
         symbol_state["last_open_candle_ts"] = None
+        if physical_only:
+            symbol_state["last_confirm_candle_ts"] = None
+            symbol_state["physical_confirm_ts"] = None
 
     try:
         next_state, event = fsm_runtime.apply_transition(working, payload, now_ts)
@@ -310,6 +335,16 @@ def advance_persistent_fsm(
         reason_family = "FSM_TRANSITION" if event is not None else "NON_ACTIONABLE"
         handoff = False
 
+    if physical_only and handoff:
+        row = next_state["per_symbol"][decision.setup.symbol]
+        if accepted_stage == "PRE":
+            row.update(physical_signal_id=decision.signal_id, physical_pre_ts=now_ts,
+                       physical_confirm_ts=None, physical_confirm_model_seconds=None,
+                       physical_calibration_captured_signal_id=None, physical_direction=decision.setup.direction)
+        elif accepted_stage == "CONFIRM" and row.get("physical_confirm_ts") is None:
+            row["physical_confirm_ts"] = now_ts
+            row["physical_confirm_model_seconds"] = decision.time.model_expiry * 60
+        state_changed = next_state != state
     return _result(
         decision,
         accepted=accepted,

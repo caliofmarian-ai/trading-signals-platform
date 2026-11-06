@@ -98,7 +98,8 @@ def _render_signal_text(event: Dict[str, Any], tier_label: str) -> str:
     symbol = event.get("symbol")
     direction = event.get("direction")
     timeframe = event.get("timeframe")
-    score = float(event.get("score_total") or 0.0)
+    score = event.get("score_total")
+    score_text = f" | Score: {float(score):.1f}" if score is not None else ""
     buffer_mode = event.get("buffer_mode")
 
     timing = ""
@@ -114,7 +115,7 @@ def _render_signal_text(event: Dict[str, Any], tier_label: str) -> str:
 
     lines = [
         f"📡 {stage} — {symbol} ({timeframe})",
-        f"➡️ {direction} | Score: {score:.1f} | Buffer: {buffer_mode}{timing}",
+        f"➡️ {direction}{score_text} | Buffer: {buffer_mode}{timing}",
     ]
     if tier_label:
         lines.append(f"Tier: {tier_label}")

@@ -111,9 +111,11 @@ def interpret_decision(
             reasons = (decision.kind,)
             explanation = "The decision kind is not recognized by the canonical FSM adapter."
         else:
-            reason_family = "CANONICAL_SCORE_BAND"
+            physical_only = decision.fsm_inputs.get("decision_policy") == "PHYSICAL_ONLY_V3"
+            reason_family = "PHYSICAL_CRITERIA" if physical_only else "CANONICAL_SCORE_BAND"
             reasons = (decision.score.tier,)
-            explanation = f"Canonical score evidence maps to the {outcome} outcome family."
+            explanation = (f"Physical criteria and ordered lifecycle request {outcome}." if physical_only
+                           else f"Canonical score evidence maps to the {outcome} outcome family.")
 
     return FSMInterpretation(
         schema_version=SCHEMA_VERSION,

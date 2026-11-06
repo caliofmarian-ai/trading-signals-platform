@@ -177,5 +177,9 @@ def test_validated_bundle_reaches_strategy_unchanged(
         forced_focus_context=False,
     )
 
-    assert captured == [expected]
+    from core.physical_params import migrate_physical_params
+    assert captured == [migrate_physical_params(expected)]
+    assert "score_thresholds" not in captured[0]
+    assert json.loads(path.read_text()) == captured[0]
+    assert len(list((path.parent / "policy_migrations").glob("*.json"))) == 1
     assert any("validated params reached strategy" in str(item.get("error")) for item in errors)

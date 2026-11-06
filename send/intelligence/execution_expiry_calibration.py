@@ -272,6 +272,9 @@ def advance(*, now_ts, active_provider, price_loader):
                     row["state"] = "FINAL"
             if changed:
                 _save(path, state)
+    from core.physical_params import physical_runtime_enabled
+    if physical_runtime_enabled():
+        return None  # finish old quotes without presenting retired score fits as active
     slot = int(now // REPORT_SECONDS)
     if _last_report.get(str(path), -1) < slot:
         report = analyze(state, now_ts=now)

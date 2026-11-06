@@ -156,9 +156,10 @@ def load_runtime_execution_calibration(
             return CalibrationInput("INVALID", "UNSUPPORTED_SCHEMA")
         if artifact["status"] != "APPROVED":
             return CalibrationInput("UNAPPROVED", "APPROVAL_NOT_ACTIVE")
+        required_version = "3.0.0" if params.get("decision_policy") == "PHYSICAL_ONLY_V3" else STRATEGY_VERSION
         if (
-            artifact["strategy_version"] != STRATEGY_VERSION
-            or params.get("algo_version") != STRATEGY_VERSION
+            artifact["strategy_version"] != required_version
+            or params.get("algo_version") != required_version
             or artifact["time_model_schema_version"] != TIME_MODEL_SCHEMA_VERSION
             or artifact["provider"] != provider
             or artifact["symbol"] != symbol

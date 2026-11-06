@@ -241,6 +241,14 @@ def _normalize_symbol_state(symbol: str, raw: Any) -> Dict[str, Any]:
     normalized["last_transition_ts"] = _safe_int(raw.get("last_transition_ts"), f"per_symbol[{symbol}].last_transition_ts")
     normalized["replacement_score"] = _safe_float(raw.get("replacement_score"), f"per_symbol[{symbol}].replacement_score")
     normalized["replacement_score_ts"] = _safe_int(raw.get("replacement_score_ts"), f"per_symbol[{symbol}].replacement_score_ts")
+    for key in ("physical_pre_ts", "physical_confirm_ts", "physical_confirm_model_seconds"):
+        if key in raw:
+            normalized[key] = _safe_float(raw[key], f"per_symbol[{symbol}].{key}")
+            if normalized[key] is not None and normalized[key] <= 0:
+                raise StateValidationError(f"per_symbol[{symbol}].{key} must be positive")
+    for key in ("physical_signal_id", "physical_calibration_captured_signal_id", "physical_direction"):
+        if key in raw:
+            normalized[key] = _safe_str(raw[key], f"per_symbol[{symbol}].{key}")
     return normalized
 
 

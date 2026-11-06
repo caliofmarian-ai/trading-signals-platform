@@ -80,6 +80,7 @@ def assemble_decision(
     source: str = "binary_strategy_v2",
     opportunity_signal_id: Optional[str] = None,
     maximum_stage: Optional[str] = None,
+    physical_stage: Optional[str] = None,
 ) -> DecisionObject:
     """Create the standardized pre-FSM contract without making an FSM decision."""
 
@@ -146,7 +147,7 @@ def assemble_decision(
         f"Corridor time pressure: {time.context.corridor_time_pressure}.",
     )
 
-    fsm_inputs = FrozenInputs({
+    inputs = {
         "strategy_eligible": scoring.eligible,
         "score_total": scoring.context.total,
         "score_tier": scoring.context.tier,
@@ -157,8 +158,20 @@ def assemble_decision(
         "TPS": trade_physics.TPS,
         "physically_constrained": trade_physics.physically_constrained,
         "hard_blockers": blockers,
-    })
-    kind = _decision_kind(scoring)
+    }
+    physical_only = scoring.context.tier in {"PHYSICAL_READY", "PHYSICAL_BLOCKED"}
+    if physical_only:
+        for key in ("score_total", "score_tier", "TPS"):
+            inputs.pop(key)
+        inputs["decision_policy"] = "PHYSICAL_ONLY_V3"
+        if physical_stage not in {"PRE", "CONFIRM", "OPEN_NOW"}:
+            raise DecisionAssemblyUnavailable("physical lifecycle stage is required")
+        kind = physical_stage if scoring.eligible and not blockers else "REJECT"
+    else:
+        if physical_stage is not None:
+            raise DecisionAssemblyUnavailable("physical stage requires physical-only eligibility")
+        kind = _decision_kind(scoring)
+    fsm_inputs = FrozenInputs(inputs)
     if maximum_stage is not None:
         stages = ("PRE", "CONFIRM", "OPEN_NOW")
         if maximum_stage not in stages:
@@ -172,15 +185,17 @@ def assemble_decision(
     normalized_timeframe = timeframe.strip().upper()
     signal_id = None
     if kind in ACTIONABLE_DECISION_KINDS:
-        signal_id = (
-            opportunity_signal_id.strip()
-            if opportunity_signal_id is not None
-            else _stable_signal_id(
+        if opportunity_signal_id is not None:
+            signal_id = opportunity_signal_id.strip()
+        elif physical_only:
+            identity = f"{market.symbol}|{normalized_timeframe}|{market.evaluated_ts}|{market.direction_bias}|{cycle_id}"
+            signal_id = "sig-v3-" + sha256(identity.encode()).hexdigest()[:24]
+        else:
+            signal_id = _stable_signal_id(
                 symbol=market.symbol,
                 timeframe=normalized_timeframe,
                 candle_ts=market.evaluated_ts,
             )
-        )
     return DecisionObject(
         kind=kind,
         signal_id=signal_id,
@@ -203,6 +218,6 @@ def assemble_decision(
         reject=reject,
         fsm_inputs=fsm_inputs,
         explanations=explanations,
-        producer="binary_strategy_v2_decision_assembly",
+        producer="binary_strategy_v3_physical" if physical_only else "binary_strategy_v2_decision_assembly",
         compatibility_mode=False,
     )
