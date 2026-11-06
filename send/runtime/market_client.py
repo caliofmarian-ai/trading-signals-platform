@@ -333,8 +333,7 @@ def get_latest_price_sample(symbol: str):
     try:
         if provider == "FINNHUB":
             feed = _finnhub_feed()
-            candles = feed.get_candles(normalized_symbol, "M1")
-            return _latest_sample_from_feed(provider, normalized_symbol, feed, candles)
+            return feed.get_latest_price_sample(normalized_symbol)
         if provider == "TWELVE_DATA":
             feed = _twelve_data_feed(normalized_symbol)
             candles = feed.get_candles("M1")
