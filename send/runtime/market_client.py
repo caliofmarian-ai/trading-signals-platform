@@ -350,6 +350,13 @@ def get_latest_price_sample(symbol: str):
     raise MarketDataUnavailableError(f"Unsupported active market-data provider: {provider}")
 
 
+def get_price_sample_at_or_after(symbol, target_ts, max_delay):
+    """Read retained real Finnhub observations for research; no provider fallback."""
+    if configured_provider() != "FINNHUB":
+        raise MarketDataUnavailableError("Buffered research observations require FINNHUB")
+    return _finnhub_feed().get_price_sample_at_or_after(symbol, target_ts, max_delay)
+
+
 def get_candles(symbol: str, timeframe: str, *, prefer_live: bool = False):
     """
     Provider-independent wrapper used by the engine.

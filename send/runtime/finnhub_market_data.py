@@ -20,6 +20,7 @@ MAX_CANDLES = 500
 DEFAULT_MIN_CANDLES = 201
 # M1 feeds RSI and the 20-interval directional-speed window; EMA200 uses M5.
 DEFAULT_MIN_M1_CANDLES = 22  # 21 closed bars plus the currently forming M1 bar
+MAX_BUFFERED_REAL_QUOTES = 20_000  # storage bound, not a market/strategy threshold
 # Transport guardrails; these never replace quote freshness or history gates.
 STREAM_READ_POLL_SECONDS = 5
 STREAM_PING_INTERVAL_SECONDS = 20
@@ -161,6 +162,7 @@ class FinnhubForexFeed:
         self._last_tick_ms: Optional[int] = None
         self._tick_intervals = deque(maxlen=WINDOW)
         self._tick_receive_ages = deque(maxlen=WINDOW)
+        self._real_quote_buffer = deque(maxlen=MAX_BUFFERED_REAL_QUOTES)
         self._store_load_state = "NOT_ATTEMPTED"
         self._store_write_state = "NOT_ATTEMPTED"
         self._restored_candle_counts: Dict[str, int] = {"M1": 0, "M5": 0}
@@ -309,6 +311,12 @@ class FinnhubForexFeed:
                 self._last_price_ts = tick_ms // 1000
                 for code, seconds in (("M1", 60), ("M5", 300)):
                     self._upsert_tick(code, seconds, tick_ms // 1000, price, volume)
+                self._real_quote_buffer.append({
+                    "provider": "FINNHUB", "symbol": self.symbol, "price": price,
+                    "observed_ts": float(tick_ms // 1000),
+                    "source": "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1",
+                    "_provider_tick_ms": tick_ms,
+                })
                 self._valid_trade_tick_count += 1
                 self._stream_state = "RECEIVING_REAL_TICKS"
                 self._subscription_state = "REAL_TICK_CONFIRMED"
@@ -619,10 +627,31 @@ class FinnhubForexFeed:
     def _observation_timing(self):
         # Caller holds the same lock as ingestion; no price or raw tick history.
         return {"quote_sample_contract":"ATOMIC_REAL_TICK_PRICE_TIMESTAMP_V1",
+                "buffered_real_quote_count":len(self._real_quote_buffer),
                 "tick_timing_scope":"LAST_128_POSITIVE_PROVIDER_TIMESTAMP_STEPS_AND_ACCEPTED_TICK_RECEIVE_AGES_IN_THIS_PROCESS",
                 "provider_tick_interval_seconds":distribution(self._tick_intervals),
                 "provider_tick_receive_age_seconds":distribution(self._tick_receive_ages),
                 "provider_tick_intervals_gt_2s":sum(value>2 for value in self._tick_intervals)}
+
+    def get_price_sample_at_or_after(self, symbol, target_ts, max_delay):
+        """Earliest retained actual tick in a declared window, never a candle substitute.
+
+        Preserve the existing source-second convention. A late worker may read
+        an earlier genuine observation; future ticks and missing windows are
+        never replaced with the current price. No provider request is made.
+        """
+        normalize_symbol(symbol)
+        if (type(target_ts) not in (int, float) or type(max_delay) not in (int, float)
+            or not math.isfinite(target_ts) or not math.isfinite(max_delay)
+            or target_ts <= 0 or max_delay < 0):
+            raise ValueError("invalid quote observation window")
+        now = float(self.clock())
+        with self._lock:
+            for sample in self._real_quote_buffer:
+                if (target_ts <= sample["observed_ts"] <= min(target_ts + max_delay, now)
+                    and sample["_provider_tick_ms"] <= now * 1000):
+                    return {key: value for key, value in sample.items() if key != "_provider_tick_ms"}
+        return None
 
     def health(self) -> Dict[str, Any]:
         with self._lock:

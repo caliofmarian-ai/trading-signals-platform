@@ -860,7 +860,9 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                 try:
                     from intelligence import physical_expiry_calibration
                     captured = physical_expiry_calibration.observe_accepted_chain(decision, persistent_fsm, params,
-                        now_ts=time.time(), provider=market_client.configured_provider(), buffer_mode=buffer_mode)
+                        now_ts=time.time(), provider=market_client.configured_provider(), buffer_mode=buffer_mode,
+                        market_evidence=evaluation.market.evidence,
+                        publish_study=not evaluation.execution_time.available)
                     if captured:
                         fsm_runtime.save_state(state)
                 except Exception as calibration_exc:

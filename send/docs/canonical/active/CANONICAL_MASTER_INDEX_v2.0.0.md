@@ -16,6 +16,11 @@ has priority over score/TPS selection and ranking wording in the existing
 functional domains. The active V3 runtime uses physical criteria and ordered
 lifecycle evidence, without scores. This amendment does not add a functional domain.
 
+Owner research visibility workflow 2026-11-06:
+[V3_PHYSICAL_STUDY_VISIBILITY_PROTOCOL_v1.0.0.md](V3_PHYSICAL_STUDY_VISIBILITY_PROTOCOL_v1.0.0.md)
+defines explicitly uncalibrated private study observations outside canonical
+SignalEvent publication. Governed OPEN_NOW execution expiry remains required.
+
 This document is the sole authoritative Master Index for the canonical documentation graph after the staged-execution + current-scope Trade Physics promotion executed on 2026-09-01.
 
 `CANONICAL_MASTER_INDEX_v1.0.0.md` is superseded and historical only.
