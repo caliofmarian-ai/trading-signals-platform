@@ -975,17 +975,43 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
         message_id: Optional[int] = None
 
         try:
-            if route_name == "OWNER_PRIVATE":
-                number = owner_signal_number.reserve(signal_id, time.time()) if stage == "OPEN_NOW" else None
-                text = owner_signal_delivery.render_text(event, text, opening_number=number)
+            photo = None
+            number = None
+            delivery_format = "TEXT"
+            if (route_name == "OWNER_PRIVATE"
+                    or (event.get("payload") or {}).get("decision_policy") == "PHYSICAL_ONLY_V3"):
+                from core import signal_card
+
+                number = owner_signal_number.reserve_lifecycle(signal_id, time.time())
+                shadow = route_name == "OWNER_PRIVATE"
+                text = signal_card.render_signal_caption(event, number, shadow=shadow)
+                try:
+                    photo = signal_card.render_signal_card(event, number, shadow=shadow)
+                    delivery_format = "PHOTO"
+                except Exception as card_exc:
+                    # Rendering failed before transport. A short text fallback
+                    # preserves the real stage; never follow a failed photo
+                    # request with an additional text send.
+                    text += "\nImagine indisponibilă."
+                    observability_logger.log_warning(
+                        warn_type="SIGNAL_CARD_UNAVAILABLE",
+                        message="Signal card rendering failed before delivery",
+                        context={"stage": stage, "route": route_name,
+                                 "error_class": type(card_exc).__name__},
+                        source={"module": "distribution_router_v3", "function": "route"},
+                    )
             send_started_ts = time.time()
             send_started_monotonic = time.perf_counter()
-            response = legacy.telegram_publisher.send_message(
-                chat_id=int(chat_id),
-                text=text,
-                reply_markup=reply_markup,
-                thread_id=thread_id,
-            )
+            if photo is not None:
+                response = legacy.telegram_publisher.send_photo(
+                    chat_id=int(chat_id), photo=photo, caption=text,
+                    reply_markup=reply_markup, thread_id=thread_id,
+                )
+            else:
+                response = legacy.telegram_publisher.send_message(
+                    chat_id=int(chat_id), text=text,
+                    reply_markup=reply_markup, thread_id=thread_id,
+                )
             ok = bool(response.get("ok"))
             accepted_ts = time.time()
             transport_seconds = time.perf_counter() - send_started_monotonic
@@ -1060,6 +1086,7 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
                         owner_signal_delivery.record_acceptance(
                             event, response, started_ts=send_started_ts,
                             accepted_ts=accepted_ts, transport_seconds=transport_seconds,
+                            delivery_format=delivery_format, signal_label=number,
                         )
                     except Exception:
                         # The primary receipt and dedup have already been

@@ -173,7 +173,15 @@ def send_message(
     return data
 
 
-def send_photo(chat_id: int, photo: bytes, caption: str, reply_to_message_id: Optional[int] = None) -> Dict[str, Any]:
+def send_photo(
+    chat_id: int,
+    photo: bytes,
+    caption: str,
+    reply_to_message_id: Optional[int] = None,
+    *,
+    reply_markup: Optional[Dict[str, Any]] = None,
+    thread_id: Optional[int] = None,
+) -> Dict[str, Any]:
     payload = {
         "chat_id": chat_id,
         "caption": caption,
@@ -181,6 +189,10 @@ def send_photo(chat_id: int, photo: bytes, caption: str, reply_to_message_id: Op
     if reply_to_message_id is not None:
         payload["reply_parameters"] = json.dumps({"message_id": reply_to_message_id,
                                                   "allow_sending_without_reply": True})
+    if reply_markup:
+        payload["reply_markup"] = json.dumps(reply_markup)
+    if thread_id:
+        payload["message_thread_id"] = thread_id
     response = requests.post(f"{_base_url()}/sendPhoto", data=payload,
                              files={"photo": ("rezultat-v3.png", photo, "image/png")}, timeout=20)
     data = response.json()

@@ -399,9 +399,10 @@ def test_finnhub_personal_stages_only_reach_owner_never_channels(tmp_path, monke
     calls = []
     monkeypatch.setenv("ADMIN_GROUP_ID", "-100111111")
     monkeypatch.setenv("SIGNALS_LIVE_TOPIC_ID", "7")
-    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **kw: (
+    monkeypatch.setattr(legacy.telegram_publisher, "send_photo", lambda **kw: (
         calls.append(kw) or {"ok": True, "result": {"message_id": 42, "date": 1720000100}}
     ))
+    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **_: pytest.fail("expected a photo"))
     candidate = _candidate(stage, "personal-lifecycle")
     if stage in {"CONFIRM", "OPEN_NOW"}:
         owner.record_acceptance(_candidate("PRE", "personal-lifecycle"), {"ok": True},
@@ -415,13 +416,11 @@ def test_finnhub_personal_stages_only_reach_owner_never_channels(tmp_path, monke
     assert summary["route_results"][0]["route"] == "OWNER_PRIVATE"
     assert calls[0]["chat_id"] == 123456789
     assert calls[0]["thread_id"] is None and calls[0]["reply_markup"] is None
-    assert "Generated:" in calls[0]["text"] and "shadow observation" in calls[0]["text"]
-    label = router.owner_signal_number.lookup(candidate["signal_id"])
-    if stage == "OPEN_NOW":
-        assert label and label.endswith(" · nr. 0")
-        assert label in calls[0]["text"] and candidate["signal_id"] not in calls[0]["text"]
-    else:
-        assert label is None
+    assert calls[0]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
+    assert "OBSERVARE PRIVATĂ" in calls[0]["caption"]
+    label = router.owner_signal_number.lookup_lifecycle(candidate["signal_id"])
+    assert label and label.endswith(" · nr. 0")
+    assert "#0" in calls[0]["caption"] and candidate["signal_id"] not in calls[0]["caption"]
     assert legacy.load_state()["open_signals_today"]["FREE"] == 0
     assert owner.audit_evidence(987654321) == {"status": "PERSONAL_DELIVERY_NOT_ENABLED_FOR_OWNER"}
     assert (root / "state" / "owner_signal_timing.json").is_file()
@@ -441,6 +440,7 @@ def test_personal_delivery_fails_closed_for_invalid_scope(tmp_path, monkeypatch,
     monkeypatch.setenv(setting, value)
     calls = []
     monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **kw: calls.append(kw))
+    monkeypatch.setattr(legacy.telegram_publisher, "send_photo", lambda **kw: calls.append(kw))
     summary = router.route(_candidate("PRE"), now_ts=1720000100)
     assert summary["blocked"] and summary["block_reason"] == "FINNHUB_PERSONAL_USE_DISTRIBUTION_BLOCKED"
     assert not calls
@@ -451,6 +451,7 @@ def test_personal_route_preserves_open_now_expiry_gate(tmp_path, monkeypatch):
     _personal(monkeypatch, router)
     calls = []
     monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **kw: calls.append(kw))
+    monkeypatch.setattr(legacy.telegram_publisher, "send_photo", lambda **kw: calls.append(kw))
     candidate = _candidate("PRE")
     candidate["stage"] = "OPEN_NOW"
     summary = router.route(candidate, now_ts=1720000100)
@@ -467,6 +468,7 @@ def test_owner_open_with_unavailable_number_ledger_never_sends(tmp_path, monkeyp
                                 started_ts=time.time()-age-1, accepted_ts=time.time()-age, transport_seconds=.1)
     (root / "state" / "owner_signal_numbers.json").write_text("{corrupt}")
     monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **_: pytest.fail("OPEN was sent"))
+    monkeypatch.setattr(legacy.telegram_publisher, "send_photo", lambda **_: pytest.fail("OPEN was sent"))
 
     summary = router.route(_candidate("OPEN_NOW", signal_id), now_ts=1720000100)
 
@@ -504,7 +506,7 @@ def test_supplemental_timing_failure_never_resends_published_stage(tmp_path, mon
     owner = _personal(monkeypatch, router)
     monkeypatch.setattr(owner, "record_acceptance", lambda *a, **kw: (_ for _ in ()).throw(ValueError()))
     calls = []
-    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **kw: (
+    monkeypatch.setattr(legacy.telegram_publisher, "send_photo", lambda **kw: (
         calls.append(kw) or {"ok": True, "result": {"message_id": 42}}
     ))
     first = router.route(_candidate("PRE"), now_ts=1720000100)
@@ -534,12 +536,77 @@ def test_personal_delivery_preserves_tier_limits_states_and_reset(tmp_path, monk
     state["open_signals_today"]["FREE"] = 6
     state["last_reset_london_date"] = "2024-01-01"
     legacy.save_state(state)
-    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **kw: {"ok": True, "result": {"message_id": 3}})
+    monkeypatch.setattr(legacy.telegram_publisher, "send_photo", lambda **kw: {"ok": True, "result": {"message_id": 3}})
     router.route(_candidate("PRE"), now_ts=1720000100)
     after = legacy.load_state()
     assert after["tier_state"] == state["tier_state"]
     assert after["open_signals_today"] == state["open_signals_today"]
     assert after["last_reset_london_date"] == "2024-01-01"
+
+
+def test_photo_lifecycle_reuses_one_number_and_preserves_real_stage_timing(tmp_path, monkeypatch):
+    root, _, legacy, router, _ = _setup(tmp_path, monkeypatch)
+    _personal(monkeypatch, router)
+    clock = [1_794_259_800.0]
+    monkeypatch.setattr(router.time, "time", lambda: clock[0])
+    calls = []
+    monkeypatch.setattr(legacy.telegram_publisher, "send_photo", lambda **kw: (
+        calls.append(kw) or {"ok": True, "result": {"message_id": len(calls)}}
+    ))
+    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **_: pytest.fail("expected photo"))
+    labels = []
+    for stage, offset in (("PRE", 0), ("CONFIRM", 3), ("OPEN_NOW", 35)):
+        clock[0] = 1_794_259_800.0 + offset
+        candidate = _candidate(stage, "one-daily-trade", exact_expiry=4.77)
+        candidate.update(created_ts=int(clock[0]), direction="SELL")
+        candidate["payload"]["decision_policy"] = "PHYSICAL_ONLY_V3"
+        candidate.pop("score_total")
+        summary = router.route(candidate, now_ts=int(clock[0]))
+        assert summary["published_count"] == 1
+        labels.append(router.owner_signal_number.lookup_lifecycle(candidate["signal_id"]))
+
+    assert len(set(labels)) == 1 and labels[0].endswith("nr. 0")
+    assert all("#0" in call["caption"] and "one-daily-trade" not in call["caption"] for call in calls)
+    assert all(call["photo"].startswith(b"\x89PNG") for call in calls)
+    assert "4.77" in calls[-1]["caption"]
+    timing = json.loads((root / "state" / "owner_signal_timing.json").read_text())
+    stages = next(iter(timing["opportunities"].values()))
+    assert {record["format"] for record in stages.values()} == {"PHOTO"}
+    assert {record["signal_label"] for record in stages.values()} == {labels[0]}
+    assert stages["OPEN_NOW"]["api_accepted_ts"] - stages["PRE"]["api_accepted_ts"] == 35
+
+
+def test_card_render_failure_uses_short_same_number_text_before_transport(tmp_path, monkeypatch):
+    _, _, legacy, router, _ = _setup(tmp_path, monkeypatch)
+    _personal(monkeypatch, router)
+    from core import signal_card
+
+    monkeypatch.setattr(signal_card, "render_signal_card", lambda *a, **kw: (_ for _ in ()).throw(OSError()))
+    calls = []
+    monkeypatch.setattr(legacy.telegram_publisher, "send_photo", lambda **_: pytest.fail("render failed"))
+    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **kw: (
+        calls.append(kw) or {"ok": True, "result": {"message_id": 42}}
+    ))
+    summary = router.route(_candidate("PRE", "private-long-id"), now_ts=1720000100)
+    assert summary["published_count"] == 1 and len(calls) == 1
+    assert "#0" in calls[0]["text"] and "private-long-id" not in calls[0]["text"]
+    assert "Imagine indisponibilă" in calls[0]["text"]
+
+
+def test_photo_transport_exception_has_no_immediate_text_fallback(tmp_path, monkeypatch):
+    _, _, legacy, router, _ = _setup(tmp_path, monkeypatch)
+    _personal(monkeypatch, router)
+    calls = []
+
+    def timeout(**kwargs):
+        calls.append(kwargs)
+        raise TimeoutError("photo acceptance unknown")
+
+    monkeypatch.setattr(legacy.telegram_publisher, "send_photo", timeout)
+    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **_: pytest.fail("duplicate transport"))
+    summary = router.route(_candidate("PRE"), now_ts=1720000100)
+    assert summary["published_count"] == 0 and summary["failed_count"] == 1
+    assert len(calls) == 1
 
 
 def test_owner_audit_exports_allowlisted_real_candles_only(tmp_path, monkeypatch):

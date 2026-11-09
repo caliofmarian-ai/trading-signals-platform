@@ -66,12 +66,14 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     study.advance(now_ts=BASE+32, active_provider="FINNHUB", price_loader=lambda _: _sample(BASE+32,1.1))
     assert len(messages) == 1
     assert messages[0]["chat_id"] == 123456789
-    assert "OPEN_NOW · STUDIU" in messages[0]["text"] and "Expirare simulată" in messages[0]["text"]
-    assert "calibrare în colectare" in messages[0]["text"]
+    assert "OPEN NOW" in messages[0]["text"] and "STUDIU · SIMULARE" in messages[0]["text"]
+    assert messages[0]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
+    assert f"{row['model_seconds'] / 60:.15g} MIN" in messages[0]["text"]
     assert "Score" not in messages[0]["text"] and "TPS" not in messages[0]["text"]
-    label = delivery.owner_signal_number.lookup(result.decision.signal_id, study=True)
+    label = delivery.owner_signal_number.lookup_lifecycle(result.decision.signal_id)
     assert label is not None and label.endswith("nr. 0")
-    assert label in messages[0]["text"]
+    assert "#0" in messages[0]["text"] and label.split(" · ")[0] in messages[0]["text"]
+    assert result.decision.signal_id not in messages[0]["text"]
     from core import owner_signal_delivery as owner
     ledger = json.loads(owner._timing_path().read_text())
     assert all("OPEN_NOW" not in stages for stages in ledger["opportunities"].values())
@@ -94,7 +96,10 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     saved = next(iter(study._read(study._path())["records"].values()))
     assert saved["decision_snapshot"]["decision_id"] == result.decision.decision_id
     assert saved["decision_snapshot"]["indicators"]["atr_m5"] == result.market.evidence.atr_m5
+    assert saved["study_delivery"]["entry"]["format"] == "PHOTO"
     assert saved["study_delivery"]["result"]["format"] == "PHOTO"
+    assert saved["study_delivery"]["entry"]["signal_label"] == label
+    assert saved["study_delivery"]["result"]["signal_label"] == label
     # A later buffer hit remains a diagnostic; the original label stays unchanged.
     later = target+60
     clock[0] = later+.1
@@ -262,13 +267,93 @@ def test_ambiguous_transport_is_not_retried(study_setup, monkeypatch):
     def uncertain(**kwargs):
         calls.append(kwargs)
         raise TimeoutError("synthetic transport ambiguity")
-    monkeypatch.setattr(delivery.telegram_publisher,"send_message",uncertain)
+    monkeypatch.setattr(delivery.telegram_publisher,"send_photo",uncertain)
     study.advance(now_ts=BASE+32,active_provider="FINNHUB",price_loader=lambda _: _sample(BASE+32,1.1))
     clock[0]=BASE+33
     delivery.dispatch(now_ts=BASE+33,active_provider="FINNHUB")
     assert len(calls)==1
+    assert not messages
     saved=next(iter(study._read(study._path())["records"].values()))
     assert saved["study_delivery"]["entry"]["status"]=="UNKNOWN"
+    assert saved["study_delivery"]["entry"]["format"]=="PHOTO"
+
+
+def test_photo_entry_reuses_pre_number_and_frozen_observation(study_setup):
+    _, study, delivery, result, _, _, messages, _ = study_setup
+    numbers = delivery.owner_signal_number
+    numbers.reserve_lifecycle("earlier-opportunity", BASE)
+    pre_label = numbers.reserve_lifecycle(result.decision.signal_id, BASE)
+    assert pre_label.endswith("nr. 1")
+    row = _capture(study_setup)
+
+    study.advance(now_ts=BASE + 32, active_provider="FINNHUB",
+                  price_loader=lambda _: _sample(BASE + 32, 1.12221))
+
+    assert len(messages) == 1 and "#1" in messages[0]["text"]
+    assert "#0" not in messages[0]["text"]
+    assert messages[0]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
+    saved = next(iter(study._read(study._path())["records"].values()))
+    assert saved["study_delivery"]["entry"]["signal_label"] == pre_label
+    assert numbers.lookup_lifecycle(result.decision.signal_id) == pre_label
+    assert delivery._entry_event(saved) == {
+        "stage": "OPEN_NOW", "symbol": "EUR/USD", "direction": row["direction"],
+        "entry_price": 1.12221, "created_ts": row["created_ts"],
+        "entry_ts": BASE + 32, "expiry_ts": BASE + 32 + row["model_seconds"],
+        "study_duration_minutes": row["model_seconds"] / 60,
+    }
+
+
+def test_study_entry_render_failure_uses_same_id_text_once(study_setup, monkeypatch, capsys):
+    _, study, delivery, _, _, _, messages, clock = study_setup
+    _capture(study_setup)
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("synthetic card renderer failure")
+
+    monkeypatch.setattr(delivery, "_render_entry_card", unavailable)
+    study.advance(now_ts=BASE + 32, active_provider="FINNHUB",
+                  price_loader=lambda _: _sample(BASE + 32, 1.1))
+    clock[0] = BASE + 33
+    delivery.dispatch(now_ts=BASE + 33, active_provider="FINNHUB")
+
+    assert len(messages) == 1 and "photo" not in messages[0]
+    assert "#0" in messages[0]["text"] and "STUDIU · SIMULARE" in messages[0]["text"]
+    assert "Imagine indisponibilă" in messages[0]["text"]
+    receipt = next(iter(study._read(study._path())["records"].values()))["study_delivery"]["entry"]
+    assert (receipt["status"], receipt["format"]) == ("API_ACCEPTED", "TEXT")
+    assert "TSP_PHYSICAL_STUDY_CARD_UNAVAILABLE" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("legacy_format", [None, "TEXT", "PHOTO"])
+def test_legacy_entry_receipts_keep_their_original_study_number(study_setup, legacy_format):
+    _, study, delivery, result, _, _, messages, clock = study_setup
+    _capture(study_setup)
+    numbers = delivery.owner_signal_number
+    # Seed the two independent pre-upgrade ledgers with their original API.
+    numbers.reserve("earlier-opportunity", BASE)
+    canonical_label = numbers.reserve(result.decision.signal_id, BASE)
+    original_label = numbers.reserve(result.decision.signal_id, BASE + 32, study=True)
+    assert canonical_label.endswith("nr. 1") and original_label.endswith("nr. 0")
+
+    path = study._path()
+    state = study._read(path)
+    row = next(iter(state["records"].values()))
+    row.update(entry=_sample(BASE + 32, 1.1), state="OBSERVING")
+    receipt = {"status": "API_ACCEPTED", "attempted_ts": BASE + 32,
+               "api_accepted_ts": BASE + 32.1, "message_id": 73, "destination_id": 123456789}
+    if legacy_format is not None:
+        receipt["format"] = legacy_format
+    row["study_delivery"]["entry"] = receipt
+    study._save(path, state)
+
+    target = BASE + 32 + row["model_seconds"]
+    clock[0] = target + 0.1
+    study.advance(now_ts=target, active_provider="FINNHUB", price_loader=lambda _: _sample(target, 1.1))
+
+    assert len(messages) == 1 and "REZULTAT STUDIU" in messages[0]["text"]
+    assert original_label in messages[0]["text"] and canonical_label not in messages[0]["text"]
+    assert messages[0]["reply_to_message_id"] == 73
+    assert messages[0]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_frozen_decision_and_declared_diagnostics_cannot_be_rewritten(study_setup):

@@ -120,13 +120,16 @@ def render_text(event: dict[str, Any], text: str, *, opening_number: str | None 
 
 
 def record_acceptance(event: dict[str, Any], response: dict[str, Any], *,
-                      started_ts: float, accepted_ts: float, transport_seconds: float) -> dict[str, Any]:
+                      started_ts: float, accepted_ts: float, transport_seconds: float,
+                      delivery_format: str = "TEXT", signal_label: str | None = None) -> dict[str, Any]:
     """Persist genuine successful API receipts; never create market outcomes."""
     if destination() is None or response.get("ok") is not True:
         raise ValueError("OWNER_DELIVERY_NOT_ACCEPTED")
     stage, signal_id = event["stage"], event["signal_id"]
     if stage not in {"PRE", "CONFIRM", "OPEN_NOW"} or not isinstance(signal_id, str):
         raise ValueError("INVALID_STAGE")
+    if delivery_format not in {"TEXT", "PHOTO"}:
+        raise ValueError("INVALID_OWNER_SIGNAL_DELIVERY_FORMAT")
     # Hash opportunity identity in this supplemental timing ledger. Primary
     # distribution events already retain the canonical identity and receipt.
     key = hashlib.sha256(signal_id.encode()).hexdigest()
@@ -137,6 +140,8 @@ def record_acceptance(event: dict[str, Any], response: dict[str, Any], *,
         stages = rows.setdefault(key, {})
         prior = stages.get(stage)
         receipt = {
+            "format": delivery_format,
+            "signal_label": signal_label,
             "generated_ts": event.get("created_ts"),
             "send_started_ts": started_ts,
             "api_accepted_ts": accepted_ts,
@@ -165,6 +170,8 @@ def record_acceptance(event: dict[str, Any], response: dict[str, Any], *,
         storage.save_json_atomic(str(path), ledger)
     evidence = {
         "stage": stage, "scope": "OWNER_PRIVATE_API_ACCEPTANCE",
+        "format": delivery_format, "signal_label": signal_label,
+        "direction": event.get("direction"),
         "api_request_seconds": receipt["api_request_seconds"],
         "generated_to_api_seconds": receipt["generated_to_api_seconds"],
         **gaps, "phone_receipt_proven": False, "broker_executed": False,
