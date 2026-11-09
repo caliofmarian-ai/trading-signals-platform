@@ -2,6 +2,7 @@
 # BinaryBot — Telegram API Abstraction Layer
 
 from __future__ import annotations
+import json
 import os
 import re
 import requests
@@ -145,6 +146,8 @@ def send_message(
     text: str,
     reply_markup: Optional[Dict[str, Any]] = None,
     thread_id: Optional[int] = None,
+    *,
+    reply_to_message_id: Optional[int] = None,
 ) -> Dict[str, Any]:
 
     payload: Dict[str, Any] = {
@@ -158,12 +161,31 @@ def send_message(
     if thread_id:
         payload["message_thread_id"] = thread_id
 
+    if reply_to_message_id is not None:
+        payload["reply_parameters"] = {"message_id": reply_to_message_id, "allow_sending_without_reply": True}
+
     r = requests.post(f"{_base_url()}/sendMessage", json=payload, timeout=10)
     data = r.json()
 
     if not data.get("ok"):
         _raise_from_response("sendMessage", r, data)
 
+    return data
+
+
+def send_photo(chat_id: int, photo: bytes, caption: str, reply_to_message_id: Optional[int] = None) -> Dict[str, Any]:
+    payload = {
+        "chat_id": chat_id,
+        "caption": caption,
+    }
+    if reply_to_message_id is not None:
+        payload["reply_parameters"] = json.dumps({"message_id": reply_to_message_id,
+                                                  "allow_sending_without_reply": True})
+    response = requests.post(f"{_base_url()}/sendPhoto", data=payload,
+                             files={"photo": ("rezultat-v3.png", photo, "image/png")}, timeout=20)
+    data = response.json()
+    if not data.get("ok"):
+        _raise_from_response("sendPhoto", response, data)
     return data
 
 

@@ -39,7 +39,10 @@ def study_setup(canonical_runtime_root, monkeypatch):
     def transport(**kwargs):
         messages.append(kwargs)
         return {"ok":True, "result":{"message_id":len(messages)}}
+    def photo_transport(*, chat_id, photo, caption, reply_to_message_id):
+        return transport(chat_id=chat_id, photo=photo, text=caption, reply_to_message_id=reply_to_message_id)
     monkeypatch.setattr(delivery.telegram_publisher, "send_message", transport)
+    monkeypatch.setattr(delivery.telegram_publisher, "send_photo", photo_transport)
     monkeypatch.setattr(delivery, "dispatch_async", lambda **kwargs: delivery.dispatch(**kwargs))
     return canonical_runtime_root, study, delivery, result, handoff, params, messages, clock
 
@@ -66,6 +69,9 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     assert "OPEN_NOW · STUDIU" in messages[0]["text"] and "Expirare simulată" in messages[0]["text"]
     assert "calibrare în colectare" in messages[0]["text"]
     assert "Score" not in messages[0]["text"] and "TPS" not in messages[0]["text"]
+    label = delivery.owner_signal_number.lookup(result.decision.signal_id, study=True)
+    assert label is not None and label.endswith("nr. 0")
+    assert label in messages[0]["text"]
     from core import owner_signal_delivery as owner
     ledger = json.loads(owner._timing_path().read_text())
     assert all("OPEN_NOW" not in stages for stages in ledger["opportunities"].values())
@@ -77,6 +83,9 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     assert len(messages) == 2 and "REZULTAT STUDIU" in messages[1]["text"]
     assert "Direcție la expirare: WIN" in messages[1]["text"]
     assert "Buffer la expirare: NEATINS" in messages[1]["text"]
+    assert label in messages[1]["text"]
+    assert messages[1]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
+    assert messages[1]["reply_to_message_id"] == 1
     report = study.summary(now_ts=target)
     assert report["study_open_now_api_accepted"] == report["study_results_api_accepted"] == 1
     assert report["actual_telegram_publications"] == 0 and not report["execution_calibration_proven"]
@@ -84,6 +93,7 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     saved = next(iter(study._read(study._path())["records"].values()))
     assert saved["decision_snapshot"]["decision_id"] == result.decision.decision_id
     assert saved["decision_snapshot"]["indicators"]["atr_m5"] == result.market.evidence.atr_m5
+    assert saved["study_delivery"]["result"]["format"] == "PHOTO"
     # A later buffer hit remains a diagnostic; the original label stays unchanged.
     later = target+60
     clock[0] = later+.1
@@ -92,6 +102,49 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     assert study.summary(now_ts=later)["post_model_diagnostics"][0]["buffer_met"] == 1
     assert study.summary(now_ts=later)["baseline_model_observations"]["buffer_not_met"] == 1
     assert len(messages) == 2
+
+
+@pytest.mark.parametrize("render_fails", [True, False])
+def test_study_result_render_failure_falls_back_but_ambiguous_upload_does_not(study_setup, monkeypatch, render_fails):
+    _, study, delivery, _, _, _, messages, clock = study_setup
+    row = _capture(study_setup)
+    study.advance(now_ts=BASE+32, active_provider="FINNHUB", price_loader=lambda _: _sample(BASE+32, 1.1))
+    attempts = []
+
+    def unavailable(*args, **kwargs):
+        attempts.append(True)
+        raise TimeoutError("synthetic chart failure")
+
+    if render_fails:
+        monkeypatch.setattr(delivery, "_render_chart", unavailable)
+    else:
+        monkeypatch.setattr(delivery.telegram_publisher, "send_photo", unavailable)
+    target = BASE + 32 + row["model_seconds"]
+    clock[0] = target + 0.1
+    study.advance(now_ts=target, active_provider="FINNHUB", price_loader=lambda _: _sample(target, 1.1))
+    delivery.dispatch(now_ts=target + 1, active_provider="FINNHUB")
+    saved = next(iter(study._read(study._path())["records"].values()))
+    receipt = saved["study_delivery"]["result"]
+    assert len(attempts) == 1
+    if render_fails:
+        assert len(messages) == 2 and "Grafic indisponibil" in messages[1]["text"]
+        assert (receipt["status"], receipt["format"]) == ("API_ACCEPTED", "TEXT")
+    else:
+        assert len(messages) == 1
+        assert (receipt["status"], receipt["format"]) == ("UNKNOWN", "PHOTO")
+
+
+def test_study_result_without_an_expiry_quote_still_sends_a_chart(study_setup):
+    _, study, _, _, _, _, messages, clock = study_setup
+    row = _capture(study_setup)
+    study.advance(now_ts=BASE + 32, active_provider="FINNHUB", price_loader=lambda _: _sample(BASE + 32, 1.1))
+    now = BASE + 32 + row["model_seconds"] + study.quotes.MAX_SAMPLE_DELAY_SECONDS + 1
+    clock[0] = now + 0.1
+    study.advance(now_ts=now, active_provider="FINNHUB", price_loader=lambda _: None)
+    assert len(messages) == 2
+    assert messages[1]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
+    assert "cotație lipsă" in messages[1]["text"]
+    assert "Direcție la expirare: UNKNOWN" in messages[1]["text"]
 
 
 def test_late_worker_recovers_earlier_real_quote_inside_original_tolerance(study_setup):

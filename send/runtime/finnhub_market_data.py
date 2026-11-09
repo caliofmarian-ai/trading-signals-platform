@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from runtime.market_history_integrity import inspect_history, summarize_gap_distribution
+from runtime.market_history_integrity import inspect_candles, inspect_history, summarize_gap_distribution
 from runtime.observation_timing import WINDOW, distribution
 
 
@@ -652,6 +652,30 @@ class FinnhubForexFeed:
                     and sample["_provider_tick_ms"] <= now * 1000):
                     return {key: value for key, value in sample.items() if key != "_provider_tick_ms"}
         return None
+
+    def get_study_chart_evidence(self, entry_ts, expiry_ts):
+        """Read bounded, already retained EUR/USD observations for an expiry chart."""
+        if (type(entry_ts) not in (int, float) or type(expiry_ts) not in (int, float)
+                or not math.isfinite(entry_ts) or not math.isfinite(expiry_ts)
+                or entry_ts <= 0 or expiry_ts <= entry_ts):
+            raise ValueError("invalid study chart window")
+
+        # Study entry quotes have second-resolution timestamps. A raw tick from
+        # that same second cannot establish a subsequent touch of the buffer.
+        first_tick_ts = entry_ts + 1.0
+        with self._lock:
+            end_ts = min(expiry_ts, float(self.clock()))
+            candles = [dict(candle) for candle in self._candles["M1"]
+                       if candle["complete"] and entry_ts <= candle["ts"] <= end_ts - 60]
+            ticks = []
+            for sample in self._real_quote_buffer:
+                observed_ts = sample["_provider_tick_ms"] / 1000
+                if first_tick_ts <= observed_ts <= end_ts:
+                    ticks.append({"observed_ts": observed_ts, "price": sample["price"]})
+
+        if inspect_candles(candles, 60)["state"] == "INVALID":
+            candles = []
+        return list(reversed(candles)), ticks
 
     def health(self) -> Dict[str, Any]:
         with self._lock:

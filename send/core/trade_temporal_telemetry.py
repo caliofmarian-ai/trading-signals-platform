@@ -511,6 +511,18 @@ def pending_market_requests() -> List[Dict[str, str]]:
     return requests
 
 
+def _arm_owner_expiry_report(registry, record, publication, now_ts):
+    expiry = (record.get("checkpoints") or {}).get("expiry", {})
+    if (record["market_provider"] == "FINNHUB" and record["symbol"].upper().replace("/", "") == "EURUSD"
+            and record["pre_trade_snapshot"].get("decision_policy") == "PHYSICAL_ONLY_V3"
+            and publication["route"] == "OWNER_PRIVATE" and publication["destination_id"] > 0
+            and publication["message_id"] is not None and publication["message_id"] > 0
+            and expiry.get("state") == "PENDING" and now_ts < expiry["target_ts"]):
+        reports = registry.setdefault("owner_expiry_reports", {})
+        if isinstance(reports, dict):
+            reports.setdefault(record["trade_id"], {"status": "PENDING", "publication": publication})
+
+
 def register_open_now_trade(
     event: Mapping[str, Any],
     *,
@@ -546,6 +558,7 @@ def register_open_now_trade(
             if publication not in evidence:
                 evidence.append(publication)
                 trades[record["trade_id"]] = existing
+                _arm_owner_expiry_report(registry, existing, publication, resolved_now)
                 _save_registry(registry)
                 status = "updated_publication_evidence"
             else:
@@ -553,6 +566,7 @@ def register_open_now_trade(
             output = dict(existing)
         else:
             trades[record["trade_id"]] = record
+            _arm_owner_expiry_report(registry, record, publication, resolved_now)
             _save_registry(registry)
             status = "registered"
             output = dict(record)

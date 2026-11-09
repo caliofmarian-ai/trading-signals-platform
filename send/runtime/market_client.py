@@ -360,6 +360,16 @@ def get_price_sample_at_or_after(symbol, target_ts, max_delay):
     return _finnhub_feed().get_price_sample_at_or_after(symbol, target_ts, max_delay)
 
 
+def get_finnhub_study_chart_evidence(entry_ts, expiry_ts):
+    """Read the existing Finnhub cache without starting or querying a feed."""
+    if configured_provider() != "FINNHUB":
+        return [], []
+    feed = _FINNHUB_FEED
+    if feed is None:
+        return [], []
+    return feed.get_study_chart_evidence(entry_ts, expiry_ts)
+
+
 def get_candles(symbol: str, timeframe: str, *, prefer_live: bool = False):
     """
     Provider-independent wrapper used by the engine.

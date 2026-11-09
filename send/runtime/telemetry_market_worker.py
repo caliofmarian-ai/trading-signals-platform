@@ -179,6 +179,18 @@ def telemetry_market_loop(
                 message="Objective telemetry worker cycle failed closed",
                 context={"error": str(exc)},
             )
+        try:
+            from intelligence import owner_open_now_result
+            owner_open_now_result.dispatch_async()
+        except Exception as exc:
+            _warn_once_per_window(
+                warning_cache,
+                "owner_open_now_result",
+                now_ts=now,
+                warn_type="OWNER_OPEN_NOW_RESULT_UNAVAILABLE",
+                message="Private OPEN_NOW expiry report is unavailable",
+                context={"error_class": type(exc).__name__},
+            )
         # This experiment has separate storage and labels. It cannot register
         # canonical telemetry, supply execution calibration or publish a signal.
         try:
