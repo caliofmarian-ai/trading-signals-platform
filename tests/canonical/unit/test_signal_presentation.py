@@ -32,3 +32,12 @@ def test_actual_v3_router_uses_physical_projection():
     from core.distribution_router_v3 import _render_signal_text
     text = _render_signal_text(_event("PRE"),"BASIC")
     assert "URMĂREȘTE" in text and "Canal: BASIC" in text
+
+
+@pytest.mark.parametrize(("direction", "side"), [("BUY", "deasupra"), ("SELL", "dedesubtul")])
+def test_buffer_definition_is_adjacent_to_entry_in_the_favorable_direction(direction, side):
+    event = _event("PRE")
+    event["direction"] = direction
+    text = render_physical_signal(event)
+    assert f"banda imediat {side} prețului de intrare" in text
+    assert "Închiderea în interiorul benzii: câștig fragil" in text

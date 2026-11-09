@@ -81,8 +81,9 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     price = 1.1 + direction*row["buffer_snapshot"]["buffer_distance"]*.5
     study.advance(now_ts=target, active_provider="FINNHUB", price_loader=lambda _: _sample(target,price))
     assert len(messages) == 2 and "REZULTAT STUDIU" in messages[1]["text"]
-    assert "Direcție la expirare: WIN" in messages[1]["text"]
-    assert "Buffer la expirare: NEATINS" in messages[1]["text"]
+    assert "Direcție la expirare: WIN fragil" in messages[1]["text"]
+    assert "Poziție la expirare: În buffer · câștig fragil" in messages[1]["text"]
+    assert "Marjă completă la expirare: NU" in messages[1]["text"]
     assert label in messages[1]["text"]
     assert messages[1]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
     assert messages[1]["reply_to_message_id"] == 1

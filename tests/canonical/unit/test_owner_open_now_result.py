@@ -70,7 +70,9 @@ def test_private_canonical_result_sends_once_at_expiry_before_followups(reports)
     assert photo_calls[0]["chat_id"] == OWNER
     assert photo_calls[0]["reply_to_message_id"] == 123
     assert NUMBER in photo_calls[0]["caption"] and record["trade_id"] not in photo_calls[0]["caption"]
-    assert "Preț de referință" in photo_calls[0]["caption"] and "Buffer la cotația observată: ATINS" in photo_calls[0]["caption"]
+    assert "Preț de referință" in photo_calls[0]["caption"]
+    assert "Poziție la cotația observată: Dincolo de buffer" in photo_calls[0]["caption"]
+    assert "Marjă completă la cotația observată: DA" in photo_calls[0]["caption"]
     assert "+0.250 s" in photo_calls[0]["caption"]
     assert chart_calls[0]["outcome"] == "WIN"
     assert chart_calls[0]["signal_label"] == NUMBER
@@ -137,3 +139,20 @@ def test_ambiguous_transport_is_never_retried_or_followed_by_text(reports, monke
     monkeypatch.setattr(delivery.telegram_publisher, "send_photo", timeout)
     assert delivery.dispatch() == "UNKNOWN"
     assert delivery.dispatch() is None and len(chart_calls) == 1
+
+
+@pytest.mark.parametrize(("direction", "price", "outcome", "label"), [
+    ("BUY", 1.1001, "WIN", "În buffer · câștig fragil"),
+    ("SELL", 1.0999, "WIN", "În buffer · câștig fragil"),
+    ("BUY", 1.0999, "LOSS", "Dincolo de intrare · pierdere"),
+    ("SELL", 1.1001, "LOSS", "Dincolo de intrare · pierdere"),
+])
+def test_caption_distinguishes_a_fragile_win_from_a_loss(canonical_runtime_root, direction, price, outcome, label):
+    from intelligence.owner_open_now_result import _caption
+
+    record = {"direction": direction, "entry_price": 1.1, "buffer_price": 0.0002}
+    expiry = {"price": price, "target_ts": 1_800_000_300, "observed_ts": 1_800_000_300.25}
+    text = _caption(record, expiry, outcome, NUMBER)
+    assert label in text and "Marjă completă la cotația observată: NU" in text
+    assert ("Rezultat: WIN fragil" in text) is (outcome == "WIN")
+    assert ("Rezultat: LOSS" in text) is (outcome == "LOSS")

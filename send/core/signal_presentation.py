@@ -36,7 +36,9 @@ def render_physical_signal(event, tier_label=""):
     buffer = _number(event.get("buffer_distance"))
     if buffer is not None:
         lines.append(f"Buffer: {buffer:.15g} unități de preț · {event.get('buffer_mode')}")
-        lines.append("Buffer = marja de deplasare urmărită; nu garantează rezultatul.")
+        side = "deasupra" if event["direction"] == "BUY" else "dedesubtul"
+        lines.append(f"Buffer = banda imediat {side} prețului de intrare; nu garantează rezultatul.")
+        lines.append("Închiderea în interiorul benzii: câștig fragil.")
     if stage == "OPEN_NOW":
         duration = _number(event.get("open_now_expiry_minutes"))
         if not event.get("execution_time_available") or duration is None:
@@ -53,3 +55,4 @@ def render_physical_signal(event, tier_label=""):
     if tier_label and tier_label not in {"PERSONAL", "ADMIN"}:
         lines.append(f"Canal: {tier_label}")
     return "\n".join(lines)
+

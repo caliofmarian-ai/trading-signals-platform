@@ -6,6 +6,7 @@ import time
 
 from core import owner_signal_delivery as owner, storage, telegram_publisher
 from core import trade_temporal_telemetry as telemetry
+from core.buffer_zone import BUFFER_POSITION_LABELS, classify_buffer_position
 from core.signal_presentation import direction_label, stamp
 from intelligence import buffer_expiry_evidence, physical_study_chart
 
@@ -54,7 +55,10 @@ def _caption(record, expiry, outcome, number):
         record["direction"], {"price": record["entry_price"]},
         expiry if outcome != "UNKNOWN" else None, frozen,
     )
-    buffer_status = {"MET": "ATINS", "NOT_MET": "NEATINS", "UNAVAILABLE": "DATE INDISPONIBILE"}[measured["status"]]
+    buffer_status = {"MET": "DA", "NOT_MET": "NU", "UNAVAILABLE": "DATE INDISPONIBILE"}[measured["status"]]
+    position = classify_buffer_position(record["direction"], record["entry_price"],
+        record["buffer_price"], expiry.get("price") if outcome != "UNKNOWN" else None)
+    result = "WIN fragil" if outcome == "WIN" and position == "INSIDE_BUFFER" else outcome
     quote = "indisponibilă"
     if outcome != "UNKNOWN":
         lag = expiry["observed_ts"] - expiry["target_ts"]
@@ -65,7 +69,9 @@ def _caption(record, expiry, outcome, number):
             f"Preț de referință: {record['entry_price']:.15g}\n"
             f"Expirare programată: {stamp(expiry['target_ts'])}\n"
             f"Prima cotație la sau după expirare: {quote}\n"
-            f"Rezultat: {outcome} · Buffer la cotația observată: {buffer_status}\n"
+            f"Rezultat: {result}\n"
+            f"Poziție la cotația observată: {BUFFER_POSITION_LABELS[position]}\n"
+            f"Marjă completă la cotația observată: {buffer_status}\n"
             "Evaluare de piață a semnalului. Execuția la broker este neconfirmată.")
 
 
@@ -148,3 +154,4 @@ def dispatch_async():
         _IN_FLIGHT.release()
         raise
     return thread
+

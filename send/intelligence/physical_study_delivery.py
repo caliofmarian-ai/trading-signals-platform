@@ -10,6 +10,7 @@ import time
 import threading
 
 from core import owner_signal_delivery as owner, owner_signal_number, storage, telegram_publisher
+from core.buffer_zone import BUFFER_POSITION_LABELS, classify_buffer_position
 from intelligence import buffer_expiry_evidence
 from intelligence import physical_expiry_calibration as study
 from core.signal_presentation import direction_label
@@ -58,14 +59,16 @@ def _stamp(value):
 
 def render_entry(row, signal_label):
     entry = row["entry"]
+    side = "deasupra" if row["direction"] == "BUY" else "dedesubtul"
     return ("🧪 OPEN_NOW · STUDIU V3\n"
             f"EUR/USD · {direction_label(row['direction'])}\n"
             f"Preț observat: {entry['price']:.15g}\n"
             f"Început observare: {_stamp(entry['observed_ts'])}\n"
             f"Expirare simulată: {row['model_seconds']/60:.15g} min · "
             f"{_stamp(entry['observed_ts'] + row['model_seconds'])}\n"
-            f"Buffer urmărit: {row['buffer_snapshot']['buffer_distance']:.15g}\n"
-            "Buffer = marja de deplasare urmărită; nu garantează rezultatul.\n"
+            f"Lățime buffer: {row['buffer_snapshot']['buffer_distance']:.15g}\n"
+            f"Buffer = banda imediat {side} prețului de intrare.\n"
+            "Închiderea în interior: câștig fragil; bufferul nu garantează rezultatul.\n"
             "Simulare pe cotații reale · calibrare în colectare\n"
             "Durata este de studiu; expirarea de execuție nu este validată.\n"
             f"{signal_label} · Dublin")
@@ -76,7 +79,10 @@ def render_result(identity, row, signal_label):
     expiry_quote = baseline["quote"]
     measured = buffer_expiry_evidence.measure(row["direction"], row["entry"],
                                               expiry_quote, row["buffer_snapshot"])
-    label = {"MET": "ATINS", "NOT_MET": "NEATINS", "UNAVAILABLE": "DATE INDISPONIBILE"}[measured["status"]]
+    label = {"MET": "DA", "NOT_MET": "NU", "UNAVAILABLE": "DATE INDISPONIBILE"}[measured["status"]]
+    position = classify_buffer_position(row["direction"], row["entry"]["price"],
+        row["buffer_snapshot"]["buffer_distance"], expiry_quote["price"] if expiry_quote else None)
+    result = "WIN fragil" if baseline["outcome"] == "WIN" and position == "INSIDE_BUFFER" else baseline["outcome"]
     observed = (f"{expiry_quote['price']:.10g} la {_stamp(expiry_quote['observed_ts'])}"
                 if expiry_quote else "cotație lipsă")
     expiry_ts = row["entry"]["observed_ts"] + baseline["horizon_seconds"]
@@ -85,8 +91,9 @@ def render_result(identity, row, signal_label):
             f"Intrare observată: {row['entry']['price']:.10g} la {_stamp(row['entry']['observed_ts'])}\n"
             f"Expirare simulată: {_stamp(expiry_ts)}\n"
             f"Observație la expirare: {observed}\n"
-            f"Direcție la expirare: {baseline['outcome']}\n"
-            f"Buffer la expirare: {label}\n"
+            f"Direcție la expirare: {result}\n"
+            f"Poziție la expirare: {BUFFER_POSITION_LABELS[position]}\n"
+            f"Marjă completă la expirare: {label}\n"
             "Rezultat al simulării pe cotații observate"
             + (f"\n{signal_label} · Dublin" if signal_label else f"\nID studiu: {identity[:12]}"))
 
@@ -220,3 +227,4 @@ def dispatch_async(*, now_ts, active_provider):
         _DELIVERY_IN_FLIGHT.release()
         raise
     return thread
+
