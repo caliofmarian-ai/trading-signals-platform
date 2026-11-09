@@ -10,6 +10,7 @@ import websocket
 
 EXPECTED_REQUESTS = "2.34.2"
 EXPECTED_WEBSOCKET_CLIENT = "1.9.2"
+EXPECTED_PILLOW = "13.0.0"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -25,6 +26,7 @@ def test_direct_dependency_pins_match_reviewed_targets():
     assert pins == {
         "requests": EXPECTED_REQUESTS,
         "websocket-client": EXPECTED_WEBSOCKET_CLIENT,
+        "Pillow": EXPECTED_PILLOW,
     }
 
 

@@ -99,7 +99,11 @@ def stage_block_reason(event: dict[str, Any], *, now_ts: float) -> str | None:
         return "OWNER_STAGE_TIMING_UNAVAILABLE"
 
 
-def render_text(event: dict[str, Any], text: str) -> str:
+def render_text(event: dict[str, Any], text: str, *, opening_number: str | None = None) -> str:
+    if opening_number is not None:
+        private_id = f"ID: {event['signal_id']}"
+        lines = [line for line in text.splitlines() if line != private_id]
+        text = "\n".join([opening_number, *lines])
     if (event.get("payload") or {}).get("decision_policy") == "PHYSICAL_ONLY_V3":
         return "🧪 OBSERVARE PRIVATĂ · SHADOW MODE\n" + text
     created = event.get("created_ts")

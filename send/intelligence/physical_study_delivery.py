@@ -9,12 +9,12 @@ import json
 import time
 import threading
 
-from core import owner_signal_delivery as owner, storage, telegram_publisher
+from core import owner_signal_delivery as owner, owner_signal_number, storage, telegram_publisher
 from intelligence import buffer_expiry_evidence
 from intelligence import physical_expiry_calibration as study
 from core.signal_presentation import direction_label
 
-STATUSES = {"RESERVED", "API_ACCEPTED", "FAILED", "UNKNOWN", "SKIPPED_STALE", "SKIPPED_STAGE_GUARD"}
+STATUSES = {"RESERVED", "API_ACCEPTED", "FAILED", "UNKNOWN", "SKIPPED_STALE", "SKIPPED_STAGE_GUARD", "SKIPPED_DESTINATION_CHANGED"}
 _DELIVERY_IN_FLIGHT = threading.Lock()
 
 
@@ -38,6 +38,10 @@ def validate_delivery(row):
             or type(receipt.get("attempted_ts")) not in (int, float)
             or receipt["attempted_ts"] < row["created_ts"]):
             raise ValueError("INVALID_STUDY_RECEIPT")
+        if "format" in receipt and receipt["format"] not in ({"TEXT", "PHOTO"} if phase == "result" else {"TEXT"}):
+            raise ValueError("INVALID_STUDY_RECEIPT_FORMAT")
+        if "destination_id" in receipt and (type(receipt["destination_id"]) is not int or receipt["destination_id"] <= 0):
+            raise ValueError("INVALID_STUDY_RECEIPT_DESTINATION")
         study._number(receipt["attempted_ts"])
         if receipt["status"] == "API_ACCEPTED":
             if (type(receipt.get("message_id")) is not int or receipt["message_id"] <= 0
@@ -52,7 +56,7 @@ def _stamp(value):
     return datetime.fromtimestamp(value, timezone.utc).strftime("%H:%M:%S UTC")
 
 
-def render_entry(identity, row):
+def render_entry(row, signal_label):
     entry = row["entry"]
     return ("🧪 OPEN_NOW · STUDIU V3\n"
             f"EUR/USD · {direction_label(row['direction'])}\n"
@@ -64,25 +68,44 @@ def render_entry(identity, row):
             "Buffer = marja de deplasare urmărită; nu garantează rezultatul.\n"
             "Simulare pe cotații reale · calibrare în colectare\n"
             "Durata este de studiu; expirarea de execuție nu este validată.\n"
-            f"ID studiu: {identity[:12]}")
+            f"{signal_label} · Dublin")
 
 
-def render_result(identity, row):
+def render_result(identity, row, signal_label):
     baseline = row["candidates"][0]  # predeclared Model Time, never the best eventual candidate
+    expiry_quote = baseline["quote"]
     measured = buffer_expiry_evidence.measure(row["direction"], row["entry"],
-                                              baseline["quote"], row["buffer_snapshot"])
+                                              expiry_quote, row["buffer_snapshot"])
     label = {"MET": "ATINS", "NOT_MET": "NEATINS", "UNAVAILABLE": "DATE INDISPONIBILE"}[measured["status"]]
-    observed = _stamp(baseline["quote"]["observed_ts"]) if baseline["quote"] else "cotație lipsă"
+    observed = (f"{expiry_quote['price']:.10g} la {_stamp(expiry_quote['observed_ts'])}"
+                if expiry_quote else "cotație lipsă")
+    expiry_ts = row["entry"]["observed_ts"] + baseline["horizon_seconds"]
     return ("🧪 REZULTAT STUDIU V3\n"
             f"EUR/USD · {direction_label(row['direction'])} · {row['model_seconds']/60:.15g} min\n"
+            f"Intrare observată: {row['entry']['price']:.10g} la {_stamp(row['entry']['observed_ts'])}\n"
+            f"Expirare simulată: {_stamp(expiry_ts)}\n"
             f"Observație la expirare: {observed}\n"
             f"Direcție la expirare: {baseline['outcome']}\n"
             f"Buffer la expirare: {label}\n"
-            "Rezultat al simulării pe cotații observate\n"
-            f"ID studiu: {identity[:12]}")
+            "Rezultat al simulării pe cotații observate"
+            + (f"\n{signal_label} · Dublin" if signal_label else f"\nID studiu: {identity[:12]}"))
 
 
-def _reserve(path, phase, now):
+def _render_chart(row, signal_label):
+    from intelligence.physical_study_chart import render_market_chart
+
+    entry = row["entry"]
+    baseline = row["candidates"][0]
+    expiry_ts = entry["observed_ts"] + baseline["horizon_seconds"]
+    quote = baseline["quote"] or {}
+    return render_market_chart(direction=row["direction"], entry_ts=entry["observed_ts"],
+                               entry_price=entry["price"], expiry_ts=expiry_ts,
+                               expiry_quote_ts=quote.get("observed_ts"), expiry_price=quote.get("price"),
+                               buffer_distance=row["buffer_snapshot"]["buffer_distance"],
+                               outcome=baseline["outcome"], signal_label=signal_label)
+
+
+def _reserve(path, phase, now, destination):
     with storage.with_lock("physical_v3_expiry_calibration", timeout_sec=.2):
         state = study._read(path)
         if state is None:
@@ -106,6 +129,8 @@ def _reserve(path, phase, now):
             elif ((delivery.get("entry") or {}).get("status") != "API_ACCEPTED"
                   or row["candidates"][0]["outcome"] in {"PENDING", "INFEASIBLE"}):
                 continue
+            elif delivery["entry"].get("destination_id", destination) != destination:
+                status = "SKIPPED_DESTINATION_CHANGED"
             delivery[phase] = {"status": status, "attempted_ts": now}
             changed = True
             if status == "RESERVED":
@@ -122,14 +147,36 @@ def dispatch(*, now_ts, active_provider):
     if destination is None or path is None or active_provider != "FINNHUB":
         return
     for phase in ("entry", "result"):
-        reserved = _reserve(path, phase, now_ts)
+        reserved = _reserve(path, phase, now_ts, destination)
         if reserved is None:
             continue
         identity, row = reserved
-        text = render_entry(identity, row) if phase == "entry" else render_result(identity, row)
-        receipt = {"status": "UNKNOWN", "attempted_ts": now_ts}
+        signal_id = row["policies"]["PHYSICAL_ONLY_V3"]["opportunity_signal_id"]
+        receipt = {"status": "UNKNOWN", "attempted_ts": now_ts, "format": "TEXT", "destination_id": destination}
         try:
-            response = telegram_publisher.send_message(chat_id=destination, text=text)
+            photo = None
+            if phase == "entry":
+                signal_label = owner_signal_number.reserve(signal_id, now_ts, study=True)
+                text = render_entry(row, signal_label)
+            else:
+                signal_label = owner_signal_number.lookup(signal_id, study=True)
+                text = render_result(identity, row, signal_label)
+                try:
+                    photo = _render_chart(row, signal_label)
+                except Exception as exc:
+                    print("TSP_PHYSICAL_STUDY_CHART_UNAVAILABLE " + json.dumps({
+                        "study_id": identity, "error_class": type(exc).__name__}), flush=True)
+                    text += "\nGrafic indisponibil pentru această observație."
+            entry_receipt = row["study_delivery"]["entry"] if phase == "result" else {}
+            reply_id = entry_receipt["message_id"] if entry_receipt.get("destination_id") == destination else None
+            if photo is not None:
+                receipt["format"] = "PHOTO"
+                response = telegram_publisher.send_photo(chat_id=destination, photo=photo, caption=text,
+                    reply_to_message_id=reply_id)
+            elif reply_id is not None:
+                response = telegram_publisher.send_message(chat_id=destination, text=text, reply_to_message_id=reply_id)
+            else:
+                response = telegram_publisher.send_message(chat_id=destination, text=text)
             message_id = (response.get("result") or {}).get("message_id")
             accepted_ts = time.time()
             if (response.get("ok") is True and type(message_id) is int and message_id > 0
@@ -148,6 +195,7 @@ def dispatch(*, now_ts, active_provider):
             study._save(path, state)
         print("TSP_PHYSICAL_STUDY_DELIVERY " + json.dumps({
             "phase": phase, "status": receipt["status"], "study_id": identity,
+            "format": receipt["format"],
             "observed_at": now_ts, "truth_domain": "HYPOTHETICAL_RESEARCH",
             "execution_calibration_proven": False, "broker_executed": False,
         }, sort_keys=True), flush=True)

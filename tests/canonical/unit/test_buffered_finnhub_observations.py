@@ -120,3 +120,52 @@ def test_concurrent_finnhub_consumers_share_the_same_feed(monkeypatch):
 
         assert first.result(timeout=5) is second.result(timeout=5)
     assert len(feeds) == 1
+
+
+def test_study_chart_evidence_excludes_ambiguous_and_post_expiry_prices(tmp_path):
+    clock = [1202.25]
+    _, feed = _feed(tmp_path, clock)
+    for timestamp, price in (
+        (1010000, 1.0), (1025125, 1.1), (1025999, 1.12), (1026000, 1.13),
+        (1080125, 1.14), (1139500, 1.15), (1140125, 1.16), (1198000, 1.17),
+        (1201000, 1.18), (1202500, 1.19), (1202501, 1.2),
+    ):
+        _tick(feed, timestamp, price)
+
+    candles, ticks = feed.get_study_chart_evidence(1025, 1202.5)
+    assert [candle["ts"] for candle in candles] == [1080, 1140]
+    assert all(candle["complete"] for candle in candles)
+    assert [tick["observed_ts"] for tick in ticks] == [
+        1026, 1080.125, 1139.5, 1140.125, 1198, 1201,
+    ]
+    assert ticks[1] == {"observed_ts": 1080.125, "price": 1.14}
+
+    candles[0]["high"] = 99
+    ticks[0]["price"] = 99
+    clock[0] = 1203
+    candles, ticks = feed.get_study_chart_evidence(1025, 1202.5)
+    assert candles[0]["high"] == 1.15
+    assert ticks[0]["price"] == 1.13
+    assert ticks[-1] == {"observed_ts": 1202.5, "price": 1.19}
+
+
+def test_study_chart_uses_only_existing_active_finnhub_feed(monkeypatch):
+    market = importlib.import_module("runtime.market_client")
+
+    class CachedFeed:
+        def get_study_chart_evidence(self, entry_ts, expiry_ts):
+            assert (entry_ts, expiry_ts) == (1000, 1100)
+            return [], [{"observed_ts": 1060.25, "price": 1.1}]
+
+    monkeypatch.setattr(market, "_finnhub_feed", lambda: pytest.fail("must not create a feed"))
+    monkeypatch.setattr(market, "configured_provider", lambda: "FINNHUB")
+    monkeypatch.setattr(market, "_FINNHUB_FEED", None)
+    assert market.get_finnhub_study_chart_evidence(1000, 1100) == ([], [])
+
+    monkeypatch.setattr(market, "_FINNHUB_FEED", CachedFeed())
+    assert market.get_finnhub_study_chart_evidence(1000, 1100) == (
+        [], [{"observed_ts": 1060.25, "price": 1.1}],
+    )
+
+    monkeypatch.setattr(market, "configured_provider", lambda: "TWELVE_DATA")
+    assert market.get_finnhub_study_chart_evidence(1000, 1100) == ([], [])

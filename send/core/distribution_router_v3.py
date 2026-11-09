@@ -25,7 +25,7 @@ from core import distribution_router as legacy
 from core import market_data_provider_control
 from core import observability_logger
 from core import outcome_service
-from core import owner_signal_delivery
+from core import owner_signal_delivery, owner_signal_number
 from core import trade_temporal_telemetry
 
 
@@ -966,9 +966,8 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
             was_duplicate=False,
         )
 
-        text = _render_signal_text(event, tier if is_tier else "ADMIN")
-        if route_name == "OWNER_PRIVATE":
-            text = owner_signal_delivery.render_text(event, _render_signal_text(event, "PERSONAL"))
+        render_tier = "PERSONAL" if route_name == "OWNER_PRIVATE" else tier if is_tier else "ADMIN"
+        text = _render_signal_text(event, render_tier)
         feedback_enabled = bool(feedback_available and stage == "OPEN_NOW")
         reply_markup = legacy.build_feedback_markup(signal_id) if feedback_enabled else None
         route_state_after = route_state_before
@@ -976,6 +975,9 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
         message_id: Optional[int] = None
 
         try:
+            if route_name == "OWNER_PRIVATE":
+                number = owner_signal_number.reserve(signal_id, time.time()) if stage == "OPEN_NOW" else None
+                text = owner_signal_delivery.render_text(event, text, opening_number=number)
             send_started_ts = time.time()
             send_started_monotonic = time.perf_counter()
             response = legacy.telegram_publisher.send_message(

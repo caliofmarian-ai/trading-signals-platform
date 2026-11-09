@@ -416,6 +416,12 @@ def test_finnhub_personal_stages_only_reach_owner_never_channels(tmp_path, monke
     assert calls[0]["chat_id"] == 123456789
     assert calls[0]["thread_id"] is None and calls[0]["reply_markup"] is None
     assert "Generated:" in calls[0]["text"] and "shadow observation" in calls[0]["text"]
+    label = router.owner_signal_number.lookup(candidate["signal_id"])
+    if stage == "OPEN_NOW":
+        assert label and label.endswith(" · nr. 0")
+        assert label in calls[0]["text"] and candidate["signal_id"] not in calls[0]["text"]
+    else:
+        assert label is None
     assert legacy.load_state()["open_signals_today"]["FREE"] == 0
     assert owner.audit_evidence(987654321) == {"status": "PERSONAL_DELIVERY_NOT_ENABLED_FOR_OWNER"}
     assert (root / "state" / "owner_signal_timing.json").is_file()
@@ -449,6 +455,22 @@ def test_personal_route_preserves_open_now_expiry_gate(tmp_path, monkeypatch):
     candidate["stage"] = "OPEN_NOW"
     summary = router.route(candidate, now_ts=1720000100)
     assert summary["block_reason"] == "EXECUTION_TIME_UNAVAILABLE" and not calls
+    assert router.owner_signal_number.lookup(candidate["signal_id"]) is None
+
+
+def test_owner_open_with_unavailable_number_ledger_never_sends(tmp_path, monkeypatch):
+    root, _, legacy, router, _ = _setup(tmp_path, monkeypatch)
+    owner = _personal(monkeypatch, router)
+    signal_id = "private-number-unavailable"
+    for stage, age in (("PRE", 60), ("CONFIRM", 5)):
+        owner.record_acceptance(_candidate(stage, signal_id), {"ok": True},
+                                started_ts=time.time()-age-1, accepted_ts=time.time()-age, transport_seconds=.1)
+    (root / "state" / "owner_signal_numbers.json").write_text("{corrupt}")
+    monkeypatch.setattr(legacy.telegram_publisher, "send_message", lambda **_: pytest.fail("OPEN was sent"))
+
+    summary = router.route(_candidate("OPEN_NOW", signal_id), now_ts=1720000100)
+
+    assert summary["published_count"] == 0 and summary["failed_count"] == 1
 
 
 def test_owner_timing_uses_first_successful_stage_and_preserves_missing_gaps(tmp_path, monkeypatch):
