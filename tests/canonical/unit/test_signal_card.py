@@ -29,7 +29,10 @@ def test_actual_png_separates_stage_color_from_direction_and_checks_only_active_
     assert png.startswith(b"\x89PNG\r\n\x1a\n")
     picture = Image.open(BytesIO(png)).convert("RGB")
     assert picture.size == (1200, 1200)
-    accent = ImageColor.getrgb(cards.STAGE_ACCENTS[stage])
+    # Independent expected colors prevent implementation and test drifting together.
+    expected = {"PRE": "#c8bd81", "CONFIRM": "#a69abb",
+                "OPEN_NOW": "#3e7565" if direction == "BUY" else "#945663"}
+    accent = ImageColor.getrgb(expected[stage])
     inactive = ImageColor.getrgb(cards.INACTIVE)
     assert picture.getpixel((600, 155)) == accent
     for target, (left, top, _, _) in zip(cards.STAGES, cards.STAGE_BUTTONS):
@@ -177,3 +180,28 @@ def test_bundled_font_has_romanian_glyphs_and_long_values_fit_inside_card():
     background = ImageColor.getrgb(cards.BACKGROUND)
     for edge in (picture.crop((0, 0, 15, 1200)), picture.crop((1185, 0, 1200, 1200))):
         assert edge.getcolors(edge.width * edge.height) == [(edge.width * edge.height, background)]
+
+
+@pytest.mark.parametrize("stage", ["PRE", "CONFIRM", "OPEN_NOW"])
+def test_only_open_button_follows_direction(stage):
+    buy = cards.build_card_fields(event(stage, "BUY"), LABEL)
+    sell = cards.build_card_fields(event(stage, "SELL"), LABEL)
+    assert (buy["stage_accent"] == sell["stage_accent"]) is (stage != "OPEN_NOW")
+    assert buy["direction_accent"] == "#008c60"
+    assert sell["direction_accent"] == "#e70028"
+    assert cards.BACKGROUND == "#071125"
+
+
+@pytest.mark.parametrize("stage", ["PRE", "CONFIRM", "OPEN_NOW"])
+@pytest.mark.parametrize("direction", ["BUY", "SELL"])
+def test_muted_buttons_keep_high_text_contrast(stage, direction):
+    fields = cards.build_card_fields(event(stage, direction), LABEL)
+
+    def luminance(color):
+        rgb = [value / 255 for value in ImageColor.getrgb(color)]
+        linear = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+                  for value in rgb]
+        return sum(weight * value for weight, value in zip((0.2126, 0.7152, 0.0722), linear))
+
+    high, low = sorted((luminance(fields["stage_accent"]), luminance(fields["stage_ink"])), reverse=True)
+    assert (high + .05) / (low + .05) >= 4.5

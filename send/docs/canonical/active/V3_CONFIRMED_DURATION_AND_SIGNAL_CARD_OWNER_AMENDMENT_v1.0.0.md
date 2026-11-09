@@ -64,11 +64,17 @@ or prove the broker supports that precision.
 
 ## Image contract
 
+Presentation erratum — 2026-11-09: the earlier orange CONFIRM and blue OPEN
+wording transcribed the Owner's final instruction incorrectly. The corrected
+colors below apply to both the top banner and the active bottom button. The
+card background stays dark blue; BUY/SELL text keeps its separate direction
+color. This correction changes neither durations nor trading gates.
+
 | Element | Presentation |
 |---|---|
 | PRE | Muted pale yellow stage button |
-| CONFIRM | Muted pale orange stage button |
-| OPEN NOW | Muted blue stage button |
+| CONFIRM | Muted purple stage button, independent of direction |
+| OPEN NOW | Muted green for BUY; muted red for SELL |
 | BUY / SELL | Separate green / red direction indication |
 | Trade identifier | Large inset #N, same Dublin daily number for all stages/results |
 | Current stage | Same colored top button and checked bottom stage; other stages neutral |
