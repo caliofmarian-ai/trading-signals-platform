@@ -18,7 +18,7 @@ def study_setup(canonical_runtime_root, monkeypatch):
     from tests.canonical.integration.test_binary_strategy_v2 import _inputs
     from core.physical_params import migrate_physical_params
     from core.strategy_v3 import decide, lifecycle_context
-    from core.v2_fsm_orchestrator import advance_persistent_fsm
+    from core.v2_fsm_orchestrator import advance_persistent_fsm, bind_confirmed_execution_time
     from state_store.state_store import default_fsm_state
     from core import owner_signal_delivery as owner
     from intelligence import physical_expiry_calibration as study, physical_study_delivery as delivery
@@ -28,11 +28,17 @@ def study_setup(canonical_runtime_root, monkeypatch):
         result = decide(m1, m5, params, buffer_mode="SMALL",
                         context=lifecycle_context(state, "EUR/USD", now_ts=now))
         handoff = advance_persistent_fsm(state, result.decision, now_ts=now)
+        handoff, _ = bind_confirmed_execution_time(handoff, result.decision, result.execution_time)
         state = handoff.next_state
     assert handoff.accepted_stage == "OPEN_NOW"
     key = hashlib.sha256(result.decision.signal_id.encode()).hexdigest()
     owner.storage.save_json_atomic(str(owner._timing_path()), {"schema_version":"1.0.0", "opportunities":{
-        key: {"PRE":{"api_accepted_ts": BASE+.1}, "CONFIRM":{"api_accepted_ts":BASE+2.1}}}})
+        key: {"PRE":{"api_accepted_ts": BASE+.1}, "CONFIRM":{
+            "api_accepted_ts":BASE+2.1,
+            "study_duration_minutes": state["per_symbol"]["EUR/USD"]["physical_confirm_model_seconds"] / 60,
+            "study_confirmed_ts": BASE+2,
+            "study_duration_source": "CONFIRM_MODEL_TIME",
+        }}}})
     messages = []
     clock = [BASE+32.1]
     monkeypatch.setattr(delivery.time, "time", lambda: clock[0])
@@ -60,6 +66,170 @@ def _sample(stamp, price, *, buffered=False):
             "source":"LIVE_STREAM_PROVIDER_TICK_BUFFER_V1" if buffered else "LIVE_STREAM_CURRENT_M1_CLOSE"}
 
 
+def _confirmed_duration(setup, seconds):
+    """Simulate a previously delivered CONFIRM whose horizon differs at OPEN."""
+    _, _, _, _, handoff, _, _, _ = setup
+    handoff.next_state["per_symbol"]["EUR/USD"]["physical_confirm_model_seconds"] = seconds
+    from core import owner_signal_delivery as owner
+    ledger = json.loads(owner._timing_path().read_text())
+    for stages in ledger["opportunities"].values():
+        stages["CONFIRM"]["study_duration_minutes"] = seconds / 60
+    owner.storage.save_json_atomic(str(owner._timing_path()), ledger)
+
+
+def test_confirmed_duration_survives_changed_open_model_restart_and_independent_result(study_setup, monkeypatch):
+    _, study, delivery, result, _, params, messages, clock = study_setup
+    model_seconds = result.decision.time.model_expiry * 60
+    confirmed_seconds = model_seconds + 60
+    assert confirmed_seconds <= params["expiry_limits_minutes"]["max"] * 60
+    _confirmed_duration(study_setup, confirmed_seconds)
+    row = _capture(study_setup)
+    assert row["model_seconds"] == model_seconds
+    assert row["candidates"][0]["horizon_seconds"] == model_seconds
+    assert row["study_observation"]["horizon_seconds"] == confirmed_seconds
+
+    entry_ts = BASE + 32
+    study.advance(now_ts=entry_ts, active_provider="FINNHUB",
+                  price_loader=lambda _: _sample(entry_ts, 1.1))
+    saved = next(iter(study._read(study._path())["records"].values()))
+    projected = delivery._entry_event(saved)
+    assert projected["study_duration_minutes"] == confirmed_seconds / 60
+    assert projected["expiry_ts"] == entry_ts + confirmed_seconds
+    assert projected["study_confirmed_ts"] == BASE + 2
+    assert projected["study_duration_source"] == "CONFIRM_MODEL_TIME"
+    assert len(messages) == 1
+
+    direction = 1 if row["direction"] == "BUY" else -1
+    model_target = entry_ts + model_seconds
+    clock[0] = model_target + .1
+    study.advance(now_ts=model_target, active_provider="FINNHUB",
+                  price_loader=lambda _: _sample(model_target, 1.1 + direction * .01))
+    saved = next(iter(study._read(study._path())["records"].values()))
+    assert saved["candidates"][0]["outcome"] == "WIN"
+    assert saved["state"] == "FINAL"  # research completion must not stop the promised study horizon
+    assert saved["study_observation"]["outcome"] == "PENDING"
+    assert len(messages) == 1
+    report = study.summary(now_ts=model_target)
+    assert report["baseline_model_observations"]["wins"] == 1
+    assert report["published_study_results"]["decisive"] == 0
+
+    study = importlib.reload(study)
+    from intelligence import physical_study_chart
+    rendered, original = [], physical_study_chart.render_market_chart
+
+    def chart(**kwargs):
+        rendered.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(physical_study_chart, "render_market_chart", chart)
+    confirmed_target = entry_ts + confirmed_seconds
+    clock[0] = confirmed_target + .1
+    study.advance(now_ts=confirmed_target, active_provider="FINNHUB",
+                  price_loader=lambda _: _sample(confirmed_target, 1.1 - direction * .01))
+    saved = next(iter(study._read(study._path())["records"].values()))
+    assert saved["candidates"][0]["outcome"] == "WIN"
+    assert saved["study_observation"]["outcome"] == "LOSS"
+    assert saved["study_observation"]["quote"]["observed_ts"] == confirmed_target
+    assert len(messages) == 2 and "Direcție la expirare: LOSS" in messages[1]["text"]
+    assert rendered[0]["expiry_ts"] == confirmed_target
+    assert rendered[0]["outcome"] == "LOSS"
+    report = study.summary(now_ts=confirmed_target)
+    assert report["baseline_model_observations"]["wins"] == 1
+    assert report["published_study_results"]["wins"] == 0
+    assert report["published_study_results"]["losses"] == 1
+    assert report["published_study_results"]["buffer_not_met"] == 1
+    unaccepted = study._read(study._path())
+    next(iter(unaccepted["records"].values()))["study_delivery"]["result"]["status"] = "UNKNOWN"
+    report = study.analyze(unaccepted, now_ts=confirmed_target)
+    assert report["baseline_model_observations"]["wins"] == 1
+    assert report["published_study_results"]["decisive"] == 0
+
+
+def test_confirmed_study_that_no_longer_fits_open_physics_is_not_published(study_setup):
+    _, study, _, result, _, _, messages, _ = study_setup
+    _confirmed_duration(study_setup, result.decision.time.t_needed_adjusted * 30)
+    row = _capture(study_setup)
+    assert row["study_observation"]["outcome"] == "INFEASIBLE"
+    assert row["candidates"][0]["outcome"] == "PENDING"
+    study.advance(now_ts=BASE + 32, active_provider="FINNHUB",
+                  price_loader=lambda _: _sample(BASE + 32, 1.1))
+    assert not messages
+    saved = next(iter(study._read(study._path())["records"].values()))
+    assert saved["study_delivery"]["entry"]["status"] == "SKIPPED_DURATION_INFEASIBLE"
+
+
+def test_confirmed_study_exact_fit_accepts_only_machine_precision_drift(study_setup):
+    from dataclasses import replace
+
+    setup = list(study_setup)
+    _, study, _, result, _, _, messages, _ = setup
+    adjusted_seconds = 180.00000000000003
+    timing = replace(result.decision.time, model_expiry=4.0,
+                     t_needed=2.5, t_needed_adjusted=adjusted_seconds / 60,
+                     model_time_reach_ratio=(adjusted_seconds / 60) / 4,
+                     time_to_buffer_ratio=4 / (adjusted_seconds / 60))
+    setup[3] = replace(result, decision=replace(result.decision, time=timing))
+    _confirmed_duration(setup, 180.0)
+    row = _capture(setup)
+    assert row["study_observation"]["horizon_seconds"] == 180.0
+    assert row["study_observation"]["outcome"] == "PENDING"
+    # The established research grid is not reclassified by this display-study fix.
+    assert row["candidates"][-1]["horizon_seconds"] == 180.0
+    assert row["candidates"][-1]["outcome"] == "INFEASIBLE"
+    study.advance(now_ts=BASE + 32, active_provider="FINNHUB",
+                  price_loader=lambda _: _sample(BASE + 32, 1.1))
+    assert len(messages) == 1
+    assert study._confirmed_study_feasible(180.0, adjusted_seconds)
+    assert not study._confirmed_study_feasible(180.0, 180.000001)
+
+
+@pytest.mark.parametrize("prior_status", [None, "FROZEN", "BLOCKED"])
+def test_old_or_calibrated_confirmation_cannot_be_downgraded_to_new_study(study_setup, prior_status):
+    _, _, _, _, handoff, _, _, _ = study_setup
+    row = handoff.next_state["per_symbol"]["EUR/USD"]
+    row["physical_confirm_execution_status"] = prior_status
+    if prior_status == "FROZEN":
+        row["physical_confirm_execution"] = {"source": "synthetic-calibration"}
+    captured = _capture(study_setup)
+    assert "study_delivery" not in captured
+    assert "study_observation" not in captured
+
+
+@pytest.mark.parametrize("field,value", [("horizon_seconds", 1), ("confirmed_ts", BASE + 3),
+                                         ("duration_source", "OPEN_MODEL_TIME")])
+def test_saved_study_cannot_rewrite_previously_confirmed_duration(study_setup, field, value):
+    _, study, _, _, _, _, _, _ = study_setup
+    _capture(study_setup)
+    state = study._read(study._path())
+    next(iter(state["records"].values()))["study_observation"][field] = value
+    with pytest.raises(ValueError, match="CONFIRMED_STUDY_HORIZON"):
+        study.validate(state)
+
+
+@pytest.mark.parametrize("mismatch", ["missing_duration", "changed_duration", "changed_timestamp", "changed_source"])
+def test_study_open_requires_the_same_duration_actually_delivered_at_confirm(study_setup, mismatch):
+    _, study, _, _, _, _, messages, _ = study_setup
+    _capture(study_setup)
+    from core import owner_signal_delivery as owner
+    ledger = json.loads(owner._timing_path().read_text())
+    for stages in ledger["opportunities"].values():
+        confirm = stages["CONFIRM"]
+        if mismatch == "missing_duration":
+            confirm.pop("study_duration_minutes")
+        elif mismatch == "changed_duration":
+            confirm["study_duration_minutes"] += 1
+        elif mismatch == "changed_timestamp":
+            confirm["study_confirmed_ts"] += 1
+        else:
+            confirm["study_duration_source"] = "OPEN_MODEL_TIME"
+    owner.storage.save_json_atomic(str(owner._timing_path()), ledger)
+    study.advance(now_ts=BASE + 32, active_provider="FINNHUB",
+                  price_loader=lambda _: _sample(BASE + 32, 1.1))
+    assert not messages
+    saved = next(iter(study._read(study._path())["records"].values()))
+    assert saved["study_delivery"]["entry"]["status"] == "SKIPPED_STAGE_GUARD"
+
+
 def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_result(study_setup):
     _, study, delivery, result, _, _, messages, clock = study_setup
     row = _capture(study_setup)
@@ -68,7 +238,7 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     assert messages[0]["chat_id"] == 123456789
     assert "OPEN NOW" in messages[0]["text"] and "STUDIU · SIMULARE" in messages[0]["text"]
     assert messages[0]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
-    assert f"{row['model_seconds'] / 60:.15g} MIN" in messages[0]["text"]
+    assert len(messages[0]["text"].splitlines()) <= 2
     assert "Score" not in messages[0]["text"] and "TPS" not in messages[0]["text"]
     label = delivery.owner_signal_number.lookup_lifecycle(result.decision.signal_id)
     assert label is not None and label.endswith("nr. 0")
@@ -300,6 +470,8 @@ def test_photo_entry_reuses_pre_number_and_frozen_observation(study_setup):
         "entry_price": 1.12221, "created_ts": row["created_ts"],
         "entry_ts": BASE + 32, "expiry_ts": BASE + 32 + row["model_seconds"],
         "study_duration_minutes": row["model_seconds"] / 60,
+        "study_confirmed_ts": BASE + 2,
+        "study_duration_source": "CONFIRM_MODEL_TIME",
     }
 
 
@@ -319,6 +491,7 @@ def test_study_entry_render_failure_uses_same_id_text_once(study_setup, monkeypa
     assert len(messages) == 1 and "photo" not in messages[0]
     assert "#0" in messages[0]["text"] and "STUDIU · SIMULARE" in messages[0]["text"]
     assert "Imagine indisponibilă" in messages[0]["text"]
+    assert "1.1000000" in messages[0]["text"] and "MIN" in messages[0]["text"]
     receipt = next(iter(study._read(study._path())["records"].values()))["study_delivery"]["entry"]
     assert (receipt["status"], receipt["format"]) == ("API_ACCEPTED", "TEXT")
     assert "TSP_PHYSICAL_STUDY_CARD_UNAVAILABLE" in capsys.readouterr().out
@@ -338,6 +511,7 @@ def test_legacy_entry_receipts_keep_their_original_study_number(study_setup, leg
     path = study._path()
     state = study._read(path)
     row = next(iter(state["records"].values()))
+    row.pop("study_observation")  # persisted pre-upgrade record keeps its original OPEN horizon
     row.update(entry=_sample(BASE + 32, 1.1), state="OBSERVING")
     receipt = {"status": "API_ACCEPTED", "attempted_ts": BASE + 32,
                "api_accepted_ts": BASE + 32.1, "message_id": 73, "destination_id": 123456789}

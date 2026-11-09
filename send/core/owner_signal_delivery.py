@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+from math import isclose, isfinite
 import os
 from pathlib import Path
 import time
@@ -22,6 +23,79 @@ TRUE = frozenset({"true", "1", "yes", "on"})
 MAX_TIMING_BYTES = 512 * 1024
 MAX_OPPORTUNITIES = 128
 MIN_PRE_LEAD_SECONDS = 30
+
+
+def _positive(value: Any) -> float | None:
+    if type(value) not in (int, float) or not isfinite(value) or value <= 0:
+        return None
+    return float(value)
+
+
+def project_confirmed_study(event: dict[str, Any], handoff: Any) -> dict[str, Any]:
+    """Expose the first CONFIRM model horizon only as a private simulation.
+
+    The persisted FSM value is the source, never a new calculation made by the
+    renderer. A failed calibrated execution plan cannot become a model study.
+    """
+    if (destination() is None or event.get("stage") != "CONFIRM"
+            or event.get("execution_time_available") is True
+            or (event.get("payload") or {}).get("decision_policy") != "PHYSICAL_ONLY_V3"):
+        return event
+    row = (handoff.next_state.get("per_symbol") or {}).get(event.get("symbol"), {})
+    duration = _positive(row.get("physical_confirm_model_seconds"))
+    confirmed = _positive(row.get("physical_confirm_ts"))
+    if (row.get("physical_confirm_execution_status") != "UNAVAILABLE"
+            or row.get("physical_confirm_execution") is not None
+            or row.get("physical_signal_id") != event.get("signal_id")
+            or row.get("physical_direction") != event.get("direction")
+            or duration is None or confirmed is None
+            or confirmed > event["created_ts"]):
+        return event
+    return {**event, "study_duration_minutes": duration / 60,
+            "study_confirmed_ts": confirmed, "study_duration_source": "CONFIRM_MODEL_TIME"}
+
+
+def _confirm_duration_reason(event: dict[str, Any]) -> str | None:
+    if event.get("execution_time_available") is True:
+        exact = _positive(event.get("confirm_expiry_minutes"))
+        low = _positive(event.get("confirm_expiry_min_minutes"))
+        high = _positive(event.get("confirm_expiry_max_minutes"))
+        if exact is None or low is None or high is None or not low <= exact <= high:
+            return "OWNER_CONFIRM_DURATION_REQUIRED"
+    elif (event.get("study_duration_source") != "CONFIRM_MODEL_TIME"
+          or _positive(event.get("study_duration_minutes")) is None
+          or _positive(event.get("study_confirmed_ts")) is None
+          or event["study_confirmed_ts"] > event["created_ts"]):
+        return "OWNER_CONFIRM_DURATION_REQUIRED"
+    return None
+
+
+def _open_duration_reason(event: dict[str, Any], confirm: dict[str, Any]) -> str | None:
+    if "study_duration_minutes" in event:
+        expected = _positive(confirm.get("study_duration_minutes"))
+        actual = _positive(event.get("study_duration_minutes"))
+        if (expected is None or actual is None
+                or confirm.get("execution_time_available") is True
+                or confirm.get("study_duration_source") != "CONFIRM_MODEL_TIME"
+                or event.get("study_duration_source") != "CONFIRM_MODEL_TIME"
+                or _positive(confirm.get("study_confirmed_ts")) is None
+                or confirm.get("study_confirmed_ts") != event.get("study_confirmed_ts")):
+            return "OWNER_CONFIRMED_STUDY_DURATION_REQUIRED"
+    elif ((event.get("payload") or {}).get("decision_policy") == "PHYSICAL_ONLY_V3"
+          or event.get("confirm_expiry_minutes") is not None):
+        expected = _positive(confirm.get("confirm_expiry_minutes"))
+        actual = _positive(event.get("open_now_expiry_minutes"))
+        if (expected is None or actual is None
+                or confirm.get("execution_time_available") is not True
+                or event.get("execution_time_available") is not True
+                or not event.get("execution_calibration_source")
+                or confirm.get("execution_calibration_source") != event.get("execution_calibration_source")):
+            return "OWNER_CONFIRMED_EXECUTION_DURATION_REQUIRED"
+    else:
+        return None  # Historical non-physical interfaces have their own contract.
+    if not isclose(expected, actual, rel_tol=1e-12, abs_tol=1e-12):
+        return "OWNER_CONFIRMED_DURATION_CHANGED"
+    return None
 
 
 def destination() -> int | None:
@@ -86,6 +160,9 @@ def stage_block_reason(event: dict[str, Any], *, now_ts: float) -> str | None:
         pre = stages.get("PRE")
         if pre is None:
             return "OWNER_PRE_RECEIPT_REQUIRED"
+        if (event.get("stage") == "CONFIRM"
+                and (event.get("payload") or {}).get("decision_policy") == "PHYSICAL_ONLY_V3"):
+            return _confirm_duration_reason(event)
         if event.get("stage") == "OPEN_NOW":
             confirm = stages.get("CONFIRM")
             if confirm is None:
@@ -94,6 +171,7 @@ def stage_block_reason(event: dict[str, Any], *, now_ts: float) -> str | None:
                 return "OWNER_STAGE_TIME_ORDER_INVALID"
             if now_ts - pre["api_accepted_ts"] < MIN_PRE_LEAD_SECONDS:
                 return "OWNER_PRE_LEAD_TIME_NOT_MET"
+            return _open_duration_reason(event, confirm)
         return None
     except (OSError, ValueError, TypeError, KeyError):
         return "OWNER_STAGE_TIMING_UNAVAILABLE"
@@ -150,9 +228,13 @@ def record_acceptance(event: dict[str, Any], response: dict[str, Any], *,
             "telegram_message_date": (response.get("result") or {}).get("date"),
             "execution_time_available": event.get("execution_time_available") is True,
             "open_now_expiry_minutes": event.get("open_now_expiry_minutes"),
+            "confirm_expiry_minutes": event.get("confirm_expiry_minutes"),
             "confirm_expiry_min_minutes": event.get("confirm_expiry_min_minutes"),
             "confirm_expiry_max_minutes": event.get("confirm_expiry_max_minutes"),
             "execution_calibration_source": event.get("execution_calibration_source"),
+            "study_duration_minutes": event.get("study_duration_minutes"),
+            "study_confirmed_ts": event.get("study_confirmed_ts"),
+            "study_duration_source": event.get("study_duration_source"),
         }
         # First successful stage is the lead-time anchor, not a later repeated
         # PRE on a new candle. Never fabricate missing predecessor timestamps.
@@ -172,6 +254,11 @@ def record_acceptance(event: dict[str, Any], response: dict[str, Any], *,
         "stage": stage, "scope": "OWNER_PRIVATE_API_ACCEPTANCE",
         "format": delivery_format, "signal_label": signal_label,
         "direction": event.get("direction"),
+        "confirm_expiry_minutes": receipt["confirm_expiry_minutes"],
+        "open_now_expiry_minutes": receipt["open_now_expiry_minutes"],
+        "study_duration_minutes": receipt["study_duration_minutes"],
+        "study_confirmed_ts": receipt["study_confirmed_ts"],
+        "study_duration_source": receipt["study_duration_source"],
         "api_request_seconds": receipt["api_request_seconds"],
         "generated_to_api_seconds": receipt["generated_to_api_seconds"],
         **gaps, "phone_receipt_proven": False, "broker_executed": False,

@@ -10,6 +10,7 @@ def test_persistence_failure_blocks_execution_and_distribution(monkeypatch: pyte
 
     decision = SimpleNamespace(
         kind="PRE",
+        fsm_inputs={},
         signal_id="sig-persist-boundary",
         setup=SimpleNamespace(
             symbol="EUR/USD",
@@ -19,7 +20,7 @@ def test_persistence_failure_blocks_execution_and_distribution(monkeypatch: pyte
             direction="BUY",
         ),
     )
-    evaluation = SimpleNamespace(decision=decision)
+    evaluation = SimpleNamespace(decision=decision, execution_time=None)
     persistent = SimpleNamespace(state_changed=True, next_state={"watchlist": ["EUR/USD"]})
 
     monkeypatch.setattr(signal_engine, "_load_settings", lambda: {"buffer_mode": "MEDIUM"})

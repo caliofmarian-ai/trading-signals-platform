@@ -547,6 +547,15 @@ def test_personal_delivery_preserves_tier_limits_states_and_reset(tmp_path, monk
 def test_photo_lifecycle_reuses_one_number_and_preserves_real_stage_timing(tmp_path, monkeypatch):
     root, _, legacy, router, _ = _setup(tmp_path, monkeypatch)
     _personal(monkeypatch, router)
+    from core import signal_card
+    rendered = []
+    original_render = signal_card.render_signal_card
+
+    def capture_card(event, *args, **kwargs):
+        rendered.append(dict(event))
+        return original_render(event, *args, **kwargs)
+
+    monkeypatch.setattr(signal_card, "render_signal_card", capture_card)
     clock = [1_794_259_800.0]
     monkeypatch.setattr(router.time, "time", lambda: clock[0])
     calls = []
@@ -561,6 +570,10 @@ def test_photo_lifecycle_reuses_one_number_and_preserves_real_stage_timing(tmp_p
         candidate.update(created_ts=int(clock[0]), direction="SELL")
         candidate["payload"]["decision_policy"] = "PHYSICAL_ONLY_V3"
         candidate.pop("score_total")
+        if stage in {"CONFIRM", "OPEN_NOW"}:
+            candidate.update(execution_time_available=True, confirm_expiry_minutes=4.77,
+                             confirm_expiry_min_minutes=4.0, confirm_expiry_max_minutes=6.0,
+                             execution_calibration_source="test-calibration-v1")
         summary = router.route(candidate, now_ts=int(clock[0]))
         assert summary["published_count"] == 1
         labels.append(router.owner_signal_number.lookup_lifecycle(candidate["signal_id"]))
@@ -568,7 +581,9 @@ def test_photo_lifecycle_reuses_one_number_and_preserves_real_stage_timing(tmp_p
     assert len(set(labels)) == 1 and labels[0].endswith("nr. 0")
     assert all("#0" in call["caption"] and "one-daily-trade" not in call["caption"] for call in calls)
     assert all(call["photo"].startswith(b"\x89PNG") for call in calls)
-    assert "4.77" in calls[-1]["caption"]
+    assert rendered[-1]["open_now_expiry_minutes"] == 4.77
+    assert rendered[1]["confirm_expiry_minutes"] == rendered[-1]["open_now_expiry_minutes"]
+    assert all(len(call["caption"].splitlines()) <= 2 for call in calls)
     timing = json.loads((root / "state" / "owner_signal_timing.json").read_text())
     stages = next(iter(timing["opportunities"].values()))
     assert {record["format"] for record in stages.values()} == {"PHOTO"}
@@ -591,6 +606,7 @@ def test_card_render_failure_uses_short_same_number_text_before_transport(tmp_pa
     assert summary["published_count"] == 1 and len(calls) == 1
     assert "#0" in calls[0]["text"] and "private-long-id" not in calls[0]["text"]
     assert "Imagine indisponibilă" in calls[0]["text"]
+    assert "1.11234" in calls[0]["text"] and "ÎN CALCUL" in calls[0]["text"]
 
 
 def test_photo_transport_exception_has_no_immediate_text_fallback(tmp_path, monkeypatch):

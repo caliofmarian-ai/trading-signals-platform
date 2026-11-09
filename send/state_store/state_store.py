@@ -7,6 +7,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any, Callable, Dict, Optional
 
 from core import storage
@@ -250,6 +251,40 @@ def _normalize_symbol_state(symbol: str, raw: Any) -> Dict[str, Any]:
                 "physical_closed_signal_id"):
         if key in raw:
             normalized[key] = _safe_str(raw[key], f"per_symbol[{symbol}].{key}")
+    if "physical_confirm_execution_status" in raw:
+        status = raw["physical_confirm_execution_status"]
+        if status is not None and (not isinstance(status, str) or status not in {"FROZEN", "UNAVAILABLE", "BLOCKED"}):
+            raise StateValidationError(f"per_symbol[{symbol}].physical_confirm_execution_status is invalid")
+        normalized["physical_confirm_execution_status"] = status
+    plan = raw.get("physical_confirm_execution")
+    if plan is not None:
+        prefix = f"per_symbol[{symbol}].physical_confirm_execution"
+        if not isinstance(plan, dict) or raw.get("physical_confirm_execution_status") != "FROZEN":
+            raise StateValidationError(f"{prefix} requires a frozen plan")
+        required = {"signal_id", "direction", "confirmed_ts", "duration_minutes", "confirm_min_minutes",
+                    "confirm_max_minutes", "calibration_source"}
+        if set(plan) != required:
+            raise StateValidationError(f"{prefix} has invalid fields")
+        validated = dict(plan)
+        for key in ("signal_id", "direction", "calibration_source"):
+            validated[key] = _safe_str(plan[key], f"{prefix}.{key}")
+            if validated[key] is None:
+                raise StateValidationError(f"{prefix}.{key} is required")
+        for key in ("confirmed_ts", "duration_minutes", "confirm_min_minutes", "confirm_max_minutes"):
+            if isinstance(plan[key], bool) or not isinstance(plan[key], (int, float)):
+                raise StateValidationError(f"{prefix}.{key} must be a finite number")
+            validated[key] = _safe_float(plan[key], f"{prefix}.{key}")
+            if validated[key] is None or not isfinite(validated[key]) or validated[key] <= 0:
+                raise StateValidationError(f"{prefix}.{key} must be positive")
+        if (validated["signal_id"] != raw.get("physical_signal_id")
+            or validated["direction"] not in {"BUY", "SELL"}
+            or validated["direction"] != raw.get("physical_direction")
+            or validated["confirmed_ts"] != raw.get("physical_confirm_ts")
+            or not validated["confirm_min_minutes"] <= validated["duration_minutes"] <= validated["confirm_max_minutes"]):
+            raise StateValidationError(f"{prefix} violates the confirmed opportunity")
+        normalized["physical_confirm_execution"] = validated
+    elif raw.get("physical_confirm_execution_status") == "FROZEN":
+        raise StateValidationError(f"per_symbol[{symbol}] frozen execution plan is missing")
     return normalized
 
 

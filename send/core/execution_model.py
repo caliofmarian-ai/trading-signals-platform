@@ -16,7 +16,7 @@ from .decision_object import DecisionObject
 from .fsm_decision_adapter import FSMInterpretation
 
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 
 
 class ExecutionModelError(ValueError):
@@ -66,6 +66,9 @@ class ExecutionTimeResult:
     calibration_source: Optional[str]
     signal_handoff_ready: bool
     explanation: str
+    # Exact duration prepared at CONFIRM; the lifecycle boundary freezes it
+    # before publication and revalidates that same value at OPEN_NOW.
+    confirm_expiry_minutes: Optional[float] = None
 
 
 def _is_contract(value: object, name: str, fields: tuple[str, ...]) -> bool:
@@ -128,12 +131,10 @@ def derive_execution_time(
     if confirm_min > confirm_max:
         raise ExecutionModelError("calibration produces an empty CONFIRM expiry interval")
 
-    open_now = None
-    if fsm.outcome == "OPEN_NOW":
-        candidate = model_expiry * (1 - calibration.pressure_bias)
-        if not confirm_min <= candidate <= confirm_max:
-            raise ExecutionModelError("OPEN_NOW expiry violates the canonical consistency rule")
-        open_now = candidate
+    candidate = model_expiry * (1 - calibration.pressure_bias)
+    if not confirm_min <= candidate <= confirm_max:
+        raise ExecutionModelError("Exact expiry violates the canonical consistency rule")
+    open_now = candidate if fsm.outcome == "OPEN_NOW" else None
 
     return ExecutionTimeResult(
         schema_version=SCHEMA_VERSION,
@@ -149,6 +150,7 @@ def derive_execution_time(
         explanation=(
             "A calibrated exact OPEN_NOW expiry was derived inside the canonical CONFIRM interval."
             if open_now is not None
-            else "A calibrated CONFIRM expiry interval was derived from Model Time."
+            else "An exact calibrated duration was prepared at CONFIRM inside its governed interval."
         ),
+        confirm_expiry_minutes=candidate,
     )

@@ -140,6 +140,8 @@ def test_pre_and_confirm_do_not_expose_generic_exact_expiry() -> None:
     assert confirm_event.execution_time_available is True
     assert confirm_event.confirm_expiry_min_minutes == pytest.approx(4.0)
     assert confirm_event.confirm_expiry_max_minutes == pytest.approx(6.0)
+    assert confirm_event.confirm_expiry_minutes == pytest.approx(4.5)
+    assert confirm_event.payload["execution_time"]["confirm_expiry_minutes"] == pytest.approx(4.5)
     assert confirm_event.open_now_expiry_minutes is None
     assert confirm_event.expiry_minutes is None
 

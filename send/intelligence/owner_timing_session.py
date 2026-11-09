@@ -214,17 +214,23 @@ def report_if_due(*, now_ts: float) -> dict[str, Any] | None:
         try:
             from intelligence import physical_expiry_calibration
             observed = physical_expiry_calibration.summary(now_ts=now_ts)
-            baseline = observed.get("baseline_model_observations", {})
+            published = observed.get("published_study_results")
             report["physical_study_progress"] = {key: observed.get(key, 0) for key in
                 ("unique_entry_experiments", "finalized_entry_experiments",
                  "study_open_now_api_accepted", "study_results_api_accepted")}
             text += (f"\nOPEN_NOW · STUDIU: {observed.get('study_open_now_api_accepted', 0)}; "
-                     f"rezultate: {observed.get('study_results_api_accepted', 0)}"
-                     f"\nModel: WIN {baseline.get('wins', 0)}, LOSS {baseline.get('losses', 0)}, "
-                     f"UNKNOWN {baseline.get('unknown', 0)}"
-                     f"\nMarjă completă la expirare: DA {baseline.get('buffer_met', 0)}, "
-                     f"NU {baseline.get('buffer_not_met', 0)}, indisponibilă {baseline.get('buffer_unavailable', 0)}"
-                     f"\nWIN fragil (în buffer): {baseline.get('win_buffer_not_met', 0)}")
+                     f"rezultate: {observed.get('study_results_api_accepted', 0)}")
+            # These figures describe results actually delivered to the Owner,
+            # at the duration confirmed beforehand. Independent OPEN-model
+            # calibration observations must not replace missing study results.
+            if isinstance(published, dict):
+                text += (f"\nRezultate studiu: WIN {published.get('wins', 0)}, LOSS {published.get('losses', 0)}, "
+                         f"UNKNOWN {published.get('unknown', 0)}"
+                         f"\nMarjă completă la expirare: DA {published.get('buffer_met', 0)}, "
+                         f"NU {published.get('buffer_not_met', 0)}, indisponibilă {published.get('buffer_unavailable', 0)}"
+                         f"\nWIN fragil (în buffer): {published.get('win_buffer_not_met', 0)}")
+            else:
+                text += "\nRezultate studiu: statistici indisponibile."
         except Exception:
             text += "\nStudy progress is temporarily unavailable."
     result = telegram_publisher.send_message(chat_id=destination(), text=text)

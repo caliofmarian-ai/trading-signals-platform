@@ -15,7 +15,7 @@ from intelligence import buffer_expiry_evidence
 from intelligence import physical_expiry_calibration as study
 from core.signal_presentation import direction_label
 
-STATUSES = {"RESERVED", "API_ACCEPTED", "FAILED", "UNKNOWN", "SKIPPED_STALE", "SKIPPED_STAGE_GUARD", "SKIPPED_DESTINATION_CHANGED"}
+STATUSES = {"RESERVED", "API_ACCEPTED", "FAILED", "UNKNOWN", "SKIPPED_STALE", "SKIPPED_STAGE_GUARD", "SKIPPED_DESTINATION_CHANGED", "SKIPPED_DURATION_INFEASIBLE"}
 _DELIVERY_IN_FLIGHT = threading.Lock()
 
 
@@ -51,6 +51,8 @@ def validate_delivery(row):
             if (type(receipt.get("message_id")) is not int or receipt["message_id"] <= 0
                 or study._number(receipt.get("api_accepted_ts")) < receipt["attempted_ts"]):
                 raise ValueError("INVALID_STUDY_API_ACCEPTANCE")
+            if study.displayed_study_observation(row)["outcome"] == "INFEASIBLE":
+                raise ValueError("INFEASIBLE_CONFIRMED_STUDY_PUBLICATION")
         if phase == "result" and receipt["status"] == "API_ACCEPTED":
             if (delivery.get("entry") or {}).get("status") != "API_ACCEPTED":
                 raise ValueError("STUDY_RESULT_WITHOUT_ENTRY_RECEIPT")
@@ -63,11 +65,16 @@ def _stamp(value):
 def _entry_event(row):
     """Project the frozen study observation without creating an execution signal."""
     entry = row["entry"]
-    return {"stage": "OPEN_NOW", "symbol": "EUR/USD", "direction": row["direction"],
+    observation = study.displayed_study_observation(row)
+    event = {"stage": "OPEN_NOW", "symbol": "EUR/USD", "direction": row["direction"],
             "entry_price": entry["price"], "created_ts": row["created_ts"],
             "entry_ts": entry["observed_ts"],
-            "expiry_ts": entry["observed_ts"] + row["model_seconds"],
-            "study_duration_minutes": row["model_seconds"] / 60}
+            "expiry_ts": entry["observed_ts"] + observation["horizon_seconds"],
+            "study_duration_minutes": observation["horizon_seconds"] / 60}
+    if "study_observation" in row:
+        event.update(study_confirmed_ts=observation["confirmed_ts"],
+                     study_duration_source=observation["duration_source"])
+    return event
 
 
 def render_entry(row, signal_label):
@@ -83,7 +90,9 @@ def _render_entry_card(row, signal_label):
 
 
 def render_result(identity, row, signal_label):
-    baseline = row["candidates"][0]  # predeclared Model Time, never the best eventual candidate
+    from core.signal_card import _duration
+
+    baseline = study.displayed_study_observation(row)
     expiry_quote = baseline["quote"]
     measured = buffer_expiry_evidence.measure(row["direction"], row["entry"],
                                               expiry_quote, row["buffer_snapshot"])
@@ -95,7 +104,7 @@ def render_result(identity, row, signal_label):
                 if expiry_quote else "cotație lipsă")
     expiry_ts = row["entry"]["observed_ts"] + baseline["horizon_seconds"]
     return ("🧪 REZULTAT STUDIU V3\n"
-            f"EUR/USD · {direction_label(row['direction'])} · {row['model_seconds']/60:.15g} min\n"
+            f"EUR/USD · {direction_label(row['direction'])} · {_duration(baseline['horizon_seconds']/60)}\n"
             f"Intrare observată: {row['entry']['price']:.10g} la {_stamp(row['entry']['observed_ts'])}\n"
             f"Expirare simulată: {_stamp(expiry_ts)}\n"
             f"Observație la expirare: {observed}\n"
@@ -110,7 +119,7 @@ def _render_chart(row, signal_label):
     from intelligence.physical_study_chart import render_market_chart
 
     entry = row["entry"]
-    baseline = row["candidates"][0]
+    baseline = study.displayed_study_observation(row)
     expiry_ts = entry["observed_ts"] + baseline["horizon_seconds"]
     quote = baseline["quote"] or {}
     return render_market_chart(direction=row["direction"], entry_ts=entry["observed_ts"],
@@ -135,14 +144,19 @@ def _reserve(path, phase, now, destination):
             if phase == "entry":
                 if now - row["created_ts"] > study.quotes.MAX_ENTRY_DELAY_SECONDS:
                     status = "SKIPPED_STALE"
+                elif study.displayed_study_observation(row)["outcome"] == "INFEASIBLE":
+                    status = "SKIPPED_DURATION_INFEASIBLE"
                 else:
                     context = row["policies"]["PHYSICAL_ONLY_V3"]
-                    reason = owner.stage_block_reason({"stage": "OPEN_NOW",
-                        "signal_id": context["opportunity_signal_id"]}, now_ts=row["created_ts"])
+                    event = {"stage": "OPEN_NOW", "signal_id": context["opportunity_signal_id"]}
+                    if "study_observation" in row:
+                        event.update({key: value for key, value in _entry_event(row).items()
+                                      if key.startswith("study_")})
+                    reason = owner.stage_block_reason(event, now_ts=row["created_ts"])
                     if reason is not None:
                         status = "SKIPPED_STAGE_GUARD"
             elif ((delivery.get("entry") or {}).get("status") != "API_ACCEPTED"
-                  or row["candidates"][0]["outcome"] in {"PENDING", "INFEASIBLE"}):
+                  or study.displayed_study_observation(row)["outcome"] in {"PENDING", "INFEASIBLE"}):
                 continue
             elif delivery["entry"].get("destination_id", destination) != destination:
                 status = "SKIPPED_DESTINATION_CHANGED"
@@ -179,6 +193,8 @@ def dispatch(*, now_ts, active_provider):
                 except Exception as exc:
                     print("TSP_PHYSICAL_STUDY_CARD_UNAVAILABLE " + json.dumps({
                         "study_id": identity, "error_class": type(exc).__name__}), flush=True)
+                    from core.signal_card import render_signal_text
+                    text = render_signal_text(_entry_event(row), signal_label, study=True)
                     text += "\nImagine indisponibilă pentru această observație."
             else:
                 signal_label = (row["study_delivery"]["entry"].get("signal_label")
@@ -223,6 +239,11 @@ def dispatch(*, now_ts, active_provider):
             "phase": phase, "status": receipt["status"], "study_id": identity,
             "format": receipt["format"], "signal_label": signal_label,
             "observed_at": now_ts, "truth_domain": "HYPOTHETICAL_RESEARCH",
+            "study_duration_seconds": study.displayed_study_observation(row)["horizon_seconds"],
+            "study_duration_source": study.displayed_study_observation(row).get("duration_source", "LEGACY_OPEN_MODEL_TIME"),
+            "study_confirmed_ts": study.displayed_study_observation(row).get("confirmed_ts"),
+            "entry_observed_ts": row["entry"]["observed_ts"],
+            "expiry_ts": row["entry"]["observed_ts"] + study.displayed_study_observation(row)["horizon_seconds"],
             "execution_calibration_proven": False, "broker_executed": False,
         }, sort_keys=True), flush=True)
 
