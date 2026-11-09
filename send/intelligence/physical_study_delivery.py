@@ -39,8 +39,11 @@ def validate_delivery(row):
             or type(receipt.get("attempted_ts")) not in (int, float)
             or receipt["attempted_ts"] < row["created_ts"]):
             raise ValueError("INVALID_STUDY_RECEIPT")
-        if "format" in receipt and receipt["format"] not in ({"TEXT", "PHOTO"} if phase == "result" else {"TEXT"}):
+        if "format" in receipt and receipt["format"] not in {"TEXT", "PHOTO"}:
             raise ValueError("INVALID_STUDY_RECEIPT_FORMAT")
+        if "signal_label" in receipt and (not isinstance(receipt["signal_label"], str)
+                or not receipt["signal_label"].strip() or len(receipt["signal_label"]) > 128):
+            raise ValueError("INVALID_STUDY_RECEIPT_SIGNAL_LABEL")
         if "destination_id" in receipt and (type(receipt["destination_id"]) is not int or receipt["destination_id"] <= 0):
             raise ValueError("INVALID_STUDY_RECEIPT_DESTINATION")
         study._number(receipt["attempted_ts"])
@@ -57,21 +60,26 @@ def _stamp(value):
     return datetime.fromtimestamp(value, timezone.utc).strftime("%H:%M:%S UTC")
 
 
-def render_entry(row, signal_label):
+def _entry_event(row):
+    """Project the frozen study observation without creating an execution signal."""
     entry = row["entry"]
-    side = "deasupra" if row["direction"] == "BUY" else "dedesubtul"
-    return ("🧪 OPEN_NOW · STUDIU V3\n"
-            f"EUR/USD · {direction_label(row['direction'])}\n"
-            f"Preț observat: {entry['price']:.15g}\n"
-            f"Început observare: {_stamp(entry['observed_ts'])}\n"
-            f"Expirare simulată: {row['model_seconds']/60:.15g} min · "
-            f"{_stamp(entry['observed_ts'] + row['model_seconds'])}\n"
-            f"Lățime buffer: {row['buffer_snapshot']['buffer_distance']:.15g}\n"
-            f"Buffer = banda imediat {side} prețului de intrare.\n"
-            "Închiderea în interior: câștig fragil; bufferul nu garantează rezultatul.\n"
-            "Simulare pe cotații reale · calibrare în colectare\n"
-            "Durata este de studiu; expirarea de execuție nu este validată.\n"
-            f"{signal_label} · Dublin")
+    return {"stage": "OPEN_NOW", "symbol": "EUR/USD", "direction": row["direction"],
+            "entry_price": entry["price"], "created_ts": row["created_ts"],
+            "entry_ts": entry["observed_ts"],
+            "expiry_ts": entry["observed_ts"] + row["model_seconds"],
+            "study_duration_minutes": row["model_seconds"] / 60}
+
+
+def render_entry(row, signal_label):
+    from core.signal_card import render_signal_caption
+
+    return render_signal_caption(_entry_event(row), signal_label, study=True)
+
+
+def _render_entry_card(row, signal_label):
+    from core.signal_card import render_signal_card
+
+    return render_signal_card(_entry_event(row), signal_label, study=True)
 
 
 def render_result(identity, row, signal_label):
@@ -95,7 +103,7 @@ def render_result(identity, row, signal_label):
             f"Poziție la expirare: {BUFFER_POSITION_LABELS[position]}\n"
             f"Marjă completă la expirare: {label}\n"
             "Rezultat al simulării pe cotații observate"
-            + (f"\n{signal_label} · Dublin" if signal_label else f"\nID studiu: {identity[:12]}"))
+            + (f"\n{signal_label} · Dublin" if signal_label else "\nNumăr indisponibil"))
 
 
 def _render_chart(row, signal_label):
@@ -160,13 +168,22 @@ def dispatch(*, now_ts, active_provider):
         identity, row = reserved
         signal_id = row["policies"]["PHYSICAL_ONLY_V3"]["opportunity_signal_id"]
         receipt = {"status": "UNKNOWN", "attempted_ts": now_ts, "format": "TEXT", "destination_id": destination}
+        signal_label = None
         try:
             photo = None
             if phase == "entry":
-                signal_label = owner_signal_number.reserve(signal_id, now_ts, study=True)
+                signal_label = owner_signal_number.reserve_lifecycle(signal_id, now_ts)
                 text = render_entry(row, signal_label)
+                try:
+                    photo = _render_entry_card(row, signal_label)
+                except Exception as exc:
+                    print("TSP_PHYSICAL_STUDY_CARD_UNAVAILABLE " + json.dumps({
+                        "study_id": identity, "error_class": type(exc).__name__}), flush=True)
+                    text += "\nImagine indisponibilă pentru această observație."
             else:
-                signal_label = owner_signal_number.lookup(signal_id, study=True)
+                signal_label = (row["study_delivery"]["entry"].get("signal_label")
+                                or owner_signal_number.lookup(signal_id, study=True)
+                                or owner_signal_number.lookup_lifecycle(signal_id))
                 text = render_result(identity, row, signal_label)
                 try:
                     photo = _render_chart(row, signal_label)
@@ -174,6 +191,8 @@ def dispatch(*, now_ts, active_provider):
                     print("TSP_PHYSICAL_STUDY_CHART_UNAVAILABLE " + json.dumps({
                         "study_id": identity, "error_class": type(exc).__name__}), flush=True)
                     text += "\nGrafic indisponibil pentru această observație."
+            if signal_label is not None:
+                receipt["signal_label"] = signal_label
             entry_receipt = row["study_delivery"]["entry"] if phase == "result" else {}
             reply_id = entry_receipt["message_id"] if entry_receipt.get("destination_id") == destination else None
             if photo is not None:
@@ -202,7 +221,7 @@ def dispatch(*, now_ts, active_provider):
             study._save(path, state)
         print("TSP_PHYSICAL_STUDY_DELIVERY " + json.dumps({
             "phase": phase, "status": receipt["status"], "study_id": identity,
-            "format": receipt["format"],
+            "format": receipt["format"], "signal_label": signal_label,
             "observed_at": now_ts, "truth_domain": "HYPOTHETICAL_RESEARCH",
             "execution_calibration_proven": False, "broker_executed": False,
         }, sort_keys=True), flush=True)
