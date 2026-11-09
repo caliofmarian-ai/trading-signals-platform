@@ -129,3 +129,25 @@ def test_invalid_transport_evidence_never_produces_a_latency_claim(monkeypatch, 
     state["api_request_seconds"] = [invalid]
     with pytest.raises(ValueError, match="INVALID_TIMING_SAMPLES"):
         module._summary(state, 1001)
+
+
+def test_progress_names_complete_margin_and_fragile_wins_separately(canonical_runtime_root, monkeypatch):
+    module = _prepare(monkeypatch)
+    from core import physical_params, telegram_publisher
+    from intelligence import physical_expiry_calibration
+
+    sent = []
+    monkeypatch.setattr(physical_params, "physical_runtime_enabled", lambda: True)
+    monkeypatch.setattr(telegram_publisher, "send_message", lambda **kw: sent.append(kw) or {"ok": True})
+    monkeypatch.setattr(physical_expiry_calibration, "summary", lambda **kw: {
+        "baseline_model_observations": {"wins": 3, "losses": 1, "unknown": 2,
+            "buffer_met": 1, "buffer_not_met": 3, "buffer_unavailable": 2,
+            "win_buffer_not_met": 2},
+    })
+    _observe(module, 1000)
+    module.report_if_due(now_ts=1001)
+    text = sent[0]["text"]
+    assert "Marjă completă la expirare: DA 1, NU 3, indisponibilă 2" in text
+    assert "WIN fragil (în buffer): 2" in text
+    assert "Buffer: atins" not in text
+

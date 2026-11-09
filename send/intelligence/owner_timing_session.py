@@ -222,7 +222,9 @@ def report_if_due(*, now_ts: float) -> dict[str, Any] | None:
                      f"rezultate: {observed.get('study_results_api_accepted', 0)}"
                      f"\nModel: WIN {baseline.get('wins', 0)}, LOSS {baseline.get('losses', 0)}, "
                      f"UNKNOWN {baseline.get('unknown', 0)}"
-                     f"\nBuffer: atins {baseline.get('buffer_met', 0)}, neatins {baseline.get('buffer_not_met', 0)}")
+                     f"\nMarjă completă la expirare: DA {baseline.get('buffer_met', 0)}, "
+                     f"NU {baseline.get('buffer_not_met', 0)}, indisponibilă {baseline.get('buffer_unavailable', 0)}"
+                     f"\nWIN fragil (în buffer): {baseline.get('win_buffer_not_met', 0)}")
         except Exception:
             text += "\nStudy progress is temporarily unavailable."
     result = telegram_publisher.send_message(chat_id=destination(), text=text)
