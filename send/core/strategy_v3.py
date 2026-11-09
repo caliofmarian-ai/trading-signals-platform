@@ -124,6 +124,11 @@ def decide(candles_m1, candles_m5, params, buffer_mode="MEDIUM", want_open_now=F
     decision = assemble_decision(market, corridor, timing, eligibility,
         timeframe=supplied.get("decision_timeframe", "M1"), cycle_id=resolved_cycle_id,
         source="binary_strategy_v3", opportunity_signal_id=opportunity_id, physical_stage=stage)
+    # A live observation clock is required for the new prospective policy.
+    # Historical replay without that clock retains its original timing contract.
+    if observation_ts is not None:
+        from .confirmed_study_duration import annotate_decision
+        decision = annotate_decision(decision, params)
     fsm = interpret_decision(decision, runtime_blockers=runtime_blockers)
     execution = derive_execution_time(decision, fsm, execution_calibration)
     return PhysicalV3Evaluation(STRATEGY_VERSION, CANONICAL_SPEC, decision.setup.cycle_id,

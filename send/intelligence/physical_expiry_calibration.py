@@ -6,6 +6,7 @@ unknown observations and independent chronological holdouts remain separate.
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 import hashlib
 import json
 import math
@@ -14,12 +15,14 @@ from pathlib import Path
 from statistics import NormalDist
 
 from core import storage
+from core import confirmed_study_duration as second_duration
 from intelligence import shadow_model_time_research as quotes
 from intelligence import buffer_expiry_evidence as buffer_evidence
 from core.market_history_policy import HISTORY_POLICY
 
-PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V3"
-PREVIOUS_PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V2"
+PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V4"
+PREVIOUS_PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V3"
+LEGACY_PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V2"
 BIASES = (0.0, 0.05, 0.10, 0.15, 0.20, 0.25)
 MAX_RECORDS = 512
 MAX_BYTES = 4 * 1024 * 1024
@@ -99,13 +102,13 @@ def _read(path):
 
 
 def _save(path, state):
-    if state.get("protocol") == PREVIOUS_PROTOCOL and path.exists():
+    if state.get("protocol") in {PREVIOUS_PROTOCOL, LEGACY_PROTOCOL} and path.exists():
         original = path.read_bytes()
         backup_dir = path.parent / "protocol_backups"
         if backup_dir.is_symlink():
             raise ValueError("INVALID_PROTOCOL_BACKUP_PATH")
         backup_dir.mkdir(parents=True, exist_ok=True)
-        backup = backup_dir / ("physical_v2_" + hashlib.sha256(original).hexdigest() + ".json")
+        backup = backup_dir / ("physical_pre_seconds_" + hashlib.sha256(original).hexdigest() + ".json")
         if not backup.exists():
             with backup.open("xb") as handle:
                 handle.write(original)
@@ -122,7 +125,7 @@ def _save(path, state):
 
 
 def validate(state):
-    if (not isinstance(state, dict) or state.get("protocol") not in {PROTOCOL, PREVIOUS_PROTOCOL}
+    if (not isinstance(state, dict) or state.get("protocol") not in {PROTOCOL, PREVIOUS_PROTOCOL, LEGACY_PROTOCOL}
         or state.get("bias_grid") != list(BIASES) or not isinstance(state.get("records"), dict)
         or len(state["records"]) > MAX_RECORDS or type(state.get("capacity_rejections")) is not int
         or state["capacity_rejections"] < 0):
@@ -241,8 +244,11 @@ def validate(state):
             horizon = _number(observation.get("horizon_seconds"))
             if (observation.get("duration_source") != STUDY_DURATION_SOURCE
                 or observation.get("confirmed_ts") != context["confirm_ts"]
-                or horizon != context["confirm_model_seconds"]
                 or horizon > scope["model_limits_minutes"]["max"] * 60):
+                raise ValueError("CHANGED_CONFIRMED_STUDY_HORIZON")
+            if any(key in observation for key in ("duration_policy", "duration_seconds", "duration_plan")):
+                second_duration.validate_observation(row, scope)
+            elif horizon != context["confirm_model_seconds"]:
                 raise ValueError("CHANGED_CONFIRMED_STUDY_HORIZON")
             outcome, sample = observation.get("outcome"), observation.get("quote")
             if outcome not in {"PENDING", "INFEASIBLE", "UNKNOWN", "WIN", "LOSS", "DRAW"}:
@@ -339,18 +345,31 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
                     for offset in POST_MODEL_OFFSETS]
             if (item.get("publish_study") is True
                 and item.get("confirm_execution_status") == "UNAVAILABLE"):
-                row["study_delivery"] = {"entry": None, "result": None}
-                # The visible duration belongs to the preceding CONFIRM. Keep
-                # the OPEN-based calibration grid unchanged and measure this
-                # separately declared observation at its own exact horizon.
-                confirmed_seconds = _number(item["confirm_model_seconds"])
-                row["study_observation"] = {
-                    "duration_source": STUDY_DURATION_SOURCE,
-                    "confirmed_ts": item["confirm_ts"],
-                    "horizon_seconds": confirmed_seconds,
-                    "outcome": "PENDING" if _confirmed_study_feasible(confirmed_seconds, row["adjusted_seconds"]) else "INFEASIBLE",
-                    "reason": None, "quote": None,
-                }
+                # Only chains marked at PRE use the new seconds plan. Never
+                # manufacture a plan at OPEN or fall back after a missing plan.
+                duration_policy = item.get("study_duration_policy")
+                plan = item.get("confirmed_study_plan")
+                if duration_policy is not None and duration_policy != second_duration.POLICY:
+                    raise ValueError("UNKNOWN_STUDY_DURATION_POLICY")
+                if duration_policy is None and plan is not None:
+                    raise ValueError("UNMARKED_CONFIRMED_SECONDS_PLAN")
+                if duration_policy is None or plan is not None:
+                    if plan is not None:
+                        second_duration.validate_plan(plan)
+                    confirmed_seconds = (plan["duration_seconds"] if plan is not None
+                                         else _number(item["confirm_model_seconds"]))
+                    row["study_delivery"] = {"entry": None, "result": None}
+                    row["study_observation"] = {
+                        "duration_source": STUDY_DURATION_SOURCE,
+                        "confirmed_ts": item["confirm_ts"],
+                        "horizon_seconds": confirmed_seconds,
+                        "outcome": "PENDING" if _confirmed_study_feasible(confirmed_seconds, row["adjusted_seconds"]) else "INFEASIBLE",
+                        "reason": None, "quote": None,
+                    }
+                    if plan is not None:
+                        row["study_observation"].update(duration_policy=second_duration.POLICY,
+                            duration_seconds=confirmed_seconds, duration_plan=deepcopy(plan))
+                        second_duration.validate_observation(row, scope)
             state["records"][identity] = row
         _save(path, state)
 
@@ -491,7 +510,9 @@ def analyze(state, *, now_ts):
               "production_parameters_changed": False, "broker_executed": False,
               "actual_telegram_publications": 0, "decision_policy": "PHYSICAL_ONLY_V3",
               "history_policy": HISTORY_POLICY,
-              "published_study_results": _counts([], 0)}
+              "published_study_results": _counts([], 0),
+              "published_study_results_scope": "ALL_HISTORICAL_DURATION_POLICIES",
+              "published_study_results_by_duration_policy": {}}
     if state is None:
         from intelligence.same_symbol_sequences import summarize
         report["same_symbol_10min_sequences"] = summarize([])
@@ -523,6 +544,13 @@ def analyze(state, *, now_ts):
         {**r, "candidates": [displayed_study_observation(r)]} for r in records
         if ((r.get("study_delivery") or {}).get("result") or {}).get("status") == "API_ACCEPTED"
     ], 0)
+    delivered = [r for r in records
+                 if ((r.get("study_delivery") or {}).get("result") or {}).get("status") == "API_ACCEPTED"]
+    report["published_study_results_by_duration_policy"] = {
+        policy: _counts([{**r, "candidates": [displayed_study_observation(r)]}
+                         for r in delivered if second_duration.observation_policy(r) == policy], 0)
+        for policy in sorted({second_duration.observation_policy(r) for r in delivered})
+    }
     report["study_delivery_statuses"] = dict(Counter(
         f"{phase}:{receipt['status']}" for r in records
         for phase, receipt in (r.get("study_delivery") or {}).items() if receipt))
@@ -673,6 +701,8 @@ def observe_accepted_chain(decision, handoff, params, *, now_ts, provider, buffe
         "open_decision_id": decision.decision_id, "open_decision_audit_id": decision.decision_audit_id,
         "decision_snapshot": frozen,
         "confirm_execution_status": row.get("physical_confirm_execution_status"),
+        "study_duration_policy": row.get(second_duration.POLICY_FIELD),
+        "confirmed_study_plan": deepcopy(row.get(second_duration.PLAN_FIELD)),
         "publish_study": (publish_study
             and row.get("physical_confirm_execution_status") == "UNAVAILABLE"
             and row.get("physical_confirm_execution") is None),

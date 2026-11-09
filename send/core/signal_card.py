@@ -56,21 +56,29 @@ def _number(value):
     return format(value, ".15g")
 
 
-def _duration(minutes):
-    """Show the supplied duration without confusing decimal minutes with seconds.
+def _duration(minutes, *, seconds=None):
+    """Format primary integer seconds, or faithfully convert a legacy duration.
 
-    Decimal conversion suppresses binary-float arithmetic tails while retaining
-    the same 15 significant digits used for source values elsewhere on the card.
-    This is display formatting, not an expiry rounding or strategy decision.
+    Never round an expiry here. Only binary representation drift within four
+    ULPs (capped at one nanosecond) is normalized at a whole-second boundary.
     """
     if not _positive(minutes):
         raise ValueError("INVALID_SIGNAL_CARD_DURATION")
-    total_seconds = Decimal(_number(minutes)) * 60
-    whole_minutes, seconds = divmod(total_seconds, 60)
-    seconds_text = format(seconds, "f")
+    if seconds is not None:
+        if type(seconds) is not int or seconds <= 0 or minutes != seconds / 60:
+            raise ValueError("INCONSISTENT_SIGNAL_CARD_PRIMARY_SECONDS")
+        total_seconds = Decimal(seconds)
+    else:
+        total_seconds = Decimal(str(minutes)) * 60
+        nearest = total_seconds.to_integral_value()
+        tolerance = min(Decimal(str(4 * math.ulp(float(total_seconds)))), Decimal("0.000000001"))
+        if nearest > 0 and abs(total_seconds - nearest) <= tolerance:
+            total_seconds = nearest
+    whole_minutes, remainder = divmod(total_seconds, 60)
+    seconds_text = format(remainder, "f")
     if "." in seconds_text:
         seconds_text = seconds_text.rstrip("0").rstrip(".")
-    if seconds < 10:
+    if remainder < 10:
         seconds_text = "0" + seconds_text
     return f"{int(whole_minutes)} MIN {seconds_text} S"
 
@@ -109,12 +117,13 @@ def build_card_fields(event, signal_label, *, study=False, shadow=False):
         if stage in {"CONFIRM", "OPEN_NOW"} and not _positive(minutes):
             raise ValueError("INVALID_SIGNAL_CARD_STUDY_DURATION")
         if stage in {"CONFIRM", "OPEN_NOW"}:
-            duration = _duration(minutes)
+            duration = _duration(minutes, seconds=event.get("study_duration_seconds"))
         if stage == "OPEN_NOW":
             entry_ts, expiry_ts = event.get("entry_ts"), event.get("expiry_ts")
             _instant(entry_ts)
             _instant(expiry_ts)
-            if expiry_ts <= entry_ts or not math.isclose(expiry_ts - entry_ts, minutes * 60, rel_tol=1e-9, abs_tol=1e-6):
+            expected_seconds = event.get("study_duration_seconds", minutes * 60)
+            if expiry_ts <= entry_ts or not math.isclose(expiry_ts - entry_ts, expected_seconds, rel_tol=1e-9, abs_tol=1e-6):
                 raise ValueError("INCONSISTENT_SIGNAL_CARD_STUDY_EXPIRY")
     elif stage == "OPEN_NOW":
         minutes = event.get("open_now_expiry_minutes")

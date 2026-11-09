@@ -458,6 +458,9 @@ def advance_persistent_fsm(
         elif accepted_stage == "CONFIRM" and row.get("physical_confirm_ts") is None:
             row["physical_confirm_ts"] = now_ts
             row["physical_confirm_model_seconds"] = decision.time.model_expiry * 60
+        from .confirmed_study_duration import record_stage
+        record_stage(row, (state.get("per_symbol") or {}).get(decision.setup.symbol, {}),
+                     decision, now_ts=now_ts)
         state_changed = next_state != state
     return _result(
         decision,
