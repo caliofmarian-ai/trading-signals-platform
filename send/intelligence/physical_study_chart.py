@@ -9,11 +9,14 @@ import unicodedata
 
 from PIL import Image, ImageDraw, ImageFont
 
+from core.buffer_zone import BUFFER_POSITION_LABELS, classify_buffer_position
+
 
 _UP = "#48d3a2"
 _DOWN = "#ff8591"
 _ENTRY = "#8bbcff"
 _BUFFER = "#f4c871"
+_BUFFER_BAND = "#3d3425"
 _TEXT = "#eff5fc"
 _MUTED = "#a3b4ca"
 _STUDY_TITLE = "OPEN NOW  /  STUDIU V3"
@@ -56,8 +59,10 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
                        expiry_observation_label=_EXPIRY_OBSERVATION_LABEL):
     """Return a PNG from observed M1 bars and optional observed quote evidence.
 
-    Only whole M1 intervals inside the study are eligible. A genuine buffer
-    tick carries its recorded time, whereas a candle proves an interval only.
+    The buffer is the favorable price band anchored at entry, not the region
+    beyond its outer edge. Only whole M1 intervals inside the study are eligible.
+    An observed favorable-edge tick carries its recorded time, whereas a candle
+    proves an interval only. Neither proves the absence of later re-entry.
     """
     if direction not in {"BUY", "SELL"} or not all(map(_positive, (entry_ts, entry_price, expiry_ts))) or expiry_ts <= entry_ts:
         raise ValueError("Invalid study chart entry or expiry")
@@ -69,16 +74,18 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
         context.prec = 1100
         threshold = Decimal(str(entry_price)) + sign * Decimal(str(buffer_distance)) if _positive(buffer_distance) else None
 
-    def in_buffer(price):
+    def at_or_beyond_buffer_edge(price):
         return threshold is not None and (Decimal(str(price)) >= threshold if sign == 1 else Decimal(str(price)) <= threshold)
+
+    expiry_position = classify_buffer_position(direction, entry_price, buffer_distance, expiry_price)
 
     hit_ts = hit_price = None
     if first_buffer_hit is not None:
         stamp, price = first_buffer_hit.get("observed_ts"), first_buffer_hit.get("price")
-        if _positive(stamp) and entry_ts <= stamp <= expiry_ts and _positive(price) and in_buffer(price):
+        if _positive(stamp) and entry_ts <= stamp <= expiry_ts and _positive(price) and at_or_beyond_buffer_edge(price):
             hit_ts, hit_price = stamp, price
     hit_bar = next((stamp for stamp, (_, high, low, _) in bars
-                    if stamp > entry_ts and in_buffer(high if sign == 1 else low)), None)
+                    if at_or_beyond_buffer_edge(high if sign == 1 else low)), None)
 
     image = Image.new("RGB", (1200, 800), "#0d1725")
     draw = ImageDraw.Draw(image)
@@ -102,6 +109,8 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
         "WIN": ("WIN · Câștig", _UP), "LOSS": ("LOSS · Pierdere", _DOWN),
         "DRAW": ("DRAW · Egal", _ENTRY), "UNKNOWN": ("UNKNOWN · Date lipsă", _BUFFER),
     }.get(outcome, ("Verdict indisponibil", _MUTED))
+    if outcome == "WIN" and expiry_position == "INSIDE_BUFFER":
+        outcome_label, outcome_color = "WIN fragil · În buffer", _BUFFER
     label(48, 29, report_title, color=_ENTRY, size=22)
     label(48, 61, f"EUR/USD  ·  {direction}", size=49)
     label(1152, 73, outcome_label, color=outcome_color, size=29, anchor="ra")
@@ -115,7 +124,7 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
     left, right, top, bottom = 57, 1054, 218, 586
     for x, heading, value, color in (
         (48, entry_label, price_label(entry_price), _ENTRY),
-        (340, "PRAG BUFFER", price_label(threshold), _BUFFER),
+        (340, "LIMITĂ BUFFER", price_label(threshold), _BUFFER),
         (625, expiry_observation_label, price_label(expiry_price), _TEXT),
         (972, "EXPIRARE UTC", _time(expiry_ts), _TEXT),
     ):
@@ -139,8 +148,8 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
     draw.rectangle((left, top, right, bottom), fill="#132237")
     if threshold is not None:
         boundary = y_at(threshold)
-        shade_start, shade_end = (top, boundary) if sign == 1 else (boundary, bottom)
-        draw.rectangle((left, shade_start, right, shade_end), fill="#253831")
+        shade_start, shade_end = sorted((y_at(entry_price), boundary))
+        draw.rectangle((left, shade_start, right, shade_end), fill=_BUFFER_BAND)
     for step in range(6):
         value = low + step * (high - low) / 5
         y = y_at(value)
@@ -177,24 +186,25 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
         draw.rectangle((x_at(hit_bar), top, x_at(hit_bar + 60), bottom), outline=_BUFFER, width=2)
     if hit_ts is not None:
         marker(hit_ts, hit_price, _BUFFER, 9)
-        hit_description = f"Prima atingere observată în cotații  ·  {_time(hit_ts, milliseconds=hit_ts % 1 != 0)} UTC  ·  {price_label(hit_price)}"
+        hit_description = f"Limită buffer atinsă în cotație  ·  {_time(hit_ts, milliseconds=hit_ts % 1 != 0)} UTC  ·  {price_label(hit_price)}"
     elif hit_bar is not None:
-        hit_description = f"Atingere observată în lumânarea {_time(hit_bar)}–{_time(hit_bar + 60)} UTC  ·  secunda este necunoscută"
+        hit_description = f"Limită buffer atinsă în lumânarea {_time(hit_bar)}–{_time(hit_bar + 60)} UTC  ·  secunda necunoscută"
     else:
-        hit_description = "Atingerea bufferului în interval nu este confirmată."
+        hit_description = "Atingerea limitei favorabile în interval nu este confirmată."
 
-    label(48, 632, hit_description, color=_BUFFER, size=23)
-    expiry_status = "DATE LIPSĂ" if threshold is None or expiry_price is None else ("ATINS" if in_buffer(expiry_price) else "NEATINS")
+    label(48, 632, hit_description, color=_BUFFER, size=21)
+    expiry_status = BUFFER_POSITION_LABELS[expiry_position]
     quote_time = f" la {_time(expiry_quote_ts)} UTC" if expiry_price is not None else ""
-    label(48, 665, f"Buffer la cotația observată  ·  {expiry_status}{quote_time}", color=_TEXT, size=22)
+    label(48, 665, f"Poziție la cotația observată  ·  {expiry_status}{quote_time}",
+          color=_BUFFER if expiry_position == "INSIDE_BUFFER" else _TEXT, size=21)
     if earlier_candle:
-        label(48, 692, f"Lumânarea {_time(hit_bar)}–{_time(hit_bar + 60)} UTC arată o atingere mai devreme, la o secundă necunoscută.", color=_BUFFER, size=18)
+        label(48, 692, f"Lumânarea {_time(hit_bar)}–{_time(hit_bar + 60)} UTC arată limita atinsă mai devreme; secunda este necunoscută.", color=_BUFFER, size=18)
     bar_description = ("Lumânări M1 complete în intervalul urmărit. Spațiile goale nu au cotații M1 complete."
                        if bars else "Nicio lumânare M1 completă în intervalul urmărit. Punctele arată cotațiile disponibile.")
     label(48, 716, bar_description, color=_MUTED, size=19)
-    legend = "Linie albastră  ·  Preț inițial     |     Linie albă  ·  Expirare programată"
+    legend = "Albastru  ·  Intrare     |     Alb vertical  ·  Expirare"
     if threshold is not None:
-        legend = "Zonă verde  ·  Buffer atins     |     " + legend
+        legend = "Bandă galbenă  ·  Buffer lângă intrare     |     " + legend
     label(48, 747, legend, color=_MUTED, size=18)
 
     png = BytesIO()
@@ -223,3 +233,4 @@ def render_market_chart(*, direction, entry_ts, entry_price, expiry_ts,
         expiry_price=expiry_price, buffer_distance=buffer_distance, outcome=outcome,
         first_buffer_hit=first_hit, report_title=report_title, entry_label=entry_label,
         signal_label=signal_label, expiry_observation_label=expiry_observation_label)
+
