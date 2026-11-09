@@ -124,6 +124,59 @@ def test_missing_buffered_quote_is_unknown_not_later_win(study_setup):
     assert saved["candidates"][0]["quote"] is None
 
 
+@pytest.mark.parametrize("phase", ["entry", "expiry"])
+@pytest.mark.parametrize("eligible", [True, False])
+def test_buffered_quote_grace_preserves_source_time_window(study_setup, phase, eligible):
+    _, study, _, _, _, _, _, _ = study_setup
+    row = _capture(study_setup, publish=False)
+    if phase == "entry":
+        target = row["created_ts"]
+        window = study.quotes.MAX_ENTRY_DELAY_SECONDS
+    else:
+        entry_ts = BASE + 32
+        study.advance(now_ts=entry_ts, active_provider="FINNHUB",
+                      price_loader=lambda _: _sample(entry_ts, 1.1))
+        target = entry_ts + row["model_seconds"]
+        window = study.quotes.MAX_SAMPLE_DELAY_SECONDS
+    deadline = target + window
+    grace = study.BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS
+    received = None
+
+    def buffered(symbol, requested, delay):
+        if requested == target:
+            assert symbol == "EUR/USD" and delay == window
+            return received
+
+    def advance(now):
+        study.advance(now_ts=now, active_provider="FINNHUB", observation_loader=buffered,
+                      price_loader=lambda _: None)
+        saved = next(iter(study._read(study._path())["records"].values()))
+        return saved, saved["candidates"][0]
+
+    _, candidate = advance(deadline + grace / 2)
+    assert candidate["outcome"] == "PENDING"
+
+    direction = 1 if row["direction"] == "BUY" else -1
+    stamp = deadline if eligible else deadline + grace / 2
+    received = _sample(stamp, 1.1 + direction * 0.01, buffered=True)
+    saved, candidate = advance(deadline + grace)
+    if eligible:
+        if phase == "entry":
+            assert saved["entry"]["observed_ts"] == stamp
+            assert saved["state"] == "OBSERVING"
+        else:
+            assert candidate["outcome"] == "WIN"
+            assert candidate["quote"]["observed_ts"] == stamp
+    else:
+        assert candidate["outcome"] == "PENDING"
+        _, candidate = advance(deadline + grace + 1)
+        assert candidate["outcome"] == "UNKNOWN"
+        assert candidate["reason"] == f"{phase.upper()}_OBSERVATION_MISSING"
+        received = _sample(deadline, 1.1 + direction * 0.01, buffered=True)
+        _, candidate = advance(deadline + grace + 2)
+        assert candidate["outcome"] == "UNKNOWN"
+
+
 @pytest.mark.parametrize("condition", ["shadow_disabled", "broker_enabled", "wrong_provider", "missing_confirm", "stale"])
 def test_study_publication_guards(study_setup, monkeypatch, condition):
     _, study, delivery, _, _, _, messages, clock = study_setup
