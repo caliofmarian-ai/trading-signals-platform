@@ -30,6 +30,7 @@ class MarketDataUnavailableError(RuntimeError):
 
 
 _FINNHUB_FEED = None
+_FINNHUB_FEED_LOCK = threading.Lock()
 _TWELVE_DATA_FEEDS = {}
 _TWELVE_DATA_REST_CACHE = {}
 _REST_REQUEST_TIMESTAMPS = deque()
@@ -55,14 +56,16 @@ def configured_symbols():
 
 def _finnhub_feed():
     global _FINNHUB_FEED
-    if _FINNHUB_FEED is None:
-        from runtime.finnhub_market_data import FinnhubForexFeed
-        from core.physical_params import physical_runtime_enabled, load_physical_runtime_algo_params
-        from core import storage
-        params = (load_physical_runtime_algo_params(storage.config_path("algo_params.json"))
-                  if physical_runtime_enabled() else None)
-        _FINNHUB_FEED = FinnhubForexFeed(physical_params=params) if params is not None else FinnhubForexFeed()
-    return _FINNHUB_FEED
+    # The engine and study worker can request the feed concurrently at boot.
+    with _FINNHUB_FEED_LOCK:
+        if _FINNHUB_FEED is None:
+            from runtime.finnhub_market_data import FinnhubForexFeed
+            from core.physical_params import physical_runtime_enabled, load_physical_runtime_algo_params
+            from core import storage
+            params = (load_physical_runtime_algo_params(storage.config_path("algo_params.json"))
+                      if physical_runtime_enabled() else None)
+            _FINNHUB_FEED = FinnhubForexFeed(physical_params=params) if params is not None else FinnhubForexFeed()
+        return _FINNHUB_FEED
 
 
 def _twelve_data_feed(symbol: str):

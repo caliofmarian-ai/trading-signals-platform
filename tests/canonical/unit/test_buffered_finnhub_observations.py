@@ -75,3 +75,48 @@ def test_provider_switch_cannot_fall_back_to_finnhub_cache(monkeypatch):
     monkeypatch.setattr(market,"_finnhub_feed",lambda:pytest.fail("cross-provider cache access"))
     with pytest.raises(market.MarketDataUnavailableError):
         market.get_price_sample_at_or_after("EUR/USD",1000,2)
+
+
+def test_concurrent_finnhub_consumers_share_the_same_feed(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from core import physical_params
+    from runtime import finnhub_market_data, market_client
+
+    first_entered = Event()
+    second_started = Event()
+    duplicate_entered = Event()
+    release = Event()
+    feeds = []
+
+    def build_feed():
+        feed = object()
+        feeds.append(feed)
+        if len(feeds) == 1:
+            first_entered.set()
+            assert release.wait(5)
+        else:
+            duplicate_entered.set()
+        return feed
+
+    def second_consumer():
+        second_started.set()
+        return market_client._finnhub_feed()
+
+    monkeypatch.setattr(market_client, "_FINNHUB_FEED", None)
+    monkeypatch.setattr(physical_params, "physical_runtime_enabled", lambda: False)
+    monkeypatch.setattr(finnhub_market_data, "FinnhubForexFeed", build_feed)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(market_client._finnhub_feed)
+        try:
+            assert first_entered.wait(5)
+            second = executor.submit(second_consumer)
+            assert second_started.wait(5)
+            assert not duplicate_entered.wait(0.5)
+        finally:
+            release.set()
+
+        assert first.result(timeout=5) is second.result(timeout=5)
+    assert len(feeds) == 1
