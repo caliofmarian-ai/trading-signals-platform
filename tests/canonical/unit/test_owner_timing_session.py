@@ -131,7 +131,7 @@ def test_invalid_transport_evidence_never_produces_a_latency_claim(monkeypatch, 
         module._summary(state, 1001)
 
 
-def test_progress_names_complete_margin_and_fragile_wins_separately(canonical_runtime_root, monkeypatch):
+def test_progress_uses_published_study_results_when_open_model_disagrees(canonical_runtime_root, monkeypatch):
     module = _prepare(monkeypatch)
     from core import physical_params, telegram_publisher
     from intelligence import physical_expiry_calibration
@@ -140,14 +140,39 @@ def test_progress_names_complete_margin_and_fragile_wins_separately(canonical_ru
     monkeypatch.setattr(physical_params, "physical_runtime_enabled", lambda: True)
     monkeypatch.setattr(telegram_publisher, "send_message", lambda **kw: sent.append(kw) or {"ok": True})
     monkeypatch.setattr(physical_expiry_calibration, "summary", lambda **kw: {
-        "baseline_model_observations": {"wins": 3, "losses": 1, "unknown": 2,
+        "baseline_model_observations": {"wins": 97, "losses": 0, "unknown": 0,
+            "buffer_met": 97, "buffer_not_met": 0, "buffer_unavailable": 0,
+            "win_buffer_not_met": 0},
+        "published_study_results": {"wins": 3, "losses": 1, "unknown": 2,
             "buffer_met": 1, "buffer_not_met": 3, "buffer_unavailable": 2,
             "win_buffer_not_met": 2},
     })
     _observe(module, 1000)
     module.report_if_due(now_ts=1001)
     text = sent[0]["text"]
+    assert "Rezultate studiu: WIN 3, LOSS 1, UNKNOWN 2" in text
     assert "Marjă completă la expirare: DA 1, NU 3, indisponibilă 2" in text
     assert "WIN fragil (în buffer): 2" in text
     assert "Buffer: atins" not in text
+    assert "WIN 97" not in text and "Model:" not in text
+
+
+def test_progress_never_falls_back_to_model_outcomes_when_published_results_are_unavailable(canonical_runtime_root, monkeypatch):
+    module = _prepare(monkeypatch)
+    from core import physical_params, telegram_publisher
+    from intelligence import physical_expiry_calibration
+
+    sent = []
+    monkeypatch.setattr(physical_params, "physical_runtime_enabled", lambda: True)
+    monkeypatch.setattr(telegram_publisher, "send_message", lambda **kw: sent.append(kw) or {"ok": True})
+    monkeypatch.setattr(physical_expiry_calibration, "summary", lambda **kw: {
+        "study_results_api_accepted": 4,
+        "baseline_model_observations": {"wins": 97, "losses": 0, "unknown": 0},
+    })
+    _observe(module, 1000)
+    module.report_if_due(now_ts=1001)
+    text = sent[0]["text"]
+    assert "rezultate: 4" in text
+    assert "Rezultate studiu: statistici indisponibile." in text
+    assert "Model:" not in text and "WIN 97" not in text and "WIN 0" not in text
 

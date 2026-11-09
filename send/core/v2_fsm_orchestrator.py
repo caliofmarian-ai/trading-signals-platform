@@ -9,12 +9,14 @@ exact-stage acceptance. No FSM result claims external publication.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
+from math import isclose, isfinite
 from typing import Any, Dict, Optional
 
 from . import fsm_runtime
 from .decision_object import ACTIONABLE_DECISION_KINDS, DecisionObject
+from .execution_model import ExecutionTimeResult
 
 
 FSM_IDENTITY_VERSION = "1.0.0"
@@ -43,6 +45,98 @@ class PersistentFSMResult:
     def candidate_ready(self) -> bool:
         """Compatibility alias; canonical truth is stage_handoff_ready."""
         return self.stage_handoff_ready
+
+
+def _execution_unavailable(execution: ExecutionTimeResult, reason: str) -> ExecutionTimeResult:
+    return replace(execution, available=False, confirm_expiry_minutes=None,
+                   confirm_expiry_min_minutes=None, confirm_expiry_max_minutes=None,
+                   open_now_expiry_minutes=None, calibration_source=None,
+                   explanation=reason)
+
+
+def _positive_duration(value: Any) -> bool:
+    return (not isinstance(value, bool) and isinstance(value, (int, float))
+            and isfinite(value) and value > 0)
+
+
+def bind_confirmed_execution_time(
+    handoff: PersistentFSMResult, decision: DecisionObject, execution: ExecutionTimeResult,
+) -> tuple[PersistentFSMResult, ExecutionTimeResult]:
+    """Freeze calibrated duration before CONFIRM delivery and revalidate it at OPEN.
+
+    Call immediately after ``advance_persistent_fsm`` and persist the returned
+    state before publication. This records a strategy plan, never an API receipt
+    or broker action. Legacy in-flight opportunities cannot acquire a plan at
+    OPEN. The independent physical research handoff remains unchanged.
+    """
+    if (decision.fsm_inputs.get("decision_policy") != "PHYSICAL_ONLY_V3"
+        or not handoff.stage_handoff_ready
+        or handoff.accepted_stage not in {"CONFIRM", "OPEN_NOW"}):
+        return handoff, execution
+    if (execution.symbol != decision.setup.symbol or execution.cycle_id != decision.setup.cycle_id
+        or execution.fsm_outcome != handoff.accepted_stage):
+        raise ValueError("confirmed execution must describe the accepted decision cycle and stage")
+    row = handoff.next_state["per_symbol"][decision.setup.symbol]
+    status = row.get("physical_confirm_execution_status")
+    if handoff.accepted_stage == "CONFIRM" and status is None:
+        # An old CONFIRM already sent by an earlier version must not be silently
+        # upgraded on a later candle without a new published preparation.
+        if row.get("physical_confirm_ts") != row.get("last_transition_ts"):
+            return handoff, _execution_unavailable(execution, "CONFIRM_DURATION_NOT_FROZEN")
+        working = deepcopy(handoff.next_state)
+        row = working["per_symbol"][decision.setup.symbol]
+        # A calibrated candidate rejected by feasibility is not missing
+        # calibration and must never be downgraded into the study path.
+        row["physical_confirm_execution_status"] = "BLOCKED" if execution.available else "UNAVAILABLE"
+        row["physical_confirm_execution"] = None
+        value = execution.confirm_expiry_minutes
+        needed = decision.time.t_needed_adjusted
+        if (execution.available and all(_positive_duration(item) for item in (
+                value, needed, execution.confirm_expiry_min_minutes, execution.confirm_expiry_max_minutes))
+            and isinstance(execution.calibration_source, str) and execution.calibration_source.strip()
+            and decision.time.time_state == "READY"
+            and execution.confirm_expiry_min_minutes <= value <= execution.confirm_expiry_max_minutes
+            and (value >= needed or isclose(value, needed, rel_tol=1e-12, abs_tol=1e-12))):
+            row["physical_confirm_execution_status"] = "FROZEN"
+            row["physical_confirm_execution"] = {
+                "signal_id": decision.signal_id, "direction": decision.setup.direction,
+                "confirmed_ts": row["physical_confirm_ts"],
+                "duration_minutes": value,
+                "confirm_min_minutes": execution.confirm_expiry_min_minutes,
+                "confirm_max_minutes": execution.confirm_expiry_max_minutes,
+                "calibration_source": execution.calibration_source,
+            }
+        handoff = replace(handoff, next_state=working, state_changed=True)
+
+    plan = row.get("physical_confirm_execution")
+    if not isinstance(plan, dict):
+        reason = ("CONFIRM_DURATION_BLOCKED" if row.get("physical_confirm_execution_status") == "BLOCKED"
+                  else "EXACT_GOVERNED_DURATION_UNAVAILABLE_AT_CONFIRM")
+        return handoff, _execution_unavailable(execution, reason)
+    if (plan.get("signal_id") != decision.signal_id or plan.get("direction") != decision.setup.direction
+        or plan.get("confirmed_ts") != row.get("physical_confirm_ts")):
+        return handoff, _execution_unavailable(execution, "CONFIRM_DURATION_IDENTITY_MISMATCH")
+    if not execution.available:
+        return handoff, _execution_unavailable(execution, "CONFIRM_DURATION_REVALIDATION_UNAVAILABLE")
+    if plan.get("calibration_source") != execution.calibration_source:
+        return handoff, _execution_unavailable(execution, "CONFIRM_DURATION_CALIBRATION_CHANGED")
+    value = plan.get("duration_minutes")
+    original_min, original_max = plan.get("confirm_min_minutes"), plan.get("confirm_max_minutes")
+    needed = decision.time.t_needed_adjusted
+    current_min, current_max = execution.confirm_expiry_min_minutes, execution.confirm_expiry_max_minutes
+    if not all(_positive_duration(item) for item in (value, original_min, original_max, needed, current_min, current_max)):
+        return handoff, _execution_unavailable(execution, "CONFIRM_DURATION_EVIDENCE_INVALID")
+    if (not original_min <= value <= original_max or not current_min <= value <= current_max
+        or decision.time.time_state != "READY"
+        or (value < needed and not isclose(value, needed, rel_tol=1e-12, abs_tol=1e-12))):
+        return handoff, _execution_unavailable(execution, "CONFIRM_DURATION_NO_LONGER_FEASIBLE")
+    return handoff, replace(
+        execution, confirm_expiry_minutes=value,
+        confirm_expiry_min_minutes=max(original_min, current_min),
+        confirm_expiry_max_minutes=min(original_max, current_max),
+        open_now_expiry_minutes=value if handoff.accepted_stage == "OPEN_NOW" else None,
+        explanation="The exact duration prepared at CONFIRM remains feasible and is preserved unchanged.",
+    )
 
 
 def current_opportunity_signal_id(state: Dict[str, Any], symbol: str) -> Optional[str]:
@@ -359,6 +453,7 @@ def advance_persistent_fsm(
             row.update(physical_signal_id=decision.signal_id, physical_pre_ts=now_ts,
                        physical_history_policy=decision.fsm_inputs.get("history_policy"),
                        physical_confirm_ts=None, physical_confirm_model_seconds=None,
+                       physical_confirm_execution_status=None, physical_confirm_execution=None,
                        physical_calibration_captured_signal_id=None, physical_direction=decision.setup.direction)
         elif accepted_stage == "CONFIRM" and row.get("physical_confirm_ts") is None:
             row["physical_confirm_ts"] = now_ts

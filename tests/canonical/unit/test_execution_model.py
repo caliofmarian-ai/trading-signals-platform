@@ -46,13 +46,14 @@ def _calibration() -> ExecutionCalibration:
     return ExecutionCalibration(1.0, 0.1, 2.0, 15.0, "test-calibration-v1")
 
 
-def test_confirm_produces_a_range_but_not_an_exact_expiry() -> None:
+def test_confirm_prepares_exact_duration_without_claiming_an_open() -> None:
     decision = _decision("SCORE_CONFIRM_BAND")
     result = derive_execution_time(decision, interpret_decision(decision), _calibration())
 
     assert result.available is True
     assert result.confirm_expiry_min_minutes == 4.0
     assert result.confirm_expiry_max_minutes == 6.0
+    assert result.confirm_expiry_minutes == 4.5
     assert result.open_now_expiry_minutes is None
     assert result.signal_handoff_ready is False
 
@@ -62,6 +63,7 @@ def test_open_now_is_exact_and_inside_the_confirm_range() -> None:
     result = derive_execution_time(decision, interpret_decision(decision), _calibration())
 
     assert result.open_now_expiry_minutes == 4.5
+    assert result.confirm_expiry_minutes == 4.5
     assert result.confirm_expiry_min_minutes <= result.open_now_expiry_minutes
     assert result.open_now_expiry_minutes <= result.confirm_expiry_max_minutes
     assert result.signal_handoff_ready is False
@@ -81,6 +83,7 @@ def test_missing_calibration_remains_explicitly_unavailable() -> None:
 
     assert result.available is False
     assert result.open_now_expiry_minutes is None
+    assert result.confirm_expiry_minutes is None
     assert "not invented" in result.explanation
 
 

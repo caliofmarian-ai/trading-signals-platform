@@ -11,6 +11,13 @@ Supersedes: `CANONICAL_MASTER_INDEX_v1.0.0.md`
 
 ## 0. Active authority declaration
 
+Owner signal timing/presentation amendment 2026-11-09:
+[V3_CONFIRMED_DURATION_AND_SIGNAL_CARD_OWNER_AMENDMENT_v1.0.0.md](V3_CONFIRMED_DURATION_AND_SIGNAL_CARD_OWNER_AMENDMENT_v1.0.0.md)
+requires an exact strategy duration at CONFIRM, preserved and revalidated at
+OPEN_NOW, and defines distinct muted stage colors and readable daily identifiers.
+It supersedes interval-only CONFIRM presentation and OPEN-based public study
+horizons, while retaining independent calibration research and execution gates.
+
 Owner focus/presentation amendment 2026-11-06:
 [V3_FOCUS_AND_SIGNAL_PRESENTATION_OWNER_AMENDMENT_v1.0.0.md](V3_FOCUS_AND_SIGNAL_PRESENTATION_OWNER_AMENDMENT_v1.0.0.md)
 supersedes physical same-symbol cooldown policy with distinct-opportunity dedup

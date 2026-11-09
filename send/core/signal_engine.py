@@ -30,7 +30,9 @@ from core.decision_object import ACTIONABLE_DECISION_KINDS
 from core.signal_execution_gate import prepare_signal_execution
 from core.strategy_v3 import decide, lifecycle_context
 from core.physical_params import load_physical_runtime_algo_params
-from core.v2_fsm_orchestrator import advance_persistent_fsm, current_opportunity_signal_id
+from core.v2_fsm_orchestrator import (
+    advance_persistent_fsm, bind_confirmed_execution_time, current_opportunity_signal_id,
+)
 from core import storage
 from state_store import state_store as runtime_state_store
 from intelligence import shadow_model_time_research as shadow_research
@@ -805,15 +807,17 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
             _log_decision_evaluated(evaluation, buffer_mode)
 
             persistent_fsm = advance_persistent_fsm(state, decision, now_ts=now_ts)
+            persistent_fsm, execution_time = bind_confirmed_execution_time(
+                persistent_fsm, decision, evaluation.execution_time)
             if persistent_fsm.state_changed:
                 state = persistent_fsm.next_state
                 fsm_runtime.save_state(state)
 
             _log_fsm_handoff(decision, persistent_fsm)
             _observe_shadow_research(decision, persistent_fsm, params=params)
-            _observe_timebox_diagnostics(decision, persistent_fsm, evaluation.execution_time,
+            _observe_timebox_diagnostics(decision, persistent_fsm, execution_time,
                                          now_ts=time.time())
-            _observe_owner_timing_session(decision, persistent_fsm, evaluation.execution_time, params)
+            _observe_owner_timing_session(decision, persistent_fsm, execution_time, params)
 
             if decision.kind in ACTIONABLE_DECISION_KINDS:
                 execution = prepare_signal_execution(
@@ -821,13 +825,16 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                     decision,
                     buffer_mode=buffer_mode,
                     created_ts=now_ts,
-                    execution_time=evaluation.execution_time,
+                    execution_time=execution_time,
                 )
                 _log_signal_execution(decision, persistent_fsm, execution)
                 if execution.distribution_allowed and execution.candidate is not None:
                     try:
+                        from core.owner_signal_delivery import project_confirmed_study
+                        routed_candidate = project_confirmed_study(
+                            execution.candidate.to_dict(), persistent_fsm)
                         distribution_summary = distribution_router.route(
-                            execution.candidate, now_ts=now_ts
+                            routed_candidate, now_ts=now_ts
                         )
                     except Exception as distribution_exc:
                         observability_logger.log_error(
@@ -869,7 +876,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                     captured = physical_expiry_calibration.observe_accepted_chain(decision, persistent_fsm, params,
                         now_ts=time.time(), provider=market_client.configured_provider(), buffer_mode=buffer_mode,
                         market_evidence=evaluation.market.evidence,
-                        publish_study=not evaluation.execution_time.available)
+                        publish_study=not execution_time.available)
                     if captured:
                         fsm_runtime.save_state(state)
                 except Exception as calibration_exc:

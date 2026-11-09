@@ -94,6 +94,7 @@ class SignalEvent:
     decision_audit_id: Optional[str] = None
     execution_attempt_id: Optional[str] = None
     fsm_transition_id: Optional[str] = None
+    confirm_expiry_minutes: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.event_type != "SIGNAL_CANDIDATE":
@@ -135,6 +136,9 @@ class SignalEvent:
         open_now = _optional_positive_number(
             self.open_now_expiry_minutes, "open_now_expiry_minutes"
         )
+        confirm_exact = _optional_positive_number(
+            self.confirm_expiry_minutes, "confirm_expiry_minutes"
+        )
         if self.execution_time_available:
             if not isinstance(self.execution_calibration_source, str) or not self.execution_calibration_source.strip():
                 raise SignalEventUnavailable(
@@ -149,6 +153,11 @@ class SignalEvent:
                     raise SignalEventUnavailable(
                         "confirm execution interval must satisfy min <= max"
                     )
+                if confirm_exact is not None and not confirm_min <= confirm_exact <= confirm_max:
+                    raise SignalEventUnavailable("exact CONFIRM duration must remain inside its governed interval")
+                if (self.stage == "CONFIRM" and isinstance(self.payload, Mapping)
+                    and self.payload.get("decision_policy") == "PHYSICAL_ONLY_V3" and confirm_exact is None):
+                    raise SignalEventUnavailable("physical CONFIRM requires an exact governed duration")
             if self.stage == "OPEN_NOW":
                 if open_now is None:
                     raise SignalEventUnavailable(
@@ -158,8 +167,10 @@ class SignalEvent:
                     raise SignalEventUnavailable(
                         "OPEN_NOW expiry must remain inside the governed CONFIRM interval"
                     )
+                if confirm_exact is not None and open_now != confirm_exact:
+                    raise SignalEventUnavailable("OPEN_NOW must preserve the exact confirmed duration")
         else:
-            if any(value is not None for value in (confirm_min, confirm_max, open_now)):
+            if any(value is not None for value in (confirm_min, confirm_max, open_now, confirm_exact)):
                 raise SignalEventUnavailable(
                     "unavailable Execution Time cannot expose execution expiry values"
                 )
@@ -241,6 +252,7 @@ def _execution_snapshot(
             "available": False,
             "confirm_expiry_min_minutes": None,
             "confirm_expiry_max_minutes": None,
+            "confirm_expiry_minutes": None,
             "open_now_expiry_minutes": None,
             "calibration_source": None,
             "explanation": "Execution Time evidence was not supplied to SignalEvent construction.",
@@ -268,6 +280,7 @@ def _execution_snapshot(
         "available": bool(execution_time.available),
         "confirm_expiry_min_minutes": execution_time.confirm_expiry_min_minutes,
         "confirm_expiry_max_minutes": execution_time.confirm_expiry_max_minutes,
+        "confirm_expiry_minutes": execution_time.confirm_expiry_minutes,
         "open_now_expiry_minutes": execution_time.open_now_expiry_minutes,
         "calibration_source": execution_time.calibration_source,
         "explanation": execution_time.explanation,
@@ -361,6 +374,7 @@ def build_signal_event(
         execution_time_available=bool(execution["available"]),
         confirm_expiry_min_minutes=execution["confirm_expiry_min_minutes"],
         confirm_expiry_max_minutes=execution["confirm_expiry_max_minutes"],
+        confirm_expiry_minutes=execution["confirm_expiry_minutes"],
         open_now_expiry_minutes=execution["open_now_expiry_minutes"],
         execution_calibration_source=execution["calibration_source"],
         candle_ts=decision.setup.evaluated_ts,

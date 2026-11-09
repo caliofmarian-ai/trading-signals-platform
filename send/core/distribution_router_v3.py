@@ -984,14 +984,17 @@ def route(candidate: Any, now_ts: Optional[int] = None) -> Dict[str, Any]:
 
                 number = owner_signal_number.reserve_lifecycle(signal_id, time.time())
                 shadow = route_name == "OWNER_PRIVATE"
-                text = signal_card.render_signal_caption(event, number, shadow=shadow)
+                study = (shadow and event.get("study_duration_source") == "CONFIRM_MODEL_TIME"
+                         and event.get("execution_time_available") is not True)
+                text = signal_card.render_signal_caption(event, number, shadow=shadow, study=study)
                 try:
-                    photo = signal_card.render_signal_card(event, number, shadow=shadow)
+                    photo = signal_card.render_signal_card(event, number, shadow=shadow, study=study)
                     delivery_format = "PHOTO"
                 except Exception as card_exc:
                     # Rendering failed before transport. A short text fallback
                     # preserves the real stage; never follow a failed photo
                     # request with an additional text send.
+                    text = signal_card.render_signal_text(event, number, shadow=shadow, study=study)
                     text += "\nImagine indisponibilă."
                     observability_logger.log_warning(
                         warn_type="SIGNAL_CARD_UNAVAILABLE",

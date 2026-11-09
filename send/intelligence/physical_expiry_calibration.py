@@ -35,6 +35,19 @@ REPORT_SECONDS = 60
 BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS = 4.0
 _last_report: dict[str, int] = {}
 POST_MODEL_OFFSETS = (60, 180, 300)  # existing diagnostic checkpoints; never execution expiry
+STUDY_DURATION_SOURCE = "CONFIRM_MODEL_TIME"
+
+
+def displayed_study_observation(row):
+    """Use the prospectively confirmed horizon; retain old published baselines."""
+    return row.get("study_observation", row["candidates"][0])
+
+
+def _confirmed_study_feasible(horizon_seconds, adjusted_seconds):
+    """Preserve the exact-fit tolerance of Model Time, expressed in minutes."""
+    return horizon_seconds >= adjusted_seconds or math.isclose(
+        horizon_seconds / 60, adjusted_seconds / 60, rel_tol=1e-12, abs_tol=1e-12
+    )
 
 
 def _buffer_policy():
@@ -222,6 +235,29 @@ def validate(state):
                     raise ValueError("INVALID_POST_MODEL_LABEL")
             elif sample is not None:
                 raise ValueError("UNOBSERVED_POST_MODEL_LABEL")
+        if "study_observation" in row:
+            observation = row["study_observation"]
+            context = row["policies"]["PHYSICAL_ONLY_V3"]
+            horizon = _number(observation.get("horizon_seconds"))
+            if (observation.get("duration_source") != STUDY_DURATION_SOURCE
+                or observation.get("confirmed_ts") != context["confirm_ts"]
+                or horizon != context["confirm_model_seconds"]
+                or horizon > scope["model_limits_minutes"]["max"] * 60):
+                raise ValueError("CHANGED_CONFIRMED_STUDY_HORIZON")
+            outcome, sample = observation.get("outcome"), observation.get("quote")
+            if outcome not in {"PENDING", "INFEASIBLE", "UNKNOWN", "WIN", "LOSS", "DRAW"}:
+                raise ValueError("INVALID_CONFIRMED_STUDY_OUTCOME")
+            if (not _confirmed_study_feasible(horizon, adjusted)) != (outcome == "INFEASIBLE"):
+                raise ValueError("INVALID_CONFIRMED_STUDY_FEASIBILITY")
+            if outcome in {"WIN", "LOSS", "DRAW"}:
+                stamp = _number(sample.get("observed_ts"))
+                if (entry is None or _observed_quote(sample, stamp) != sample
+                    or not entry["observed_ts"] + horizon <= stamp
+                    <= entry["observed_ts"] + horizon + quotes.MAX_SAMPLE_DELAY_SECONDS
+                    or quotes._classify(row["direction"], entry["price"], sample["price"]) != outcome):
+                    raise ValueError("INVALID_CONFIRMED_STUDY_LABEL")
+            elif sample is not None:
+                raise ValueError("UNOBSERVED_CONFIRMED_STUDY_LABEL")
         from intelligence.physical_study_delivery import validate_delivery
         validate_delivery(row)
 
@@ -301,8 +337,20 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
                     "horizon_seconds": row["model_seconds"] + offset,
                     "outcome": "PENDING", "reason": None, "quote": None}
                     for offset in POST_MODEL_OFFSETS]
-            if item.get("publish_study") is True:
+            if (item.get("publish_study") is True
+                and item.get("confirm_execution_status") == "UNAVAILABLE"):
                 row["study_delivery"] = {"entry": None, "result": None}
+                # The visible duration belongs to the preceding CONFIRM. Keep
+                # the OPEN-based calibration grid unchanged and measure this
+                # separately declared observation at its own exact horizon.
+                confirmed_seconds = _number(item["confirm_model_seconds"])
+                row["study_observation"] = {
+                    "duration_source": STUDY_DURATION_SOURCE,
+                    "confirmed_ts": item["confirm_ts"],
+                    "horizon_seconds": confirmed_seconds,
+                    "outcome": "PENDING" if _confirmed_study_feasible(confirmed_seconds, row["adjusted_seconds"]) else "INFEASIBLE",
+                    "reason": None, "quote": None,
+                }
             state["records"][identity] = row
         _save(path, state)
 
@@ -346,7 +394,8 @@ def advance(*, now_ts, active_provider, price_loader, observation_loader=None):
             state = None
         else:
             pending = [r for r in state["records"].values() if r["state"] != "FINAL"
-                       or any(c["outcome"] == "PENDING" for c in r.get("post_model_observations", []))]
+                       or any(c["outcome"] == "PENDING" for c in r.get("post_model_observations", []))
+                       or r.get("study_observation", {}).get("outcome") == "PENDING"]
             sample = None
             if pending and active_provider == "FINNHUB":
                 try:
@@ -366,7 +415,10 @@ def advance(*, now_ts, active_provider, price_loader, observation_loader=None):
                         changed = True
                     elif now > row["created_ts"] + quotes.MAX_ENTRY_DELAY_SECONDS + arrival_grace:
                         reason = "ENTRY_OBSERVATION_MISSING"
-                for candidate in row["candidates"] + row.get("post_model_observations", []):
+                observations = row["candidates"] + row.get("post_model_observations", [])
+                if "study_observation" in row:
+                    observations += [row["study_observation"]]
+                for candidate in observations:
                     if candidate["outcome"] != "PENDING":
                         continue
                     if reason:
@@ -391,7 +443,7 @@ def advance(*, now_ts, active_provider, price_loader, observation_loader=None):
         and (r["study_delivery"]["entry"] is None
              or ((r["study_delivery"]["entry"] or {}).get("status") == "API_ACCEPTED"
                  and r["study_delivery"]["result"] is None
-                 and r["candidates"][0]["outcome"] not in {"PENDING", "INFEASIBLE"}))
+                 and displayed_study_observation(r)["outcome"] not in {"PENDING", "INFEASIBLE"}))
         for r in state["records"].values()
     ):
         from intelligence import physical_study_delivery
@@ -438,7 +490,8 @@ def analyze(state, *, now_ts):
               "execution_calibration_proven": False, "automatic_activation_allowed": False,
               "production_parameters_changed": False, "broker_executed": False,
               "actual_telegram_publications": 0, "decision_policy": "PHYSICAL_ONLY_V3",
-              "history_policy": HISTORY_POLICY}
+              "history_policy": HISTORY_POLICY,
+              "published_study_results": _counts([], 0)}
     if state is None:
         from intelligence.same_symbol_sequences import summarize
         report["same_symbol_10min_sequences"] = summarize([])
@@ -464,6 +517,12 @@ def analyze(state, *, now_ts):
         for r in records if (r.get("study_delivery") or {}).get("entry"))
     report["study_results_api_accepted"] = sum((r.get("study_delivery") or {}).get("result", {}).get("status") == "API_ACCEPTED"
         for r in records if (r.get("study_delivery") or {}).get("result"))
+    # Published results refer to the duration shown at CONFIRM. Research
+    # baseline counts remain separate even when their eventual outcomes differ.
+    report["published_study_results"] = _counts([
+        {**r, "candidates": [displayed_study_observation(r)]} for r in records
+        if ((r.get("study_delivery") or {}).get("result") or {}).get("status") == "API_ACCEPTED"
+    ], 0)
     report["study_delivery_statuses"] = dict(Counter(
         f"{phase}:{receipt['status']}" for r in records
         for phase, receipt in (r.get("study_delivery") or {}).items() if receipt))
@@ -612,7 +671,11 @@ def observe_accepted_chain(decision, handoff, params, *, now_ts, provider, buffe
         "adjusted_seconds": decision.time.t_needed_adjusted * 60,
         "buffer_distance": decision.market_context.buffer_distance,
         "open_decision_id": decision.decision_id, "open_decision_audit_id": decision.decision_audit_id,
-        "decision_snapshot": frozen, "publish_study": publish_study,
+        "decision_snapshot": frozen,
+        "confirm_execution_status": row.get("physical_confirm_execution_status"),
+        "publish_study": (publish_study
+            and row.get("physical_confirm_execution_status") == "UNAVAILABLE"
+            and row.get("physical_confirm_execution") is None),
     }], params=params, buffer_mode=buffer_mode, strategy_version=STRATEGY_VERSION,
        canonical_spec=CANONICAL_SPEC, now_ts=now_ts)
     row["physical_calibration_captured_signal_id"] = decision.signal_id
