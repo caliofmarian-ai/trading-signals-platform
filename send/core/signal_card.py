@@ -19,7 +19,9 @@ TEXT = "#f7f9ff"
 MUTED = "#b6bfd1"
 INACTIVE = "#26324d"
 DIRECTION_ACCENTS = {"BUY": "#008c60", "SELL": "#e70028"}
-STAGE_ACCENTS = {"PRE": "#c8bd81", "CONFIRM": "#c49a73", "OPEN_NOW": "#577589"}
+# Preparation colors are independent of direction. Only OPEN uses BUY/SELL.
+STAGE_ACCENTS = {"PRE": "#c8bd81", "CONFIRM": "#a69abb"}
+OPEN_STAGE_ACCENTS = {"BUY": "#3e7565", "SELL": "#945663"}
 STAGE_INKS = {"PRE": BACKGROUND, "CONFIRM": BACKGROUND, "OPEN_NOW": TEXT}
 STAGES = ("PRE", "CONFIRM", "OPEN_NOW")
 STAGE_BANNER = (48, 150, 1152, 320)
@@ -157,7 +159,8 @@ def build_card_fields(event, signal_label, *, study=False, shadow=False):
         "price_label": "PREȚ INTRARE" if stage == "OPEN_NOW" else "PREȚ DE REFERINȚĂ",
         "duration_label": "DURATĂ STUDIU" if study else "DURATĂ",
         "footer": footer, "mode": mode, "next_action": next_action,
-        "stage_accent": STAGE_ACCENTS[stage], "stage_ink": STAGE_INKS[stage],
+        "stage_accent": OPEN_STAGE_ACCENTS[direction] if opened else STAGE_ACCENTS[stage],
+        "stage_ink": STAGE_INKS[stage],
         "direction_accent": DIRECTION_ACCENTS[direction],
     }
 
