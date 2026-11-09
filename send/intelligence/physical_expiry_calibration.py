@@ -31,6 +31,8 @@ TARGET_WIN_RATE = 0.80
 MAX_UNKNOWN_FRACTION = 0.10
 VALIDATION_Z = NormalDist().inv_cdf(1 - 0.05 / 2)
 REPORT_SECONDS = 60
+# Allow a delayed retained tick to arrive without extending its source-time window.
+BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS = 4.0
 _last_report: dict[str, int] = {}
 POST_MODEL_OFFSETS = (60, 180, 300)  # existing diagnostic checkpoints; never execution expiry
 
@@ -337,6 +339,7 @@ def advance(*, now_ts, active_provider, price_loader, observation_loader=None):
     if path is None:
         return None
     now = _number(now_ts)
+    arrival_grace = BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS if observation_loader is not None else 0.0
     with storage.with_lock("physical_v3_expiry_calibration", timeout_sec=0.2):
         state = _read(path)
         if state is None:
@@ -361,7 +364,7 @@ def advance(*, now_ts, active_provider, price_loader, observation_loader=None):
                     if entry_quote:
                         row.update(entry=entry_quote, state="OBSERVING")
                         changed = True
-                    elif now > row["created_ts"] + quotes.MAX_ENTRY_DELAY_SECONDS:
+                    elif now > row["created_ts"] + quotes.MAX_ENTRY_DELAY_SECONDS + arrival_grace:
                         reason = "ENTRY_OBSERVATION_MISSING"
                 for candidate in row["candidates"] + row.get("post_model_observations", []):
                     if candidate["outcome"] != "PENDING":
@@ -376,7 +379,7 @@ def advance(*, now_ts, active_provider, price_loader, observation_loader=None):
                         if expiry_quote:
                             candidate.update(quote=expiry_quote, outcome=quotes._classify(row["direction"], row["entry"]["price"], expiry_quote["price"]), reason="OBSERVED_PAIRED_EXPIRY")
                             changed = True
-                        elif now > target + quotes.MAX_SAMPLE_DELAY_SECONDS:
+                        elif now > target + quotes.MAX_SAMPLE_DELAY_SECONDS + arrival_grace:
                             candidate.update(outcome="UNKNOWN", reason="EXPIRY_OBSERVATION_MISSING")
                             changed = True
                 if all(c["outcome"] != "PENDING" for c in row["candidates"]):
@@ -420,6 +423,9 @@ def analyze(state, *, now_ts):
               "entry_quote_delay_seconds":_quantiles([]), "paired_expiry_observations":[],
               "buffer_objective":_buffer_policy(), "legacy_directional_only_entries":0,
               "prospective_buffer_entries":0, "buffer_collection_started_ts":None,
+              "buffered_quote_collection": {"entry_source_window_seconds": quotes.MAX_ENTRY_DELAY_SECONDS,
+                  "expiry_source_window_seconds": quotes.MAX_SAMPLE_DELAY_SECONDS,
+                  "missing_quote_arrival_grace_seconds": BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS},
               "readiness_policy": {"minimum_train_decisive": MIN_TRAIN, "minimum_validation_decisive": MIN_VALIDATION,
                                    "fixed_train_entries":TRAIN_ENTRIES, "fixed_holdout_entries":HOLDOUT_ENTRIES,
                                    "target_win_rate": TARGET_WIN_RATE,
