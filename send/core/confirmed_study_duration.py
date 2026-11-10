@@ -170,6 +170,11 @@ def validate_observation(row: Mapping[str, Any], scope: Mapping[str, Any]) -> No
     plan = observation.get("duration_plan")
     validate_plan(plan)
     context = row["policies"]["PHYSICAL_ONLY_V3"]
+    # The runtime accepts EURUSD while the quote-study scope stores EUR/USD.
+    # Compare this explicit alias pair without rewriting the frozen plan/digest.
+    symbol_matches = (plan["symbol"] == scope["symbol"] or
+                      (plan["symbol"] in ("EURUSD", "EUR/USD")
+                       and scope["symbol"] in ("EURUSD", "EUR/USD")))
     if (observation.get("duration_policy") != POLICY
             or type(observation.get("duration_seconds")) is not int
             or observation["duration_seconds"] != plan["duration_seconds"]
@@ -177,7 +182,7 @@ def validate_observation(row: Mapping[str, Any], scope: Mapping[str, Any]) -> No
             or observation.get("confirmed_ts") != plan["confirmed_ts"]
             or plan["confirmed_ts"] != context["confirm_ts"] or plan["pre_ts"] != context["pre_ts"]
             or plan["signal_id"] != context["opportunity_signal_id"]
-            or plan["direction"] != row["direction"] or plan["symbol"] != scope["symbol"]
+            or plan["direction"] != row["direction"] or not symbol_matches
             or plan["parameter_sha256"] != scope["parameter_sha256"]
             or plan["minimum_minutes"] != scope["model_limits_minutes"]["min"]
             or plan["maximum_minutes"] != scope["model_limits_minutes"]["max"]):
