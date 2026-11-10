@@ -13,6 +13,7 @@ from runtime.market_history_integrity import inspect_candles, inspect_history, s
 from runtime.observation_timing import WINDOW, distribution
 from runtime.candle_store_writer import CandleStoreWriter
 from runtime.quote_window_diagnostics import MAX_REJECTED_TIMESTAMPS, QuoteWindowDiagnostics
+from runtime.quote_evidence_store import QuoteEvidenceStore
 
 
 FINNHUB_WS_URL = "wss://ws.finnhub.io"
@@ -170,6 +171,7 @@ class FinnhubForexFeed:
         self._quote_window_diagnostics = QuoteWindowDiagnostics()
         self._recent_out_of_order_tick_ms = deque(maxlen=MAX_REJECTED_TIMESTAMPS)
         self._out_of_order_tick_count = 0
+        self._future_tick_quarantined_count = 0
         self._store_load_state = "NOT_ATTEMPTED"
         self._store_write_state = "NOT_ATTEMPTED"
         self._restored_candle_counts: Dict[str, int] = {"M1": 0, "M5": 0}
@@ -195,6 +197,12 @@ class FinnhubForexFeed:
         self._transport_pong_count = 0
         self._last_transport_pong_ts: Optional[int] = None
         self._load_store()
+        self._quote_store = QuoteEvidenceStore(
+            self.store_path.with_name(self.store_path.stem + ".quotes.json"),
+            max_quotes=MAX_BUFFERED_REAL_QUOTES, now_ts=float(self.clock()),
+        )
+        self._real_quote_buffer.extend(self._quote_store.restored_samples())
+        self._retained_quote_total = len(self._real_quote_buffer)
 
     def _connect(self):
         url = f"{FINNHUB_WS_URL}?token={self.token}"
@@ -304,6 +312,7 @@ class FinnhubForexFeed:
         if not isinstance(rows, list):
             return
         changed = False
+        quote_changed = False
         first_trade_seen = False
         for row in rows:
             if not isinstance(row, dict) or row.get("s") != self.finnhub_symbol:
@@ -319,15 +328,35 @@ class FinnhubForexFeed:
             if (not 0<tick_ms<2**53 or not math.isfinite(price) or price<=0
                     or not math.isfinite(volume) or volume<0):
                 continue
+            received_ts = float(self.clock())
+            if not math.isfinite(received_ts) or received_ts <= 0:
+                continue
             with self._lock:
+                # Research evidence follows source time, independently of live
+                # current-price chronology. Late rows must not disappear merely
+                # because another row in the batch has a newer timestamp.
+                self._real_quote_buffer.append({
+                    "provider": "FINNHUB", "symbol": self.symbol, "price": price,
+                    "observed_ts": float(tick_ms // 1000),
+                    "source": "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1",
+                    "_provider_tick_ms": tick_ms, "_received_ts": received_ts,
+                })
+                self._retained_quote_total += 1
+                self._quote_store.record(tick_ms=tick_ms, price=price, received_ts=received_ts)
+                quote_changed = True
+                if tick_ms > received_ts * 1000:
+                    # Keep the original row quarantined for historical lookup
+                    # after its source time; it cannot poison live high-water.
+                    self._future_tick_quarantined_count += 1
+                    continue
                 if self._last_tick_ms is not None and tick_ms < self._last_tick_ms:
-                    # Evidence only: preserve the existing chronological rejection.
-                    self._recent_out_of_order_tick_ms.append(tick_ms)
+                    # Retained above for research, never used to rewind current
+                    # price, candles, freshness or connection recovery.
                     self._out_of_order_tick_count += 1
                     continue
                 if self._last_tick_ms is not None and tick_ms > self._last_tick_ms:
                     self._tick_intervals.append((tick_ms-self._last_tick_ms)/1000)
-                receive_age=float(self.clock())-tick_ms/1000
+                receive_age=received_ts-tick_ms/1000
                 if math.isfinite(receive_age):
                     self._tick_receive_ages.append(receive_age)
                 first_trade_seen = first_trade_seen or self._valid_trade_tick_count == 0
@@ -335,17 +364,13 @@ class FinnhubForexFeed:
                 self._last_price_ts = tick_ms // 1000
                 for code, seconds in (("M1", 60), ("M5", 300)):
                     self._upsert_tick(code, seconds, tick_ms // 1000, price, volume)
-                self._real_quote_buffer.append({
-                    "provider": "FINNHUB", "symbol": self.symbol, "price": price,
-                    "observed_ts": float(tick_ms // 1000),
-                    "source": "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1",
-                    "_provider_tick_ms": tick_ms,
-                })
                 self._valid_trade_tick_count += 1
                 self._stream_state = "RECEIVING_REAL_TICKS"
                 self._subscription_state = "REAL_TICK_CONFIRMED"
                 self._stream_last_failure_class = None
             changed = True
+        if quote_changed:
+            self._quote_store.request()
         if changed:
             self._request_store_persist()
             stream_event = "FIRST_REAL_TICK" if first_trade_seen else None
@@ -534,12 +559,14 @@ class FinnhubForexFeed:
             writer = CandleStoreWriter(self._persist_store)
             writer.start()
             self._store_writer = writer
+            self._quote_store.start()
         try:
             self._run_stream()
         finally:
             # stop() signals the receiver. Only after the last accepted frame
             # do we drain persistence; never join a worker under the quote lock.
             writer.close()
+            self._quote_store.close()
 
     def _run_stream(self) -> None:
         while not self._stop_event.is_set():
@@ -669,6 +696,9 @@ class FinnhubForexFeed:
                                         else {"mode": "SYNCHRONOUS_DIRECT_INGEST"}),
                 "buffered_real_quote_count":len(self._real_quote_buffer),
                 "out_of_order_tick_count":self._out_of_order_tick_count,
+                "out_of_order_quote_retained_count":self._out_of_order_tick_count,
+                "future_tick_quarantined_count":self._future_tick_quarantined_count,
+                "quote_evidence_store":self._quote_store.summary(),
                 "tick_timing_scope":"LAST_128_POSITIVE_PROVIDER_TIMESTAMP_STEPS_AND_ACCEPTED_TICK_RECEIVE_AGES_IN_THIS_PROCESS",
                 "provider_tick_interval_seconds":distribution(self._tick_intervals),
                 "provider_tick_receive_age_seconds":distribution(self._tick_receive_ages),
@@ -677,9 +707,9 @@ class FinnhubForexFeed:
     def get_price_sample_at_or_after(self, symbol, target_ts, max_delay):
         """Earliest retained actual tick in a declared window, never a candle substitute.
 
-        Preserve the existing source-second convention. A late worker may read
-        an earlier genuine observation; future ticks and missing windows are
-        never replaced with the current price. No provider request is made.
+        Preserve the existing source-second convention. Restored and late
+        genuine observations retain their actual provenance. Future source or
+        receipt times remain ineligible; no provider request is made.
         """
         normalize_symbol(symbol)
         if (type(target_ts) not in (int, float) or type(max_delay) not in (int, float)
@@ -691,17 +721,17 @@ class FinnhubForexFeed:
         with self._lock:
             for sample in self._real_quote_buffer:
                 if (target_ts <= sample["observed_ts"] <= min(target_ts + max_delay, now)
-                    and sample["_provider_tick_ms"] <= now * 1000):
-                    selected = sample
-                    break
-            result = ({key: value for key, value in selected.items() if key != "_provider_tick_ms"}
+                    and sample["_provider_tick_ms"] <= now * 1000 and sample["_received_ts"] <= now):
+                    if selected is None or sample["_provider_tick_ms"] < selected["_provider_tick_ms"]:
+                        selected = sample  # stable receipt order breaks equal source-time ties
+            result = ({key: value for key, value in selected.items() if not key.startswith("_")}
                       if selected is not None else None)
             try:
                 diagnostic = self._quote_window_diagnostics.observe(
                     samples=self._real_quote_buffer,
                     rejected_tick_ms=self._recent_out_of_order_tick_ms,
                     target_ts=target_ts, max_delay=max_delay, now_ts=now,
-                    selected=selected, accepted_tick_count=self._valid_trade_tick_count,
+                    selected=selected, accepted_tick_count=self._retained_quote_total,
                 )
             except Exception:
                 pass  # Diagnostic failure must not erase a valid selected quote.
@@ -730,8 +760,9 @@ class FinnhubForexFeed:
             ticks = []
             for sample in self._real_quote_buffer:
                 observed_ts = sample["_provider_tick_ms"] / 1000
-                if first_tick_ts <= observed_ts <= end_ts:
+                if first_tick_ts <= observed_ts <= end_ts and sample["_received_ts"] <= float(self.clock()):
                     ticks.append({"observed_ts": observed_ts, "price": sample["price"]})
+            ticks.sort(key=lambda row: row["observed_ts"])
 
         if inspect_candles(candles, 60)["state"] == "INVALID":
             candles = []

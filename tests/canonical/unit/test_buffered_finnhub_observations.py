@@ -30,12 +30,13 @@ def test_retained_first_quote_is_not_overwritten_by_later_price(tmp_path):
     assert feed.get_price_sample_at_or_after("EUR/USD",1002,2) is None
 
 
-def test_future_and_out_of_order_provider_ticks_do_not_create_earlier_evidence(tmp_path):
+def test_future_ticks_wait_and_late_evidence_does_not_rewind_live_price(tmp_path):
     clock=[1006.1]
     _,feed=_feed(tmp_path,clock)
     _tick(feed,1005000,1.1)
     _tick(feed,1004000,7.0)
-    assert feed.get_price_sample_at_or_after("EUR/USD",1004,0) is None
+    assert feed.get_price_sample_at_or_after("EUR/USD",1004,0)["price"] == 7.0
+    assert feed._last_tick_ms == 1005000 and feed._candles["M1"][0]["close"] == 1.1
     _tick(feed,1006900,2.0)
     assert feed.get_price_sample_at_or_after("EUR/USD",1006,1) is None
     clock[0]=1007
@@ -46,6 +47,7 @@ def test_saved_candles_never_backfill_the_live_quote_buffer(tmp_path):
     clock=[1006.0]
     module,feed=_feed(tmp_path,clock)
     _tick(feed,900000,1.0);_tick(feed,1005000,1.5)
+    feed._quote_store.path.unlink()  # explicitly exercise a legacy candle-only store
     restored=module.FinnhubForexFeed(token="OFFLINE_TEST_ONLY", clock=lambda:clock[0],
         store_path=feed.store_path, minimum_candles=2)
     assert restored._candles["M1"]

@@ -30,17 +30,17 @@ the normal OPEN is not duplicated by a study-entry notification.
 
 ## Observations and diagnosis
 
-Accepted source ticks are retained in a bounded in-process buffer. A delayed
+Genuine source ticks are retained in a bounded observation buffer. A delayed
 research worker selects the earliest retained genuine quote inside each already
 declared entry/expiry window. Existing source-second timestamp semantics and
 10-second entry/2-second expiry limits remain unchanged. No candle close is
 substituted for a missing tick, and a newer out-of-window price cannot recover
 an observation. Future provider ticks are not exposed before their source time.
-An absent or evicted observation remains UNKNOWN.
+An absent observation remains UNKNOWN after its declared arrival allowance.
 
-The V3 expiry-research protocol reads existing V2 records without rewriting
-their outcomes and writes version V3, preserving an exact hashed V2 backup before
-the first upgraded write. New retained-quote observations expose
+The original V3 expiry-research release read existing V2 records without rewriting
+their outcomes and wrote version V3, preserving an exact hashed V2 backup before
+the first upgraded write. Retained-quote observations expose
 their distinct provenance. Old market features are never backfilled. New entries
 freeze the originating physical DecisionObject measurements and their digest.
 Research reports source coverage, sampling sources, operational handoff reasons
@@ -65,10 +65,49 @@ entry and measured/unknown baseline expiry; future checkpoints cannot rewrite it
 
 Separate study-entry/result counters preserve the distinction from canonical
 OPEN_NOW publication and broker execution. Pending experiments and real receipts
-remain preserved across restart. The in-process quote buffer cannot reconstruct
-ticks missed during an outage; those observations remain unavailable.
+remain preserved across restart. The genuine quote archive can recover ticks
+persisted before a restart, but cannot reconstruct ticks missed during an outage;
+those observations remain unavailable.
 Study transport uses one separate sender so API latency does not block the
 sampling worker. Reservations are persisted independently of quote measurement.
+
+## Prospective quote recovery — Owner correction, 2026-11-10
+
+The Owner requests investigation and repair of UNKNOWN outcomes. Production
+evidence after receiver/disk isolation includes genuine tick receive delays of
+7.366 seconds; the previous four-second arrival grace can close an otherwise
+recoverable observation prematurely. New experiments therefore freeze
+`RETAINED_SOURCE_QUOTE_RECOVERY_V1` at capture: 15 seconds of arrival grace,
+10 seconds of source-time entry eligibility, and 2 seconds of source-time expiry
+eligibility. The final missing-data deadline for a new expiry observation is
+expiry + 2 + 15 seconds. Observed results are available as soon as the eligible
+tick is found. The extra arrival allowance never extends a trade, moves its
+expiry, or admits a later source price. Existing experiments without this policy
+retain their four-second allowance. Published final outcomes are immutable.
+
+The bounded durable archive stores only genuine FINNHUB/OANDA:EUR_USD stream
+observations, with the original provider millisecond timestamp, price and
+receipt timestamp. Restart recovery exposes actual archived ticks with distinct
+`DURABLE_STREAM_PROVIDER_TICK_BUFFER_V1` provenance. It never turns a persisted
+candle into a tick, supplies live readiness, or substitutes startup time for
+source/receipt time. Archive failure cannot block live quote receipt; durability
+and archive failures are reported separately. The archive does not contain ticks
+that were never received or restore observations from before its introduction.
+
+Genuine out-of-order ticks remain available to the research observation selector,
+which chooses the earliest eligible source tick deterministically. They cannot
+rewind the current price, candles or readiness. Future-stamped observations are
+quarantined from live chronology and cannot be selected before their source time.
+No extra provider connection, alternate venue, historical candle fallback or
+subscription change is introduced.
+
+Storage protocol V5 preserves exact hashed pre-upgrade bytes before its first
+write, reads V2/V3/V4 records without relabelling outcomes, and distinguishes
+published results by frozen quote-recovery policy. The 15-second bound addresses
+measured arrival latency; it is not a completeness guarantee. Source-event gaps
+wider than the unchanged expiry window can still produce UNKNOWN. Issue #269
+remains open until natural post-release evidence demonstrates acceptable source
+coverage. Calibration and broker-execution authorities are unchanged.
 
 ## Prospective lifecycle diagnosis
 

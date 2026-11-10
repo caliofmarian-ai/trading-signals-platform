@@ -373,13 +373,14 @@ def test_direct_ingest_stays_synchronous_and_saved_candles_are_not_live_ticks(tm
     assert feed.store_path.exists()
     assert feed.store_path.stat().st_mode & 0o777 == 0o600
     assert feed.health()["candle_store_writer"] == {"mode": "SYNCHRONOUS_DIRECT_INGEST"}
+    feed._quote_store.path.unlink()  # candle-only legacy store cannot manufacture ticks
     restored = feed_at(tmp_path)
     assert restored._candles["M1"]
     assert restored._last_price_ts is None
     assert restored.get_price_sample_at_or_after("EUR/USD", 1000, 2) is None
 
 
-def test_async_persistence_does_not_change_quote_selection_or_reject_policy(tmp_path):
+def test_async_persistence_preserves_source_window_and_late_quote_evidence(tmp_path):
     feed = feed_at(tmp_path)
     writer = CandleStoreWriter(feed._persist_store)
     writer.start()
@@ -390,9 +391,10 @@ def test_async_persistence_does_not_change_quote_selection_or_reject_policy(tmp_
         before = deepcopy(list(feed._real_quote_buffer))
         for target in (999, 1000, 1000.5, 1001, 1003, 1007):
             for delay in (0, .5, 2, 10):
-                expected = next(({k: v for k, v in row.items() if k != "_provider_tick_ms"}
-                                 for row in before if target <= row["observed_ts"] <= min(target + delay, 1005)
-                                 and row["_provider_tick_ms"] <= 1005000), None)
+                expected = next(({k: v for k, v in row.items() if not k.startswith("_")}
+                                 for row in sorted(before, key=lambda r: r["_provider_tick_ms"])
+                                 if target <= row["observed_ts"] <= min(target + delay, 1005)
+                                 and row["_provider_tick_ms"] <= 1005000 and row["_received_ts"] <= 1005), None)
                 assert feed.get_price_sample_at_or_after("EUR/USD", target, delay) == expected
         assert writer.flush()
         assert list(feed._real_quote_buffer) == before

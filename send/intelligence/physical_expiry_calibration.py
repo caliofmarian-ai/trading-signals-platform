@@ -20,8 +20,9 @@ from intelligence import shadow_model_time_research as quotes
 from intelligence import buffer_expiry_evidence as buffer_evidence
 from core.market_history_policy import HISTORY_POLICY
 
-PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V4"
-PREVIOUS_PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V3"
+PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V5"
+PREVIOUS_PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V4"
+OLDER_PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V3"
 LEGACY_PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V2"
 BIASES = (0.0, 0.05, 0.10, 0.15, 0.20, 0.25)
 MAX_RECORDS = 512
@@ -35,10 +36,26 @@ MAX_UNKNOWN_FRACTION = 0.10
 VALIDATION_Z = NormalDist().inv_cdf(1 - 0.05 / 2)
 REPORT_SECONDS = 60
 # Allow a delayed retained tick to arrive without extending its source-time window.
-BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS = 4.0
+# Post-isolation production evidence includes receive delays of 7.366 seconds.
+# This prospectively frozen allowance addresses receipt latency, not source gaps.
+LEGACY_BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS = 4.0
+BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS = 15.0
+QUOTE_RECOVERY_POLICY = "RETAINED_SOURCE_QUOTE_RECOVERY_V1"
+LEGACY_QUOTE_RECOVERY_POLICY = "RETAINED_SOURCE_QUOTE_LEGACY_4S"
 _last_report: dict[str, int] = {}
 POST_MODEL_OFFSETS = (60, 180, 300)  # existing diagnostic checkpoints; never execution expiry
 STUDY_DURATION_SOURCE = "CONFIRM_MODEL_TIME"
+
+
+def _quote_recovery_policy():
+    return {"policy": QUOTE_RECOVERY_POLICY,
+            "arrival_grace_seconds": BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS,
+            "expiry_window_seconds": quotes.MAX_SAMPLE_DELAY_SECONDS,
+            "entry_window_seconds": quotes.MAX_ENTRY_DELAY_SECONDS}
+
+
+def _quote_recovery_identity(row):
+    return row.get("quote_recovery_policy", {}).get("policy", LEGACY_QUOTE_RECOVERY_POLICY)
 
 
 def displayed_study_observation(row):
@@ -102,13 +119,13 @@ def _read(path):
 
 
 def _save(path, state):
-    if state.get("protocol") in {PREVIOUS_PROTOCOL, LEGACY_PROTOCOL} and path.exists():
+    if state.get("protocol") in {PREVIOUS_PROTOCOL, OLDER_PROTOCOL, LEGACY_PROTOCOL} and path.exists():
         original = path.read_bytes()
         backup_dir = path.parent / "protocol_backups"
         if backup_dir.is_symlink():
             raise ValueError("INVALID_PROTOCOL_BACKUP_PATH")
         backup_dir.mkdir(parents=True, exist_ok=True)
-        backup = backup_dir / ("physical_pre_seconds_" + hashlib.sha256(original).hexdigest() + ".json")
+        backup = backup_dir / ("physical_pre_quote_recovery_" + hashlib.sha256(original).hexdigest() + ".json")
         if not backup.exists():
             with backup.open("xb") as handle:
                 handle.write(original)
@@ -125,7 +142,7 @@ def _save(path, state):
 
 
 def validate(state):
-    if (not isinstance(state, dict) or state.get("protocol") not in {PROTOCOL, PREVIOUS_PROTOCOL, LEGACY_PROTOCOL}
+    if (not isinstance(state, dict) or state.get("protocol") not in {PROTOCOL, PREVIOUS_PROTOCOL, OLDER_PROTOCOL, LEGACY_PROTOCOL}
         or state.get("bias_grid") != list(BIASES) or not isinstance(state.get("records"), dict)
         or len(state["records"]) > MAX_RECORDS or type(state.get("capacity_rejections")) is not int
         or state["capacity_rejections"] < 0):
@@ -143,6 +160,8 @@ def validate(state):
         raise ValueError("INVALID_CALIBRATION_SCOPE")
     seen_opportunities = set()
     for identity, row in state["records"].items():
+        if "quote_recovery_policy" in row and row["quote_recovery_policy"] != _quote_recovery_policy():
+            raise ValueError("INVALID_QUOTE_RECOVERY_POLICY")
         if (not isinstance(identity, str) or len(identity) != 64 or row.get("direction") not in {"BUY", "SELL"}
             or row.get("state") not in {"WAITING_ENTRY", "OBSERVING", "FINAL"}
             or not isinstance(row.get("policies"), dict) or not row["policies"]):
@@ -332,6 +351,7 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
                 state["capacity_rejections"] += 1
                 continue
             row.update(policies={policy: context}, state="WAITING_ENTRY", entry=None,
+                       quote_recovery_policy=_quote_recovery_policy(),
                        buffer_snapshot=frozen, buffer_snapshot_sha256=_digest(frozen),
                        candidates=[{"bias": bias, "horizon_seconds": row["model_seconds"] * (1 - bias),
                                     "outcome": "INFEASIBLE" if row["model_seconds"] * (1 - bias) < row["adjusted_seconds"] else "PENDING",
@@ -376,7 +396,9 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
 
 def _observed_quote(raw, now):
     """Accept retained genuine provider ticks separately from fresh poll samples."""
-    if isinstance(raw, dict) and raw.get("source") == "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1":
+    if isinstance(raw, dict) and raw.get("source") in (
+        "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1", "DURABLE_STREAM_PROVIDER_TICK_BUFFER_V1"
+    ):
         if raw.get("provider") != "FINNHUB" or str(raw.get("symbol", "")).replace("/", "") != "EURUSD":
             return None
         try:
@@ -386,7 +408,7 @@ def _observed_quote(raw, now):
         if stamp > now:
             return None
         return {"provider": "FINNHUB", "symbol": "EUR/USD", "price": price,
-                "observed_ts": stamp, "source": "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1"}
+                "observed_ts": stamp, "source": raw["source"]}
     return quotes._sample(raw, now)
 
 
@@ -406,7 +428,6 @@ def advance(*, now_ts, active_provider, price_loader, observation_loader=None):
     if path is None:
         return None
     now = _number(now_ts)
-    arrival_grace = BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS if observation_loader is not None else 0.0
     with storage.with_lock("physical_v3_expiry_calibration", timeout_sec=0.2):
         state = _read(path)
         if state is None:
@@ -423,6 +444,9 @@ def advance(*, now_ts, active_provider, price_loader, observation_loader=None):
                     pass
             changed = _install_buffer_policy(state, now)
             for row in pending:
+                arrival_grace = (row.get("quote_recovery_policy", {}).get(
+                    "arrival_grace_seconds", LEGACY_BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS
+                ) if observation_loader is not None else 0.0)
                 if now < row["created_ts"]:
                     continue
                 reason = "PROVIDER_CHANGED" if active_provider != "FINNHUB" else None
@@ -496,7 +520,9 @@ def analyze(state, *, now_ts):
               "prospective_buffer_entries":0, "buffer_collection_started_ts":None,
               "buffered_quote_collection": {"entry_source_window_seconds": quotes.MAX_ENTRY_DELAY_SECONDS,
                   "expiry_source_window_seconds": quotes.MAX_SAMPLE_DELAY_SECONDS,
-                  "missing_quote_arrival_grace_seconds": BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS},
+                  "missing_quote_arrival_grace_seconds": BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS,
+                  "legacy_missing_quote_arrival_grace_seconds": LEGACY_BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS,
+                  "prospective_recovery_policy": QUOTE_RECOVERY_POLICY},
               "readiness_policy": {"minimum_train_decisive": MIN_TRAIN, "minimum_validation_decisive": MIN_VALIDATION,
                                    "fixed_train_entries":TRAIN_ENTRIES, "fixed_holdout_entries":HOLDOUT_ENTRIES,
                                    "target_win_rate": TARGET_WIN_RATE,
@@ -512,7 +538,8 @@ def analyze(state, *, now_ts):
               "history_policy": HISTORY_POLICY,
               "published_study_results": _counts([], 0),
               "published_study_results_scope": "ALL_HISTORICAL_DURATION_POLICIES",
-              "published_study_results_by_duration_policy": {}}
+              "published_study_results_by_duration_policy": {},
+              "published_study_results_by_quote_recovery_policy": {}}
     if state is None:
         from intelligence.same_symbol_sequences import summarize
         report["same_symbol_10min_sequences"] = summarize([])
@@ -550,6 +577,11 @@ def analyze(state, *, now_ts):
         policy: _counts([{**r, "candidates": [displayed_study_observation(r)]}
                          for r in delivered if second_duration.observation_policy(r) == policy], 0)
         for policy in sorted({second_duration.observation_policy(r) for r in delivered})
+    }
+    report["published_study_results_by_quote_recovery_policy"] = {
+        policy: _counts([{**r, "candidates": [displayed_study_observation(r)]}
+                         for r in delivered if _quote_recovery_identity(r) == policy], 0)
+        for policy in sorted({_quote_recovery_identity(r) for r in delivered})
     }
     report["study_delivery_statuses"] = dict(Counter(
         f"{phase}:{receipt['status']}" for r in records

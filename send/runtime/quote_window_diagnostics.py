@@ -94,6 +94,11 @@ class QuoteWindowDiagnostics:
             self.suppressed_events += 1
             return None
         self.slot_events += 1
+        received_ts = selected.get("_received_ts") if selected is not None else None
+        if type(received_ts) not in (int, float) or not isfinite(received_ts) or received_ts <= 0:
+            received_ts = None
+        receive_age = (received_ts - selected["_provider_tick_ms"] / 1000
+                       if received_ts is not None else None)
         # Do not spread provider dictionaries into logs: prices/credentials are
         # deliberately absent, including when extra keys exist on a test input.
         return {
@@ -112,6 +117,8 @@ class QuoteWindowDiagnostics:
             "rejection_evidence_capacity": MAX_REJECTED_TIMESTAMPS,
             "selected_source_ts": selected["observed_ts"] if selected is not None else None,
             "selected_provider_tick_ms": selected["_provider_tick_ms"] if selected is not None else None,
+            "selected_received_ts": received_ts,
+            "selected_receive_age_seconds": receive_age,
             "suppressed_diagnostic_events": self.suppressed_events,
             "source_time_convention": "EXISTING_PROVIDER_SECOND_BUCKET",
             "scope": "CURRENT_PROCESS_RETAINED_TIMESTAMPS_AT_LOOKUP",

@@ -91,11 +91,15 @@ Entry/expiry scheduling, result, chart and periodic evidence use the same primar
 seconds. Compatibility minutes must equal seconds/60. Rendering from primary
 seconds avoids float tails such as 46.9999999999998. Legacy conversion may suppress
 only machine representation drift within four ULPs and at most one nanosecond.
-Genuine fractional seconds are not truncated. Quote windows and arrival grace
-remain unchanged; a missing expiry quote remains UNKNOWN, not a later WIN.
+Genuine fractional seconds are not truncated. This duration amendment leaves
+quote windows and arrival grace unchanged; a missing expiry quote remains
+UNKNOWN, not a later WIN. The subsequent 2026-11-10 prospective quote-recovery
+amendment in `V3_PHYSICAL_STUDY_VISIBILITY_PROTOCOL_v1.0.0.md` versions arrival
+grace separately and preserves every frozen duration and source-time window.
 
-Storage protocol V4 reads V2/V3 records unchanged and backs up the original
-pre-upgrade file before its first V4 save. New/old results have separate duration
+The duration release introduced storage protocol V4, which reads V2/V3 records
+unchanged and backs up the original pre-upgrade file before its first V4 save.
+New/old results have separate duration
 policy cohorts. The aggregate is explicitly historical, not performance evidence
 for the new policy. Numerical correctness, API delivery and prospective strategy
 efficacy are distinct. This policy does not validate an optimal expiry, promote
