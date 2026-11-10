@@ -95,6 +95,21 @@ def test_missing_reason_transition_and_observation_found_are_reported_once():
     assert _observe(probe, samples + [found], now=1006, selected=found) is None
 
 
+@pytest.mark.parametrize("received,expected_age", [(1006.5, 5.25), (None, None), ("PRIVATE", None)])
+def test_recovery_distinguishes_original_receipt_from_worker_lookup(received, expected_age):
+    probe = QuoteWindowDiagnostics()
+    _observe(probe, [], now=1003)
+    found = _sample(1001250)
+    if received is not None:
+        found["_received_ts"] = received
+    record = _observe(probe, [found], now=1007, selected=found)
+    assert record["lookup_ts"] == 1007
+    assert record["selected_provider_tick_ms"] == 1001250
+    assert record["selected_receive_age_seconds"] == expected_age
+    assert record["selected_received_ts"] == (1006.5 if expected_age is not None else None)
+    assert "PRIVATE" not in json.dumps(record)
+
+
 def test_future_tick_is_not_treated_as_missing_provider_data_or_used_early():
     sample = _sample(1000900)
     probe = QuoteWindowDiagnostics()
@@ -150,26 +165,27 @@ def test_actual_feed_preserves_missing_quote_and_logs_neighbors(tmp_path, capsys
     assert list(feed._real_quote_buffer) == frozen
 
 
-def test_feed_keeps_out_of_order_rejection_and_records_only_timestamps(tmp_path, capsys):
+def test_feed_retains_late_research_quote_without_rewinding_live_price(tmp_path, capsys):
     feed = _feed(tmp_path, [1006])
     _tick(feed, 1005000, 1.1)
     _tick(feed, 1004000, 7.0)
-    assert feed.get_price_sample_at_or_after("EUR/USD", 1004, 0) is None
+    assert feed.get_price_sample_at_or_after("EUR/USD", 1004, 0)["price"] == 7.0
     records = _records(capsys)
-    assert records[0]["reason"] == "OUT_OF_ORDER_REJECTION_IN_WINDOW"
+    assert records == []  # present evidence is no longer reported as rejected/missing
     assert feed._last_tick_ms == 1005000
     assert feed._candles["M1"][0]["close"] == 1.1
-    assert len(feed._real_quote_buffer) == 1
-    assert list(feed._recent_out_of_order_tick_ms) == [1004000]
+    assert len(feed._real_quote_buffer) == 2
+    assert list(feed._recent_out_of_order_tick_ms) == []
     assert feed.health()["out_of_order_tick_count"] == 1
 
 
-def test_rejection_timestamp_storage_is_bounded(tmp_path):
+def test_retained_late_ticks_are_not_misreported_as_rejected(tmp_path):
     feed = _feed(tmp_path, [1006])
     _tick(feed, 1005000)
     for _ in range(MAX_REJECTED_TIMESTAMPS + 20):
         _tick(feed, 1004000)
-    assert len(feed._recent_out_of_order_tick_ms) == MAX_REJECTED_TIMESTAMPS
+    assert len(feed._recent_out_of_order_tick_ms) == 0
+    assert len(feed._real_quote_buffer) == MAX_REJECTED_TIMESTAMPS + 21
     assert feed._out_of_order_tick_count == MAX_REJECTED_TIMESTAMPS + 20
 
 
@@ -215,6 +231,7 @@ def test_future_selection_and_existing_observation_grace_are_unchanged(tmp_path,
 def test_restart_does_not_reconstruct_tick_evidence_from_saved_candles(tmp_path, capsys):
     feed = _feed(tmp_path, [1006])
     _tick(feed, 1001000, 1.2)
+    feed._quote_store.path.unlink()  # old deployments have candles without a tick archive
     restored = _feed(tmp_path, [1006])
     assert restored._candles["M1"]
     assert restored.get_price_sample_at_or_after("EUR/USD", 1000, 2) is None
@@ -228,12 +245,12 @@ def test_diagnostics_do_not_change_reference_selector_for_many_windows(tmp_path,
     for ms in (999500, 1000900, 1003000, 1002000, 1006500, 1007000, 1007000):
         _tick(feed, ms)
     clock[0] = now
-    # Independent frozen contract: first accepted source-second observation
-    # in the inclusive caller window, additionally excluding future raw ticks.
+    # Earliest actual source tick in the unchanged inclusive source-second
+    # window; source and receipt must both be observable at the lookup time.
     for target in (999, 1000, 1000.5, 1001, 1003, 1005, 1007, 1010):
         for delay in (0, .5, 2, 10):
-            expected = next(({k: v for k, v in row.items() if k != "_provider_tick_ms"}
-                             for row in feed._real_quote_buffer
+            expected = next(({k: v for k, v in row.items() if not k.startswith("_")}
+                             for row in sorted(feed._real_quote_buffer, key=lambda r: r["_provider_tick_ms"])
                              if target <= row["observed_ts"] <= min(target + delay, now)
-                             and row["_provider_tick_ms"] <= now * 1000), None)
+                             and row["_provider_tick_ms"] <= now * 1000 and row["_received_ts"] <= now), None)
             assert feed.get_price_sample_at_or_after("EUR/USD", target, delay) == expected

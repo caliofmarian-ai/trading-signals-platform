@@ -9,7 +9,7 @@ from tests.canonical.integration.test_second_duration_pipeline import (
 )
 
 
-@pytest.mark.parametrize("protocol", ["PROSPECTIVE_PHYSICAL_V3_EXPIRY_V2", "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V3"])
+@pytest.mark.parametrize("protocol", ["PROSPECTIVE_PHYSICAL_V3_EXPIRY_V2", "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V3", "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V4"])
 def test_upgrade_backs_up_exact_old_bytes_and_finishes_old_expiry(seconds_pipeline, protocol):
     ctx = seconds_pipeline
     _step(ctx, "PRE", 0, new_policy=False)

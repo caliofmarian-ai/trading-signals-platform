@@ -345,9 +345,10 @@ def test_missing_buffered_quote_is_unknown_not_later_win(study_setup):
     row = _capture(study_setup, publish=False)
     study.advance(now_ts=BASE+32, active_provider="FINNHUB", price_loader=lambda _: _sample(BASE+32,1.1))
     target = BASE+32+row["model_seconds"]
-    clock[0] = target+10
-    study.advance(now_ts=target+10, active_provider="FINNHUB", observation_loader=lambda *a: None,
-                  price_loader=lambda _: _sample(target+10,1.2))
+    after_deadline = target + study.quotes.MAX_SAMPLE_DELAY_SECONDS + study.BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS + 1
+    clock[0] = after_deadline
+    study.advance(now_ts=after_deadline, active_provider="FINNHUB", observation_loader=lambda *a: None,
+                  price_loader=lambda _: _sample(after_deadline,1.2))
     saved = next(iter(study._read(study._path())["records"].values()))
     assert saved["candidates"][0]["outcome"] == "UNKNOWN"
     assert saved["candidates"][0]["quote"] is None
