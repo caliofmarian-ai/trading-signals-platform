@@ -1,9 +1,9 @@
-"""Prospective second-resolution duration candidate, NOT a runtime expiry policy.
+"""Numerical kernel for versioned prospective second-resolution private studies.
 
 Consumes the already computed adjusted movement time. It neither recomputes
 market indicators nor authorizes publication, calibration, or broker execution.
-The active strategy is deliberately not wired to this module until lifecycle
-migration and evidence-cohort separation are verified.
+The core confirmed-study plan binds this candidate to a live opportunity and
+actual delivery receipts; legacy Model Time and Execution Time stay separate.
 """
 from __future__ import annotations
 
