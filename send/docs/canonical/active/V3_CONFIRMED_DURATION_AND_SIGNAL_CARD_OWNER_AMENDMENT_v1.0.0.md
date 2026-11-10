@@ -39,10 +39,10 @@ declare an estimated duration statistically optimal.
 ## Current uncalibrated private study flow
 
 When the first CONFIRM has no governed execution duration, the explicitly labelled
-private study may disclose the already computed Model Time horizon as
-“DURATĂ STUDIU”. The frozen first-CONFIRM value and timestamp are carried in the
-successful receipt. A failed available calibrated plan is BLOCKED, not converted
-into an uncalibrated study.
+private study may disclose a prospectively frozen model-derived duration as
+“DURATĂ STUDIU”. New live opportunities follow the second-resolution policy below;
+preexisting chains retain their original Model Time horizon. A failed available
+calibrated plan is BLOCKED, not converted into an uncalibrated study.
 
 New study records keep a separate `study_observation` bound to that CONFIRM
 horizon. OPEN, observed simulated expiry, result text and result chart use this
@@ -56,11 +56,50 @@ select the best later outcome. A pending study horizon is sampled even if its
 independent research grid has already finished. Historical persisted studies
 retain their original declared horizons and outcomes.
 
-Model Time retains its existing integer-minute ceiling. A real value of five
-minutes displays “5 MIN 00 S”. Fractional governed values are converted to minutes
-and seconds without truncation: 3.45 minutes displays “3 MIN 27 S”; 4.77 displays
-“4 MIN 46.2 S”. A seconds-capable display does not invent seconds in the strategy
-or prove the broker supports that precision.
+Internal Model Time retains its existing integer-minute ceiling for physical
+feasibility and independent calibration research. It is no longer the quantizer
+for a new live private-study duration. Legacy fractional governed values retain
+their precision: 3.45 minutes displays “3 MIN 27 S”; 4.77 displays “4 MIN 46.2 S”.
+No display transformation changes a stored expiry or proves broker precision.
+
+## Second-resolution private studies — Owner continuation, PR #264
+
+The policy `ADJUSTED_MOVEMENT_SECOND_CEILING_V1` consumes the existing unrounded
+`t_needed_adjusted` and the configured minimum/maximum. It selects the smallest
+whole-second duration at least as long as the adjusted requirement and minimum.
+If no whole second fits below the maximum it rejects; it never clamps a required
+movement time down to the maximum. No new score, multiplier or default is added.
+For example, 8.6 minutes produces 516 seconds (8 min 36 s), not 9 minutes.
+4.77 minutes produces 287 seconds under this explicit whole-second study policy;
+that is distinct from formatting an already governed 286.2-second duration.
+
+Only live strategy evaluations with an explicit observation clock can introduce
+the new policy. Historical replay without that clock is unchanged. The first new
+PRE marks its opportunity. At its first CONFIRM the FSM freezes primary integer
+`duration_seconds`, the source adjusted time and limits, parameter fingerprint,
+opportunity/direction, confirmation time and decision/audit identities. A digest
+binds the complete plan. Missing plans cannot be filled at a later CONFIRM/OPEN.
+Old PRE/CONFIRM chains are not upgraded; current results are not rewritten.
+
+The model producer family remains `CONFIRM_MODEL_TIME`; the separate explicit
+`study_duration_policy` distinguishes adjusted-time seconds from old minute
+horizons. The actual successful CONFIRM receipt stores the policy, primary seconds
+and plan ID. OPEN requires an exact match, rechecks fresh adjusted movement time
+and unchanged parameter scope, and does not substitute a newly computed duration.
+
+Entry/expiry scheduling, result, chart and periodic evidence use the same primary
+seconds. Compatibility minutes must equal seconds/60. Rendering from primary
+seconds avoids float tails such as 46.9999999999998. Legacy conversion may suppress
+only machine representation drift within four ULPs and at most one nanosecond.
+Genuine fractional seconds are not truncated. Quote windows and arrival grace
+remain unchanged; a missing expiry quote remains UNKNOWN, not a later WIN.
+
+Storage protocol V4 reads V2/V3 records unchanged and backs up the original
+pre-upgrade file before its first V4 save. New/old results have separate duration
+policy cohorts. The aggregate is explicitly historical, not performance evidence
+for the new policy. Numerical correctness, API delivery and prospective strategy
+efficacy are distinct. This policy does not validate an optimal expiry, promote
+an execution-calibration artifact, or authorize broker execution.
 
 ## Image contract
 

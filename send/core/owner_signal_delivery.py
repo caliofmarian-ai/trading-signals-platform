@@ -17,6 +17,7 @@ import time
 from typing import Any
 
 from core import storage
+from core import confirmed_study_duration as second_duration
 
 
 TRUE = frozenset({"true", "1", "yes", "on"})
@@ -51,11 +52,25 @@ def project_confirmed_study(event: dict[str, Any], handoff: Any) -> dict[str, An
             or duration is None or confirmed is None
             or confirmed > event["created_ts"]):
         return event
+    if second_duration.POLICY_FIELD in row:
+        plan = row.get(second_duration.PLAN_FIELD)
+        if plan is None:
+            return event  # a missing seconds plan cannot fall back to a minute plan
+        second_duration.validate_plan(plan, row=row)
+        if plan["symbol"] != event.get("symbol"):
+            raise ValueError("CONFIRMED_SECONDS_SYMBOL_MISMATCH")
+        return {**event, **second_duration.event_fields(plan)}
     return {**event, "study_duration_minutes": duration / 60,
             "study_confirmed_ts": confirmed, "study_duration_source": "CONFIRM_MODEL_TIME"}
 
 
 def _confirm_duration_reason(event: dict[str, Any]) -> str | None:
+    if any(event.get(key) is not None for key in
+           ("study_duration_policy", "study_duration_seconds", "study_plan_id")):
+        try:
+            second_duration.validate_event_fields(event)
+        except (ValueError, TypeError, OverflowError):
+            return "OWNER_CONFIRM_SECONDS_PLAN_REQUIRED"
     if event.get("execution_time_available") is True:
         exact = _positive(event.get("confirm_expiry_minutes"))
         low = _positive(event.get("confirm_expiry_min_minutes"))
@@ -71,6 +86,10 @@ def _confirm_duration_reason(event: dict[str, Any]) -> str | None:
 
 
 def _open_duration_reason(event: dict[str, Any], confirm: dict[str, Any]) -> str | None:
+    if any(payload.get(key) is not None for payload in (event, confirm) for key in
+           ("study_duration_policy", "study_duration_seconds", "study_plan_id")):
+        if not second_duration.matching_receipt(event, confirm):
+            return "OWNER_CONFIRMED_SECONDS_PLAN_MISMATCH"
     if "study_duration_minutes" in event:
         expected = _positive(confirm.get("study_duration_minutes"))
         actual = _positive(event.get("study_duration_minutes"))
@@ -232,6 +251,9 @@ def record_acceptance(event: dict[str, Any], response: dict[str, Any], *,
             "confirm_expiry_min_minutes": event.get("confirm_expiry_min_minutes"),
             "confirm_expiry_max_minutes": event.get("confirm_expiry_max_minutes"),
             "execution_calibration_source": event.get("execution_calibration_source"),
+            "study_duration_seconds": event.get("study_duration_seconds"),
+            "study_duration_policy": event.get("study_duration_policy"),
+            "study_plan_id": event.get("study_plan_id"),
             "study_duration_minutes": event.get("study_duration_minutes"),
             "study_confirmed_ts": event.get("study_confirmed_ts"),
             "study_duration_source": event.get("study_duration_source"),
@@ -256,6 +278,9 @@ def record_acceptance(event: dict[str, Any], response: dict[str, Any], *,
         "direction": event.get("direction"),
         "confirm_expiry_minutes": receipt["confirm_expiry_minutes"],
         "open_now_expiry_minutes": receipt["open_now_expiry_minutes"],
+        "study_duration_seconds": receipt["study_duration_seconds"],
+        "study_duration_policy": receipt["study_duration_policy"],
+        "study_plan_id": receipt["study_plan_id"],
         "study_duration_minutes": receipt["study_duration_minutes"],
         "study_confirmed_ts": receipt["study_confirmed_ts"],
         "study_duration_source": receipt["study_duration_source"],

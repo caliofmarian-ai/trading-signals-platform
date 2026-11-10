@@ -231,6 +231,17 @@ def report_if_due(*, now_ts: float) -> dict[str, Any] | None:
                          f"\nWIN fragil (în buffer): {published.get('win_buffer_not_met', 0)}")
             else:
                 text += "\nRezultate studiu: statistici indisponibile."
+            cohorts = observed.get("published_study_results_by_duration_policy") or {}
+            if cohorts:
+                from core import confirmed_study_duration as durations
+                report["study_results_by_duration_policy"] = cohorts
+                text += "\nTotal istoric mai sus; politici de durată separate:"
+                names = {durations.POLICY: "La secundă", durations.LEGACY_POLICY: "Minute întregi",
+                         durations.LEGACY_OPEN_POLICY: "Istoric OPEN"}
+                for policy, values in sorted(cohorts.items()):
+                    text += (f"\n{names.get(policy, 'Politică necunoscută')}: "
+                             f"WIN {values.get('wins', 0)}, LOSS {values.get('losses', 0)}, "
+                             f"DRAW {values.get('draws', 0)}, UNKNOWN {values.get('unknown', 0)}")
         except Exception:
             text += "\nStudy progress is temporarily unavailable."
     result = telegram_publisher.send_message(chat_id=destination(), text=text)

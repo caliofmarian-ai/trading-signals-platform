@@ -14,6 +14,7 @@ from core.buffer_zone import BUFFER_POSITION_LABELS, classify_buffer_position
 from intelligence import buffer_expiry_evidence
 from intelligence import physical_expiry_calibration as study
 from core.signal_presentation import direction_label
+from core import confirmed_study_duration as second_duration
 
 STATUSES = {"RESERVED", "API_ACCEPTED", "FAILED", "UNKNOWN", "SKIPPED_STALE", "SKIPPED_STAGE_GUARD", "SKIPPED_DESTINATION_CHANGED", "SKIPPED_DURATION_INFEASIBLE"}
 _DELIVERY_IN_FLIGHT = threading.Lock()
@@ -74,6 +75,8 @@ def _entry_event(row):
     if "study_observation" in row:
         event.update(study_confirmed_ts=observation["confirmed_ts"],
                      study_duration_source=observation["duration_source"])
+    if "duration_policy" in observation:
+        event.update(second_duration.event_fields(observation["duration_plan"]))
     return event
 
 
@@ -104,7 +107,7 @@ def render_result(identity, row, signal_label):
                 if expiry_quote else "cotație lipsă")
     expiry_ts = row["entry"]["observed_ts"] + baseline["horizon_seconds"]
     return ("🧪 REZULTAT STUDIU V3\n"
-            f"EUR/USD · {direction_label(row['direction'])} · {_duration(baseline['horizon_seconds']/60)}\n"
+            f"EUR/USD · {direction_label(row['direction'])} · {_duration(baseline['horizon_seconds']/60, seconds=baseline.get('duration_seconds'))}\n"
             f"Intrare observată: {row['entry']['price']:.10g} la {_stamp(row['entry']['observed_ts'])}\n"
             f"Expirare simulată: {_stamp(expiry_ts)}\n"
             f"Observație la expirare: {observed}\n"
@@ -235,6 +238,8 @@ def dispatch(*, now_ts, active_provider):
             state = study._read(path)
             state["records"][identity]["study_delivery"][phase] = receipt
             study._save(path, state)
+        observation = study.displayed_study_observation(row)
+        expiry_quote = observation.get("quote") or {}
         print("TSP_PHYSICAL_STUDY_DELIVERY " + json.dumps({
             "phase": phase, "status": receipt["status"], "study_id": identity,
             "format": receipt["format"], "signal_label": signal_label,
@@ -242,6 +247,11 @@ def dispatch(*, now_ts, active_provider):
             "study_duration_seconds": study.displayed_study_observation(row)["horizon_seconds"],
             "study_duration_source": study.displayed_study_observation(row).get("duration_source", "LEGACY_OPEN_MODEL_TIME"),
             "study_confirmed_ts": study.displayed_study_observation(row).get("confirmed_ts"),
+            "study_duration_policy": second_duration.observation_policy(row),
+            "study_plan_id": (observation.get("duration_plan") or {}).get("plan_id"),
+            "study_outcome": observation["outcome"] if phase == "result" else None,
+            "expiry_quote_ts": expiry_quote.get("observed_ts") if phase == "result" else None,
+            "expiry_price": expiry_quote.get("price") if phase == "result" else None,
             "entry_observed_ts": row["entry"]["observed_ts"],
             "expiry_ts": row["entry"]["observed_ts"] + study.displayed_study_observation(row)["horizon_seconds"],
             "execution_calibration_proven": False, "broker_executed": False,
