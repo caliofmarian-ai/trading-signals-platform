@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from runtime.market_history_integrity import inspect_candles, inspect_history, summarize_gap_distribution
 from runtime.observation_timing import WINDOW, distribution
+from runtime.quote_window_diagnostics import MAX_REJECTED_TIMESTAMPS, QuoteWindowDiagnostics
 
 
 FINNHUB_WS_URL = "wss://ws.finnhub.io"
@@ -163,6 +164,9 @@ class FinnhubForexFeed:
         self._tick_intervals = deque(maxlen=WINDOW)
         self._tick_receive_ages = deque(maxlen=WINDOW)
         self._real_quote_buffer = deque(maxlen=MAX_BUFFERED_REAL_QUOTES)
+        self._quote_window_diagnostics = QuoteWindowDiagnostics()
+        self._recent_out_of_order_tick_ms = deque(maxlen=MAX_REJECTED_TIMESTAMPS)
+        self._out_of_order_tick_count = 0
         self._store_load_state = "NOT_ATTEMPTED"
         self._store_write_state = "NOT_ATTEMPTED"
         self._restored_candle_counts: Dict[str, int] = {"M1": 0, "M5": 0}
@@ -300,6 +304,9 @@ class FinnhubForexFeed:
                 continue
             with self._lock:
                 if self._last_tick_ms is not None and tick_ms < self._last_tick_ms:
+                    # Evidence only: preserve the existing chronological rejection.
+                    self._recent_out_of_order_tick_ms.append(tick_ms)
+                    self._out_of_order_tick_count += 1
                     continue
                 if self._last_tick_ms is not None and tick_ms > self._last_tick_ms:
                     self._tick_intervals.append((tick_ms-self._last_tick_ms)/1000)
@@ -628,6 +635,7 @@ class FinnhubForexFeed:
         # Caller holds the same lock as ingestion; no price or raw tick history.
         return {"quote_sample_contract":"ATOMIC_REAL_TICK_PRICE_TIMESTAMP_V1",
                 "buffered_real_quote_count":len(self._real_quote_buffer),
+                "out_of_order_tick_count":self._out_of_order_tick_count,
                 "tick_timing_scope":"LAST_128_POSITIVE_PROVIDER_TIMESTAMP_STEPS_AND_ACCEPTED_TICK_RECEIVE_AGES_IN_THIS_PROCESS",
                 "provider_tick_interval_seconds":distribution(self._tick_intervals),
                 "provider_tick_receive_age_seconds":distribution(self._tick_receive_ages),
@@ -646,12 +654,31 @@ class FinnhubForexFeed:
             or target_ts <= 0 or max_delay < 0):
             raise ValueError("invalid quote observation window")
         now = float(self.clock())
+        selected = diagnostic = None
         with self._lock:
             for sample in self._real_quote_buffer:
                 if (target_ts <= sample["observed_ts"] <= min(target_ts + max_delay, now)
                     and sample["_provider_tick_ms"] <= now * 1000):
-                    return {key: value for key, value in sample.items() if key != "_provider_tick_ms"}
-        return None
+                    selected = sample
+                    break
+            result = ({key: value for key, value in selected.items() if key != "_provider_tick_ms"}
+                      if selected is not None else None)
+            try:
+                diagnostic = self._quote_window_diagnostics.observe(
+                    samples=self._real_quote_buffer,
+                    rejected_tick_ms=self._recent_out_of_order_tick_ms,
+                    target_ts=target_ts, max_delay=max_delay, now_ts=now,
+                    selected=selected, accepted_tick_count=self._valid_trade_tick_count,
+                )
+            except Exception:
+                pass  # Diagnostic failure must not erase a valid selected quote.
+        if diagnostic is not None:
+            try:
+                # Never print while holding the ingestion lock.
+                print("TSP_QUOTE_WINDOW_EVIDENCE " + json.dumps(diagnostic, sort_keys=True), flush=True)
+            except Exception:
+                pass
+        return result
 
     def get_study_chart_evidence(self, entry_ts, expiry_ts):
         """Read bounded, already retained EUR/USD observations for an expiry chart."""
