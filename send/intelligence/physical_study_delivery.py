@@ -5,6 +5,7 @@ SignalEvent, approve an expiry artifact, count a canonical OPEN, or call a broke
 """
 from copy import deepcopy
 from datetime import datetime, timezone
+from decimal import Decimal, localcontext
 import json
 import time
 import threading
@@ -17,6 +18,7 @@ from core.signal_presentation import direction_label
 from core import confirmed_study_duration as second_duration
 
 STATUSES = {"RESERVED", "API_ACCEPTED", "FAILED", "UNKNOWN", "SKIPPED_STALE", "SKIPPED_STAGE_GUARD", "SKIPPED_DESTINATION_CHANGED", "SKIPPED_DURATION_INFEASIBLE"}
+RESULT_PRESENTATION_CONTRACT = "EXPLICIT_PRICE_EVIDENCE_V1"
 _DELIVERY_IN_FLIGHT = threading.Lock()
 
 
@@ -60,7 +62,11 @@ def validate_delivery(row):
 
 
 def _stamp(value):
-    return datetime.fromtimestamp(value, timezone.utc).strftime("%H:%M:%S UTC")
+    observed = datetime.fromtimestamp(value, timezone.utc)
+    stamp = observed.strftime("%H:%M:%S")
+    if observed.microsecond:
+        stamp += observed.strftime(".%f").rstrip("0")
+    return stamp + " UTC"
 
 
 def _entry_event(row):
@@ -92,30 +98,115 @@ def _render_entry_card(row, signal_label):
     return render_signal_card(_entry_event(row), signal_label, study=True)
 
 
+def _result_evidence(row):
+    """One bounded read-only projection for the caption and delivery evidence."""
+    observation = study.displayed_study_observation(row)
+    entry, expiry = row["entry"], observation["quote"]
+    frozen = row.get("buffer_snapshot")
+    distance = frozen.get("buffer_distance") if frozen else None
+    measured = buffer_expiry_evidence.measure(row["direction"], entry, expiry, frozen)
+
+    def source(quote):
+        if quote is None:
+            return None
+        value = quote.get("source")
+        return value if value in ("LIVE_STREAM_CURRENT_M1_CLOSE", "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1",
+                                 "DURABLE_STREAM_PROVIDER_TICK_BUFFER_V1") else "UNSPECIFIED"
+
+    reason = observation.get("reason")
+    if reason not in (None, "OBSERVED_PAIRED_EXPIRY", "ENTRY_OBSERVATION_MISSING",
+                       "EXPIRY_OBSERVATION_MISSING", "PROVIDER_CHANGED"):
+        reason = "UNSPECIFIED"
+    return {"presentation_contract": RESULT_PRESENTATION_CONTRACT,
+            "direction": row["direction"], "study_outcome": observation["outcome"],
+            "entry_price": entry["price"] if entry else None,
+            "entry_observed_ts": entry["observed_ts"] if entry else None,
+            "entry_quote_source": source(entry),
+            "expiry_price": expiry["price"] if expiry else None,
+            "expiry_quote_ts": expiry["observed_ts"] if expiry else None,
+            "expiry_quote_source": source(expiry), "observation_reason": reason,
+            "buffer_position": classify_buffer_position(row["direction"], entry["price"] if entry else None,
+                distance, expiry["price"] if expiry else None),
+            "buffer_full_margin_status": measured["status"]}
+
+
 def render_result(identity, row, signal_label):
     from core.signal_card import _duration
 
     baseline = study.displayed_study_observation(row)
+    entry = row["entry"]
     expiry_quote = baseline["quote"]
-    measured = buffer_expiry_evidence.measure(row["direction"], row["entry"],
-                                              expiry_quote, row["buffer_snapshot"])
-    label = {"MET": "DA", "NOT_MET": "NU", "UNAVAILABLE": "DATE INDISPONIBILE"}[measured["status"]]
-    position = classify_buffer_position(row["direction"], row["entry"]["price"],
-        row["buffer_snapshot"]["buffer_distance"], expiry_quote["price"] if expiry_quote else None)
-    result = "WIN fragil" if baseline["outcome"] == "WIN" and position == "INSIDE_BUFFER" else baseline["outcome"]
-    observed = (f"{expiry_quote['price']:.10g} la {_stamp(expiry_quote['observed_ts'])}"
-                if expiry_quote else "cotație lipsă")
-    expiry_ts = row["entry"]["observed_ts"] + baseline["horizon_seconds"]
-    return ("🧪 REZULTAT STUDIU V3\n"
-            f"EUR/USD · {direction_label(row['direction'])} · {_duration(baseline['horizon_seconds']/60, seconds=baseline.get('duration_seconds'))}\n"
-            f"Intrare observată: {row['entry']['price']:.10g} la {_stamp(row['entry']['observed_ts'])}\n"
-            f"Expirare simulată: {_stamp(expiry_ts)}\n"
-            f"Observație la expirare: {observed}\n"
-            f"Direcție la expirare: {result}\n"
-            f"Poziție la expirare: {BUFFER_POSITION_LABELS[position]}\n"
-            f"Marjă completă la expirare: {label}\n"
-            "Rezultat al simulării pe cotații observate"
-            + (f"\n{signal_label} · Dublin" if signal_label else "\nNumăr indisponibil"))
+    evidence = _result_evidence(row)
+    direction, outcome = evidence["direction"], evidence["study_outcome"]
+    frozen = row.get("buffer_snapshot")
+    distance = frozen.get("buffer_distance") if frozen else None
+    label = {"MET": "DA", "NOT_MET": "NU", "UNAVAILABLE": "DATE INDISPONIBILE"}[evidence["buffer_full_margin_status"]]
+    position = evidence["buffer_position"]
+    result = "UNKNOWN — date incomplete" if outcome == "UNKNOWN" else outcome
+    expiry_ts = entry["observed_ts"] + baseline["horizon_seconds"] if entry else None
+
+    def price(value):
+        # Shortest round-trip form keeps distinct source prices visibly distinct.
+        return str(value)
+
+    def observation(name, quote):
+        if quote is None:
+            return f"{name}: LIPSĂ"
+        return f"{name} colectată: {price(quote['price'])} · {_stamp(quote['observed_ts'])}"
+
+    def source(value):
+        if value is None:
+            return "lipsă"
+        return {
+            "LIVE_STREAM_CURRENT_M1_CLOSE": "Finnhub flux",
+            "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1": "Finnhub memorie",
+            "DURABLE_STREAM_PROVIDER_TICK_BUFFER_V1": "Finnhub arhivă",
+        }.get(value, "sursă nedetaliată")
+
+    lines = ["🧪 REZULTAT STUDIU V3", f"Rezultat: {result}",
+             f"EUR/USD · {direction} · {_duration(baseline['horizon_seconds']/60, seconds=baseline.get('duration_seconds'))}",
+             observation("Intrare", entry),
+             f"Expirare declarată: {_stamp(expiry_ts) if expiry_ts is not None else 'nedeterminată fără intrare'}",
+             observation("Cotație expirare", expiry_quote)]
+    if entry is not None and expiry_quote is not None:
+        relation = ">" if expiry_quote["price"] > entry["price"] else "<" if expiry_quote["price"] < entry["price"] else "="
+        lines.append(f"Comparație {direction}: {price(expiry_quote['price'])} {relation} {price(entry['price'])} → {outcome}")
+    else:
+        lines.append("Comparație: indisponibilă; prețuri incomplete.")
+    lines.append(f"Surse intrare/expirare: {source(evidence['entry_quote_source'])} / {source(evidence['expiry_quote_source'])}")
+    if outcome == "UNKNOWN":
+        if expiry_ts is not None:
+            # Show the frozen source-time window, never the later arrival grace.
+            delay = row.get("quote_recovery_policy", {}).get("expiry_window_seconds", study.quotes.MAX_SAMPLE_DELAY_SECONDS)
+            lines.append(f"Interval expirare: {_stamp(expiry_ts)} – {_stamp(expiry_ts + delay)}")
+        elif row.get("created_ts") is not None:
+            delay = row.get("quote_recovery_policy", {}).get("entry_window_seconds", study.quotes.MAX_ENTRY_DELAY_SECONDS)
+            lines.append(f"Interval intrare: {_stamp(row['created_ts'])} – {_stamp(row['created_ts'] + delay)}")
+        reason = {
+            "ENTRY_OBSERVATION_MISSING": "cotația validă de intrare lipsește.",
+            "EXPIRY_OBSERVATION_MISSING": "cotația validă din intervalul expirării lipsește.",
+            "PROVIDER_CHANGED": "furnizor schimbat; observarea a fost oprită.",
+        }.get(evidence["observation_reason"], "motiv nedetaliat în înregistrare.")
+        lines.append(f"Motiv: {reason}")
+    limit = "LIPSĂ"
+    if entry is not None and distance is not None:
+        with localcontext() as context:
+            context.prec = 1100
+            edge = Decimal(str(entry["price"])) + (1 if direction == "BUY" else -1) * Decimal(str(distance))
+            exact_limit = str(edge)
+            # Keep a short exact boundary distinct from a nearby actual quote.
+            # Very long computed references are bounded and visibly approximate.
+            limit = exact_limit if len(exact_limit) <= 22 else f"~{format(edge, '.17g')} (aprox.)"
+    lines.extend([f"Poziție buffer: {BUFFER_POSITION_LABELS[position]}",
+                  f"Limită buffer: {limit}", f"Marjă completă la expirare: {label}",
+                  "Studiu pe cotații observate.",
+                  f"{signal_label} · Dublin" if signal_label else "Număr indisponibil"])
+    caption = "\n".join(lines)
+    # Conservatively count UTF-16 units, including emoji and the full lifecycle
+    # label; never send a caption that Telegram would reject or silently trim.
+    if len(caption.encode("utf-16-le")) // 2 > 1024:
+        raise ValueError("STUDY_RESULT_CAPTION_TOO_LONG")
+    return caption
 
 
 def _render_chart(row, signal_label):
@@ -255,6 +346,7 @@ def dispatch(*, now_ts, active_provider):
             "entry_observed_ts": row["entry"]["observed_ts"],
             "expiry_ts": row["entry"]["observed_ts"] + study.displayed_study_observation(row)["horizon_seconds"],
             "execution_calibration_proven": False, "broker_executed": False,
+            **(_result_evidence(row) if phase == "result" else {}),
         }, sort_keys=True), flush=True)
 
 

@@ -121,7 +121,7 @@ def test_confirm_photo_open_result_chart_and_summary_use_one_primary_seconds_pla
     assert len(ctx["photos"]) == 4
     assert ctx["photos"][-1]["reply_to_message_id"] == 3
     assert "8 MIN 36 S" in ctx["photos"][-1]["caption"]
-    assert "Direcție la expirare: WIN" in ctx["photos"][-1]["caption"]
+    assert "Rezultat: WIN" in ctx["photos"][-1]["caption"]
     assert chart_calls[0]["expiry_ts"] == expiry and chart_calls[0]["outcome"] == "WIN"
     assert saved["study_observation"]["duration_plan"] == frozen
     report = ctx["study"].summary(now_ts=expiry)

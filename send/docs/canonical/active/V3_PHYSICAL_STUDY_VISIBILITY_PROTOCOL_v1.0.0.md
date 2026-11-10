@@ -53,6 +53,47 @@ change the original result, fit an approved expiry or authorize execution beyond
 the governed horizon. Paired prospective training and untouched holdout rules
 remain unchanged; no scoring, threshold relaxation or automatic activation is added.
 
+## Directional result and collected evidence — Owner clarification, 2026-11-10
+
+The Owner explicitly defines settlement by the actual entry and expiry prices:
+
+| Direction | Expiry above entry | Expiry below entry | Equal prices |
+|---|---|---|---|
+| BUY | WIN | LOSS | DRAW |
+| SELL | LOSS | WIN | DRAW |
+
+This is the existing directional classifier. When both declared observations
+are valid and available, a missing or unmet buffer does not turn the result into
+UNKNOWN. A favorable expiry inside the buffer is WIN, with the buffer position
+and incomplete full margin reported separately. At or beyond the favorable edge
+it is WIN with the full margin met. The main result remains WIN; any fragility
+description belongs to the separate buffer evidence, not a replacement verdict.
+
+Each result presentation makes the collected entry and expiry observations
+explicit, including their prices, source timestamps and available provenance.
+A known result shows the numeric price comparison. Missing expiry evidence shows
+UNKNOWN / incomplete data, which observation is missing, the original eligible
+source-time window, and the recorded reason. A generic missing-observation reason
+does not establish a specific provider failure, transport failure or rejection.
+Receipt timing is not manufactured when the persisted sample does not contain it.
+
+The chart distinguishes entry/threshold reference lines, the expiry-time line,
+completed M1 candles and an actual expiry-price marker. A favorable earlier candle
+or an earlier buffer-edge contact does not establish the price at the later
+expiry. If the expiry observation is absent, its price field explicitly says
+LIPSĂ; the available candle context cannot supply a closing-price verdict.
+
+Periodic summaries show the current recovery-policy cohort separately from the
+legacy cohort. Recovery-policy and duration-policy views partition the same
+published records in different ways and must never be added together. Each view
+reconciles WIN + LOSS + DRAW + UNKNOWN to its published source total. Unavailable
+statistics are not converted to zeros or replaced by internal calibration rows.
+
+This clarification improves presentation and auditability. It changes no
+classification formula, quote window, confirmed duration, persisted outcome,
+calibration authority or delivery destination. Historical results remain bound
+to their original declared evidence and policy.
+
 ## Delivery evidence
 
 Only entries admitted with the new publication intent may notify. Existing old
