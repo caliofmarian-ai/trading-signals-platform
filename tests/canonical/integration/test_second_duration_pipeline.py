@@ -214,7 +214,8 @@ def test_periodic_report_separates_new_seconds_results_from_old_minutes(canonica
     monkeypatch.setattr(physical_params, "physical_runtime_enabled", lambda: True)
     monkeypatch.setattr(telegram_publisher, "send_message", lambda **kw: sent.append(kw) or {"ok": True})
     monkeypatch.setattr(physical_expiry_calibration, "summary", lambda **kw: {
-        "published_study_results": {"wins": 100, "losses": 50, "unknown": 10},
+        "study_open_now_api_accepted": 161, "study_results_api_accepted": 161,
+        "published_study_results": {"wins": 100, "losses": 50, "draws": 1, "unknown": 10},
         "published_study_results_by_duration_policy": {
             plans.POLICY: {"wins": 2, "losses": 1, "draws": 1, "unknown": 3},
             plans.LEGACY_POLICY: {"wins": 98, "losses": 49, "draws": 0, "unknown": 7}},
@@ -222,7 +223,9 @@ def test_periodic_report_separates_new_seconds_results_from_old_minutes(canonica
     _observe(module, 1000)
     report = module.report_if_due(now_ts=1001)
     text = sent[0]["text"]
-    assert "Total istoric" in text
-    assert "La secundă: WIN 2, LOSS 1, DRAW 1, UNKNOWN 3" in text
-    assert "Minute întregi: WIN 98, LOSS 49, DRAW 0, UNKNOWN 7" in text
+    assert "Total istoric · 161 rezultate: WIN 100, LOSS 50, DRAW 1, UNKNOWN 10" in text
+    assert "La secundă · 7 rezultate: WIN 2, LOSS 1, DRAW 1, UNKNOWN 3" in text
+    assert "Istoric · minute întregi · 154 rezultate: WIN 98, LOSS 49, DRAW 0, UNKNOWN 7" in text
+    assert "Cotație la expirare: 4/7" in text
+    assert text.index("La secundă") < text.index("Istoric · minute") < text.index("Total istoric")
     assert report["study_results_by_duration_policy"][plans.POLICY]["wins"] == 2
