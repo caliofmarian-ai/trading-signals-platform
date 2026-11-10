@@ -18,6 +18,7 @@ from core import storage
 from core import confirmed_study_duration as second_duration
 from intelligence import shadow_model_time_research as quotes
 from intelligence import buffer_expiry_evidence as buffer_evidence
+from intelligence import expiry_price_estimate as expiry_estimate
 from core.market_history_policy import HISTORY_POLICY
 
 PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V5"
@@ -45,6 +46,8 @@ LEGACY_QUOTE_RECOVERY_POLICY = "RETAINED_SOURCE_QUOTE_LEGACY_4S"
 _last_report: dict[str, int] = {}
 POST_MODEL_OFFSETS = (60, 180, 300)  # existing diagnostic checkpoints; never execution expiry
 STUDY_DURATION_SOURCE = "CONFIRM_MODEL_TIME"
+MAX_EXPIRY_ESTIMATES_PER_PASS = 8
+EXPIRY_ESTIMATE_ARRIVAL_GRACE_SECONDS = 15.0
 
 
 def _quote_recovery_policy():
@@ -61,6 +64,76 @@ def _quote_recovery_identity(row):
 def displayed_study_observation(row):
     """Use the prospectively confirmed horizon; retain old published baselines."""
     return row.get("study_observation", row["candidates"][0])
+
+
+def _estimate_target(row):
+    """Only a published study with a genuinely missing expiry may be enriched."""
+    entry = row.get("entry")
+    observation = displayed_study_observation(row)
+    receipt = ((row.get("study_delivery") or {}).get("entry") or {})
+    if (entry is None or receipt.get("status") != "API_ACCEPTED"
+        or observation.get("outcome") != "UNKNOWN"
+        or observation.get("reason") != "EXPIRY_OBSERVATION_MISSING"
+        or observation.get("quote") is not None):
+        return None
+    return entry["observed_ts"] + observation["horizon_seconds"]
+
+
+def _enrich_expiry_estimates(state, *, now, active_provider, bracket_loader):
+    """Bound optional source lookups; complete and expired estimates never rescan.
+
+    Metadata is independent of every official quote, outcome and duration. An
+    unavailable estimate's last timestamp freezes it after the declared arrival
+    deadline, including the first inspection of an already old historical gap.
+    """
+    if active_provider != "FINNHUB" or bracket_loader is None:
+        return []
+    candidates = []
+    for identity, row in state["records"].items():
+        target = _estimate_target(row)
+        if target is None or now < target:
+            continue
+        previous = row.get("expiry_price_estimate")
+        deadline = target + expiry_estimate.MAX_SIDE_SECONDS + EXPIRY_ESTIMATE_ARRIVAL_GRACE_SECONDS
+        if previous is not None and (previous["estimated_outcome"] != "UNAVAILABLE"
+                                     or previous["estimated_at"] >= deadline):
+            continue
+        candidates.append((target, identity, row, previous, deadline))
+    updates = []
+    # Dictionary checks are cheap; historical archive lookups are capped and
+    # persisted, so old UNKNOWN rows do not repeatedly scan retained quote data.
+    for target, identity, row, previous, deadline in sorted(
+        candidates, key=lambda item: (item[0], item[1]), reverse=True
+    )[:MAX_EXPIRY_ESTIMATES_PER_PASS]:
+        try:
+            bracket = bracket_loader("EUR/USD", target,
+                                     max_side_seconds=expiry_estimate.MAX_SIDE_SECONDS)
+        except Exception:
+            # A transient lookup failure is not evidence that either side is
+            # absent. Keep it eligible for a bounded later attempt.
+            continue
+        estimate = expiry_estimate.build_estimate(
+            direction=row["direction"], entry=row["entry"], expiry_ts=target,
+            bracket=bracket, observed_at=now)
+        if (previous is not None and now < deadline
+            and {k: v for k, v in previous.items() if k != "estimated_at"}
+            == {k: v for k, v in estimate.items() if k != "estimated_at"}):
+            continue
+        row["expiry_price_estimate"] = estimate
+        updates.append({"study_id": identity,
+                        "signal_label": row["study_delivery"]["entry"].get("signal_label"),
+                        "expiry_price_estimate": deepcopy(estimate)})
+    return updates
+
+
+def _published_estimate_counts(rows):
+    unknown = [row for row in rows if _estimate_target(row) is not None]
+    counts = Counter((row.get("expiry_price_estimate") or {}).get("estimated_outcome", "UNAVAILABLE")
+                     for row in unknown)
+    return {"contract": expiry_estimate.CONTRACT, "eligible_unknown": len(unknown),
+            "estimates_available": counts["WIN"] + counts["LOSS"] + counts["INCONCLUSIVE"],
+            "estimated_wins": counts["WIN"], "estimated_losses": counts["LOSS"],
+            "inconclusive": counts["INCONCLUSIVE"], "unavailable": counts["UNAVAILABLE"]}
 
 
 def _confirmed_study_feasible(horizon_seconds, adjusted_seconds):
@@ -285,6 +358,12 @@ def validate(state):
                 raise ValueError("UNOBSERVED_CONFIRMED_STUDY_LABEL")
         from intelligence.physical_study_delivery import validate_delivery
         validate_delivery(row)
+        if "expiry_price_estimate" in row:
+            target = _estimate_target(row)
+            if target is None:
+                raise ValueError("EXPIRY_ESTIMATE_WITHOUT_MISSING_PUBLISHED_EXPIRY")
+            expiry_estimate.validate_estimate(row["expiry_price_estimate"],
+                direction=row["direction"], entry=entry, expiry_ts=target)
 
 
 def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, now_ts):
@@ -423,7 +502,7 @@ def _window_quote(loader, latest, target, delay, now):
     return sample if sample and target <= sample["observed_ts"] <= target + delay else None
 
 
-def advance(*, now_ts, active_provider, price_loader, observation_loader=None):
+def advance(*, now_ts, active_provider, price_loader, observation_loader=None, bracket_loader=None):
     path = _path()
     if path is None:
         return None
@@ -479,8 +558,13 @@ def advance(*, now_ts, active_provider, price_loader, observation_loader=None):
                             changed = True
                 if all(c["outcome"] != "PENDING" for c in row["candidates"]):
                     row["state"] = "FINAL"
+            estimate_updates = _enrich_expiry_estimates(state, now=now,
+                active_provider=active_provider, bracket_loader=bracket_loader)
+            changed = bool(estimate_updates) or changed
             if changed:
                 _save(path, state)
+                for update in estimate_updates:
+                    print("TSP_PHYSICAL_EXPIRY_PRICE_ESTIMATE " + json.dumps(update, sort_keys=True), flush=True)
     if state is not None and any(
         r["entry"] is not None and isinstance(r.get("study_delivery"), dict)
         and (r["study_delivery"]["entry"] is None
@@ -539,7 +623,8 @@ def analyze(state, *, now_ts):
               "published_study_results": _counts([], 0),
               "published_study_results_scope": "ALL_HISTORICAL_DURATION_POLICIES",
               "published_study_results_by_duration_policy": {},
-              "published_study_results_by_quote_recovery_policy": {}}
+              "published_study_results_by_quote_recovery_policy": {},
+              "published_study_expiry_estimates": _published_estimate_counts([])}
     if state is None:
         from intelligence.same_symbol_sequences import summarize
         report["same_symbol_10min_sequences"] = summarize([])
@@ -573,6 +658,7 @@ def analyze(state, *, now_ts):
     ], 0)
     delivered = [r for r in records
                  if ((r.get("study_delivery") or {}).get("result") or {}).get("status") == "API_ACCEPTED"]
+    report["published_study_expiry_estimates"] = _published_estimate_counts(delivered)
     report["published_study_results_by_duration_policy"] = {
         policy: _counts([{**r, "candidates": [displayed_study_observation(r)]}
                          for r in delivered if second_duration.observation_policy(r) == policy], 0)

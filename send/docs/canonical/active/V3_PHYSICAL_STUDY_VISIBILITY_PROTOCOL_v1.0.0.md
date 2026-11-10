@@ -94,6 +94,58 @@ classification formula, quote window, confirmed duration, persisted outcome,
 calibration authority or delivery destination. Historical results remain bound
 to their original declared evidence and policy.
 
+## Adjacent-price estimates — Owner request, 2026-11-10
+
+The Owner additionally requests an approximate closing-price interval when a
+genuine expiry observation is missing. The reporting layer may attach
+`ADJACENT_SOURCE_QUOTES_ESTIMATE_V1` as separate `APPROXIMATION_ONLY` evidence to
+an UNKNOWN study with an observed entry. This is not a recovered expiry quote.
+
+Use the nearest retained genuine FINNHUB/OANDA:EUR_USD observation strictly
+before expiry and the nearest strictly after it. Each must be within 60 seconds
+of the original expiry; the total bracket can therefore span up to 120 seconds.
+Keep their prices, source timestamps, available original receipt timestamps,
+and live/archive provenance. A future, stale, wrong-source or fabricated quote
+cannot supply either endpoint. No extra provider connection is opened.
+
+The displayed interval is the minimum and maximum of these two endpoint prices.
+It is an **indicative endpoint range, not a bound on the unobserved price path**.
+The actual price between the observations may leave that range. No interpolation,
+midpoint, candle close, inferred tick or confidence percentage is manufactured.
+
+| Adjacent prices relative to the observed entry | Separate estimate |
+|---|---|
+| Both strictly favorable for BUY/SELL | WIN estimated |
+| Both strictly adverse for BUY/SELL | LOSS estimated |
+| They straddle or touch the entry price | Inconclusive estimate |
+| A usable endpoint is absent | Estimate unavailable |
+
+The first complete admissible pair is frozen, including an inconclusive pair;
+later prices cannot be selected to improve the estimate. Missing-neighbor
+evidence may be enriched within the declared bounded collection policy. Earlier
+UNKNOWN studies may receive separate evidence from genuinely retained quotes,
+but their observed result, original expiry and previously sent messages are not
+rewritten or resent. Legacy records without estimates remain valid.
+
+Captions and charts explicitly identify estimated WIN/LOSS, both observation
+times, the indicative range and temporal gap. The exact expiry-price field
+remains missing, the exact result remains UNKNOWN, and the chart does not place
+an estimated price at expiry or draw an invented price path. An oversized image
+caption falls back to the complete text instead of dropping evidence.
+
+Periodic summaries count estimated WIN, estimated LOSS, inconclusive and
+unavailable estimates as a separate partition of eligible published UNKNOWN
+records. Estimates do not increase verified WIN/LOSS counts or feed strategy
+efficacy, buffer success, training, holdout selection, execution readiness or
+broker authority. This feature improves missing-data interpretation; it does
+not repair source coverage or establish a better-performing strategy.
+
+If a newly settled UNKNOWN has incomplete neighbor evidence, its first result
+report may wait until a complete pair is available or expiry plus 60 seconds
+and 15 seconds of receipt allowance. This delays only presentation, never the
+trade's expiry or exact result. After that deadline the report explicitly shows
+unavailable estimates when necessary. Already accepted messages are not resent.
+
 ## Delivery evidence
 
 Only entries admitted with the new publication intent may notify. Existing old

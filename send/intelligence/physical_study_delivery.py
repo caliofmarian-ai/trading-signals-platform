@@ -19,6 +19,7 @@ from core import confirmed_study_duration as second_duration
 
 STATUSES = {"RESERVED", "API_ACCEPTED", "FAILED", "UNKNOWN", "SKIPPED_STALE", "SKIPPED_STAGE_GUARD", "SKIPPED_DESTINATION_CHANGED", "SKIPPED_DURATION_INFEASIBLE"}
 RESULT_PRESENTATION_CONTRACT = "EXPLICIT_PRICE_EVIDENCE_V1"
+ESTIMATED_RESULT_PRESENTATION_CONTRACT = "EXPLICIT_PRICE_ESTIMATE_V2"
 _DELIVERY_IN_FLIGHT = threading.Lock()
 
 
@@ -117,7 +118,9 @@ def _result_evidence(row):
     if reason not in (None, "OBSERVED_PAIRED_EXPIRY", "ENTRY_OBSERVATION_MISSING",
                        "EXPIRY_OBSERVATION_MISSING", "PROVIDER_CHANGED"):
         reason = "UNSPECIFIED"
-    return {"presentation_contract": RESULT_PRESENTATION_CONTRACT,
+    estimate = _expiry_estimate(row)
+    return {"presentation_contract": (ESTIMATED_RESULT_PRESENTATION_CONTRACT if estimate is not None
+                                       else RESULT_PRESENTATION_CONTRACT),
             "direction": row["direction"], "study_outcome": observation["outcome"],
             "entry_price": entry["price"] if entry else None,
             "entry_observed_ts": entry["observed_ts"] if entry else None,
@@ -127,7 +130,63 @@ def _result_evidence(row):
             "expiry_quote_source": source(expiry), "observation_reason": reason,
             "buffer_position": classify_buffer_position(row["direction"], entry["price"] if entry else None,
                 distance, expiry["price"] if expiry else None),
-            "buffer_full_margin_status": measured["status"]}
+            "buffer_full_margin_status": measured["status"],
+            "expiry_price_estimate": deepcopy(estimate)}
+
+
+def _expiry_estimate(row):
+    """Keep adjacent-price context separate from genuine settlement evidence."""
+    observation = study.displayed_study_observation(row)
+    estimate = row.get("expiry_price_estimate")
+    entry = row.get("entry")
+    if (estimate is None or entry is None or observation.get("quote") is not None
+            or observation.get("outcome") != "UNKNOWN"
+            or observation.get("reason") != "EXPIRY_OBSERVATION_MISSING"):
+        return None
+    from intelligence.expiry_price_estimate import validate_estimate
+    try:
+        validate_estimate(estimate, direction=row["direction"], entry=entry,
+                         expiry_ts=entry["observed_ts"] + observation["horizon_seconds"])
+    except (TypeError, ValueError, KeyError):
+        return None
+    return estimate
+
+
+def _render_estimated_result(row, signal_label, estimate):
+    from core.signal_card import _duration
+
+    observation = study.displayed_study_observation(row)
+    entry = row["entry"]
+    target = entry["observed_ts"] + observation["horizon_seconds"]
+    labels = {"WIN": "WIN estimat", "LOSS": "LOSS estimat",
+              "INCONCLUSIVE": "neconcludentă", "UNAVAILABLE": "indisponibilă"}
+
+    def endpoint(name, quote):
+        if quote is None:
+            return f"{name}: LIPSĂ în limita de 60s"
+        source = "arhivă" if quote["source"].startswith("DURABLE_") else "flux"
+        return f"{name}: {quote['price']} · {_stamp(quote['observed_ts'])} · Finnhub {source}"
+
+    lines = ["🧪 REZULTAT STUDIU V3", f"Estimare: {labels[estimate['estimated_outcome']]}",
+             f"EUR/USD · {row['direction']} · {_duration(observation['horizon_seconds']/60, seconds=observation.get('duration_seconds'))}",
+             f"Intrare: {entry['price']} · {_stamp(entry['observed_ts'])}",
+             f"Expirare declarată: {_stamp(target)}",
+             endpoint("Înainte", estimate["before"]), endpoint("După", estimate["after"])]
+    if estimate["lower_price"] is not None:
+        lines.append(f"Interval orientativ: {estimate['lower_price']} – {estimate['upper_price']}")
+        lines.append(f"Gol între cotații: {estimate['gap_seconds']:g}s")
+    else:
+        lines.append("Interval orientativ: indisponibil fără ambele cotații.")
+    delay = row.get("quote_recovery_policy", {}).get("expiry_window_seconds", study.quotes.MAX_SAMPLE_DELAY_SECONDS)
+    lines.extend(["Cotație expirare: LIPSĂ · rezultat exact: UNKNOWN",
+                  f"Fereastră verificată: {_stamp(target)} – {_stamp(target + delay)}",
+                  "Prețul dintre observații poate ieși din interval.",
+                  "Estimarea nu intră în rata WIN verificată.",
+                  f"{signal_label} · Dublin" if signal_label else "Număr indisponibil"])
+    caption = "\n".join(lines)
+    # Dispatch falls back to text when unusual numeric widths exceed the
+    # photo-caption budget; every evidence field and qualifier is preserved.
+    return caption
 
 
 def render_result(identity, row, signal_label):
@@ -137,6 +196,8 @@ def render_result(identity, row, signal_label):
     entry = row["entry"]
     expiry_quote = baseline["quote"]
     evidence = _result_evidence(row)
+    if evidence["expiry_price_estimate"] is not None:
+        return _render_estimated_result(row, signal_label, evidence["expiry_price_estimate"])
     direction, outcome = evidence["direction"], evidence["study_outcome"]
     frozen = row.get("buffer_snapshot")
     distance = frozen.get("buffer_distance") if frozen else None
@@ -220,7 +281,8 @@ def _render_chart(row, signal_label):
                                entry_price=entry["price"], expiry_ts=expiry_ts,
                                expiry_quote_ts=quote.get("observed_ts"), expiry_price=quote.get("price"),
                                buffer_distance=row["buffer_snapshot"]["buffer_distance"],
-                               outcome=baseline["outcome"], signal_label=signal_label)
+                               outcome=baseline["outcome"], signal_label=signal_label,
+                               expiry_estimate=_expiry_estimate(row))
 
 
 def _reserve(path, phase, now, destination):
@@ -254,6 +316,16 @@ def _reserve(path, phase, now, destination):
                 continue
             elif delivery["entry"].get("destination_id", destination) != destination:
                 status = "SKIPPED_DESTINATION_CHANGED"
+            elif phase == "result":
+                estimate = _expiry_estimate(row)
+                if estimate is not None and estimate["estimated_outcome"] == "UNAVAILABLE":
+                    from intelligence.expiry_price_estimate import MAX_SIDE_SECONDS
+                    target = row["entry"]["observed_ts"] + study.displayed_study_observation(row)["horizon_seconds"]
+                    if now < target + MAX_SIDE_SECONDS + study.EXPIRY_ESTIMATE_ARRIVAL_GRACE_SECONDS:
+                        # The exact result has already settled. Delay only this
+                        # first report to collect its bounded approximate context;
+                        # never extend expiry or resend an accepted result.
+                        continue
             delivery[phase] = {"status": status, "attempted_ts": now}
             changed = True
             if status == "RESERVED":
@@ -305,6 +377,8 @@ def dispatch(*, now_ts, active_provider):
                 receipt["signal_label"] = signal_label
             entry_receipt = row["study_delivery"]["entry"] if phase == "result" else {}
             reply_id = entry_receipt["message_id"] if entry_receipt.get("destination_id") == destination else None
+            if photo is not None and len(text.encode("utf-16-le")) // 2 > 1024:
+                photo = None  # Full evidence remains available in the text result.
             if photo is not None:
                 receipt["format"] = "PHOTO"
                 response = telegram_publisher.send_photo(chat_id=destination, photo=photo, caption=text,

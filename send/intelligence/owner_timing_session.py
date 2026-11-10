@@ -221,6 +221,7 @@ def report_if_due(*, now_ts: float) -> dict[str, Any] | None:
             from intelligence.study_progress_presentation import render_published_study_progress
             report["study_results_by_duration_policy"] = observed.get("published_study_results_by_duration_policy")
             report["study_results_by_quote_recovery_policy"] = observed.get("published_study_results_by_quote_recovery_policy")
+            report["study_expiry_estimates"] = observed.get("published_study_expiry_estimates")
             # Published results only: never substitute independent calibration
             # observations, omit draws or label historical totals current.
             text += "\n" + render_published_study_progress(

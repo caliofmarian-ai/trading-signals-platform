@@ -211,7 +211,8 @@ def telemetry_market_loop(
                     physical_expiry_calibration.advance(now_ts=float(clock()),
                         active_provider=market_client.configured_provider(),
                         price_loader=market_client.get_latest_price_sample,
-                        observation_loader=market_client.get_price_sample_at_or_after)
+                        observation_loader=market_client.get_price_sample_at_or_after,
+                        bracket_loader=market_client.get_expiry_quote_bracket)
             except Exception as exc:
                 _warn_once_per_window(warning_cache, "physical_v3_expiry", now_ts=float(clock()),
                     warn_type="PHYSICAL_V3_CALIBRATION_UNAVAILABLE", message="Physical V3 quote observations unavailable",

@@ -56,7 +56,8 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
                        expiry_quote_ts, expiry_price, buffer_distance, outcome,
                        first_buffer_hit=None, report_title=_STUDY_TITLE,
                        entry_label=_ENTRY_LABEL, signal_label: str | None = None,
-                       expiry_observation_label=_EXPIRY_OBSERVATION_LABEL):
+                       expiry_observation_label=_EXPIRY_OBSERVATION_LABEL,
+                       expiry_estimate=None):
     """Return a PNG from observed M1 bars and optional observed quote evidence.
 
     The buffer is the favorable price band anchored at entry, not the region
@@ -68,6 +69,16 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
         raise ValueError("Invalid study chart entry or expiry")
     if expiry_price is not None and (not _positive(expiry_price) or not _positive(expiry_quote_ts) or expiry_quote_ts < expiry_ts):
         raise ValueError("Invalid study chart expiry observation")
+    if expiry_estimate is not None:
+        from intelligence.expiry_price_estimate import validate_estimate
+        if outcome != "UNKNOWN" or expiry_price is not None:
+            expiry_estimate = None
+        else:
+            try:
+                validate_estimate(expiry_estimate, direction=direction,
+                                 entry={"price": entry_price, "observed_ts": entry_ts}, expiry_ts=expiry_ts)
+            except (TypeError, ValueError, KeyError):
+                expiry_estimate = None
     bars = _bars_in_trade(candles, entry_ts, expiry_ts)
     sign = 1 if direction == "BUY" else -1
     with localcontext() as context:
@@ -87,7 +98,7 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
     hit_bar = next((stamp for stamp, (_, high, low, _) in bars
                     if at_or_beyond_buffer_edge(high if sign == 1 else low)), None)
 
-    image = Image.new("RGB", (1200, 940), "#0d1725")
+    image = Image.new("RGB", (1200, 1200 if expiry_estimate is not None else 940), "#0d1725")
     draw = ImageDraw.Draw(image)
 
     def label(x, y, value, *, color=_TEXT, size=23, anchor=None, max_width=None):
@@ -112,6 +123,11 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
         "WIN": ("WIN · Câștig", _UP), "LOSS": ("LOSS · Pierdere", _DOWN),
         "DRAW": ("DRAW · Egal", _ENTRY), "UNKNOWN": ("UNKNOWN · Date incomplete", _BUFFER),
     }.get(outcome, ("Verdict indisponibil", _MUTED))
+    estimate_labels = {"WIN": "WIN estimat", "LOSS": "LOSS estimat",
+                       "INCONCLUSIVE": "Estimare neconcludentă", "UNAVAILABLE": "Estimare indisponibilă"}
+    if expiry_estimate is not None:
+        outcome_label = estimate_labels[expiry_estimate["estimated_outcome"]]
+        outcome_color = _BUFFER
     label(48, 29, report_title, color=_ENTRY, size=22)
     label(48, 61, f"EUR/USD  ·  {direction}", size=49)
     label(1152, 73, outcome_label, color=outcome_color, size=29, anchor="ra")
@@ -216,8 +232,10 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
                       f"{comparator} intrare {price_label(entry_price)}  |  {outcome}")
         label(48, 632, comparison, color=_TEXT, size=23, max_width=1104)
     else:
-        label(48, 632, "Prețul pentru expirare lipsește. Rezultatul rămâne UNKNOWN.",
-              color=_BUFFER, size=23)
+        missing_label = ("Cotația exactă lipsește; estimarea din cotațiile vecine este prezentată separat."
+                         if expiry_estimate is not None else
+                         "Prețul pentru expirare lipsește. Rezultatul rămâne UNKNOWN.")
+        label(48, 632, missing_label, color=_BUFFER, size=23, max_width=1104)
 
     expiry_status = BUFFER_POSITION_LABELS[expiry_position]
     complete_margin = ("DA" if expiry_position in {"AT_BUFFER_EDGE", "BEYOND_BUFFER"} else
@@ -255,6 +273,30 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
         legend = "Bandă galbenă · Buffer lângă intrare  |  Puncte: intrare, expirare și contact confirmat."
     label(48, 907, legend, color=_MUTED, size=18, max_width=1104)
 
+    if expiry_estimate is not None:
+        # Neighbor prices are an auxiliary estimate, never an expiry marker,
+        # an interpolated candle or a guaranteed band on the observed chart.
+        draw.rounded_rectangle((32, 949, 1168, 1180), radius=14, fill="#253044", outline=_BUFFER)
+        label(48, 966, "COTAȚII VECINE · ESTIMARE SEPARATĂ", color=_BUFFER, size=23)
+        for y, name, quote in ((1003, "Înainte", expiry_estimate["before"]),
+                               (1036, "După", expiry_estimate["after"])):
+            if quote is None:
+                description = f"{name}: lipsă în limita de 60s de la expirare."
+            else:
+                provenance = "arhivă" if quote["source"].startswith("DURABLE_") else "flux"
+                description = f"{name}: {price_label(quote['price'])} · {observation_time(quote['observed_ts'])} UTC · Finnhub {provenance}"
+            label(48, y, description, color=_TEXT, size=21, max_width=1104)
+        if expiry_estimate["lower_price"] is not None:
+            description = (f"Interval orientativ: {price_label(expiry_estimate['lower_price'])} - "
+                           f"{price_label(expiry_estimate['upper_price'])}  |  gol: {expiry_estimate['gap_seconds']:g}s")
+        else:
+            description = "Interval orientativ indisponibil: sunt necesare ambele cotații vecine."
+        label(48, 1069, description, color=_BUFFER, size=22, max_width=1104)
+        label(48, 1107, "Prețul dintre observații poate ieși din interval; închiderea exactă nu este confirmată.",
+              color=_MUTED, size=21, max_width=1104)
+        label(48, 1143, "Rezultat exact: UNKNOWN. Estimarea este exclusă din rata WIN verificată.",
+              color=_MUTED, size=20, max_width=1104)
+
     png = BytesIO()
     image.save(png, format="PNG", optimize=True)
     return png.getvalue()
@@ -264,7 +306,8 @@ def render_market_chart(*, direction, entry_ts, entry_price, expiry_ts,
                         expiry_quote_ts, expiry_price, buffer_distance, outcome,
                         report_title=_STUDY_TITLE, entry_label=_ENTRY_LABEL,
                         signal_label: str | None = None,
-                        expiry_observation_label=_EXPIRY_OBSERVATION_LABEL):
+                        expiry_observation_label=_EXPIRY_OBSERVATION_LABEL,
+                        expiry_estimate=None):
     """Render a report from the Finnhub process's retained market observations."""
     from intelligence import buffer_expiry_evidence
     from runtime import market_client
@@ -280,5 +323,6 @@ def render_market_chart(*, direction, entry_ts, entry_price, expiry_ts,
         entry_price=entry_price, expiry_ts=expiry_ts, expiry_quote_ts=expiry_quote_ts,
         expiry_price=expiry_price, buffer_distance=buffer_distance, outcome=outcome,
         first_buffer_hit=first_hit, report_title=report_title, entry_label=entry_label,
-        signal_label=signal_label, expiry_observation_label=expiry_observation_label)
+        signal_label=signal_label, expiry_observation_label=expiry_observation_label,
+        expiry_estimate=expiry_estimate)
 

@@ -743,6 +743,47 @@ class FinnhubForexFeed:
                 pass
         return result
 
+    def get_expiry_quote_bracket(self, symbol, target_ts, max_side_seconds=60.0):
+        """Nearest genuine quotes strictly around expiry, for estimates only.
+
+        Read already retained live/restored ticks without starting the feed or
+        substituting candles. Millisecond source times choose the neighbors;
+        source/receipt timestamps after this lookup are ineligible. Returned
+        dicts are copies and have no authority as observed expiry quotes.
+        """
+        from intelligence.expiry_price_estimate import MAX_SIDE_SECONDS, normalize_quote
+
+        normalize_symbol(symbol)
+        if (type(target_ts) not in (int, float) or type(max_side_seconds) not in (int, float)
+                or not math.isfinite(target_ts) or not math.isfinite(max_side_seconds)
+                or target_ts <= 0 or not 0 < max_side_seconds <= MAX_SIDE_SECONDS):
+            raise ValueError("invalid expiry quote bracket window")
+        now = float(self.clock())
+        if not math.isfinite(now) or now <= 0:
+            raise ValueError("invalid expiry quote bracket clock")
+        result = {"before": None, "after": None}
+        with self._lock:
+            if self.symbol != SUPPORTED_SYMBOL or self.finnhub_symbol != FINNHUB_SYMBOL:
+                return result
+            samples = [dict(sample) for sample in self._real_quote_buffer
+                       if isinstance(sample, dict)]
+        # Work on the snapshot outside the ingestion lock. Receipt order breaks
+        # equal-source-time ties, just as the observed-quote lookup does.
+        for sample in samples:
+            if "_provider_tick_ms" not in sample or "_received_ts" not in sample:
+                continue  # Only original retained ticks qualify, never a candle-shaped row.
+            for side in ("before", "after"):
+                quote = normalize_quote(sample, expiry_ts=target_ts, observed_at=now,
+                                        side=side, max_side_seconds=max_side_seconds)
+                if quote is None:
+                    continue
+                previous = result[side]
+                if (previous is None
+                        or (side == "before" and quote["observed_ts"] > previous["observed_ts"])
+                        or (side == "after" and quote["observed_ts"] < previous["observed_ts"])):
+                    result[side] = quote
+        return result
+
     def get_study_chart_evidence(self, entry_ts, expiry_ts):
         """Read bounded, already retained EUR/USD observations for an expiry chart."""
         if (type(entry_ts) not in (int, float) or type(expiry_ts) not in (int, float)

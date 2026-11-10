@@ -360,6 +360,22 @@ def get_price_sample_at_or_after(symbol, target_ts, max_delay):
     return _finnhub_feed().get_price_sample_at_or_after(symbol, target_ts, max_delay)
 
 
+def get_expiry_quote_bracket(symbol, target_ts, max_side_seconds=60.0):
+    """Read existing genuine Finnhub neighbors; never create/query another feed.
+
+    These endpoints are inputs to APPROXIMATION_ONLY evidence, not an observed
+    price at expiry. Provider changes or a feed awaiting initialization raise,
+    so callers retry instead of persisting an unobserved absence of quotes.
+    """
+    if configured_provider() != "FINNHUB":
+        raise MarketDataUnavailableError("Expiry quote brackets require the active Finnhub provider")
+    with _FINNHUB_FEED_LOCK:
+        feed = _FINNHUB_FEED
+    if feed is None:
+        raise MarketDataUnavailableError("Finnhub quote archive is not initialized yet")
+    return feed.get_expiry_quote_bracket(symbol, target_ts, max_side_seconds)
+
+
 def get_finnhub_study_chart_evidence(entry_ts, expiry_ts):
     """Read the existing Finnhub cache without starting or querying a feed."""
     if configured_provider() != "FINNHUB":
