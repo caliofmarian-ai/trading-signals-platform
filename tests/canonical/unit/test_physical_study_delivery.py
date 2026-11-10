@@ -130,7 +130,7 @@ def test_confirmed_duration_survives_changed_open_model_restart_and_independent_
     assert saved["candidates"][0]["outcome"] == "WIN"
     assert saved["study_observation"]["outcome"] == "LOSS"
     assert saved["study_observation"]["quote"]["observed_ts"] == confirmed_target
-    assert len(messages) == 2 and "Direcție la expirare: LOSS" in messages[1]["text"]
+    assert len(messages) == 2 and "Rezultat: LOSS" in messages[1]["text"]
     assert rendered[0]["expiry_ts"] == confirmed_target
     assert rendered[0]["outcome"] == "LOSS"
     report = study.summary(now_ts=confirmed_target)
@@ -230,7 +230,7 @@ def test_study_open_requires_the_same_duration_actually_delivered_at_confirm(stu
     assert saved["study_delivery"]["entry"]["status"] == "SKIPPED_STAGE_GUARD"
 
 
-def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_result(study_setup):
+def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_result(study_setup, capsys):
     _, study, delivery, result, _, _, messages, clock = study_setup
     row = _capture(study_setup)
     study.advance(now_ts=BASE+32, active_provider="FINNHUB", price_loader=lambda _: _sample(BASE+32,1.1))
@@ -253,8 +253,9 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     price = 1.1 + direction*row["buffer_snapshot"]["buffer_distance"]*.5
     study.advance(now_ts=target, active_provider="FINNHUB", price_loader=lambda _: _sample(target,price))
     assert len(messages) == 2 and "REZULTAT STUDIU" in messages[1]["text"]
-    assert "Direcție la expirare: WIN fragil" in messages[1]["text"]
-    assert "Poziție la expirare: În buffer · câștig fragil" in messages[1]["text"]
+    assert "Rezultat: WIN\n" in messages[1]["text"]
+    assert "Rezultat: WIN fragil" not in messages[1]["text"]
+    assert "Poziție buffer: În buffer · câștig fragil" in messages[1]["text"]
     assert "Marjă completă la expirare: NU" in messages[1]["text"]
     assert label in messages[1]["text"]
     assert messages[1]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
@@ -270,6 +271,17 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     assert saved["study_delivery"]["result"]["format"] == "PHOTO"
     assert saved["study_delivery"]["entry"]["signal_label"] == label
     assert saved["study_delivery"]["result"]["signal_label"] == label
+    evidence = [json.loads(line.split(" ", 1)[1]) for line in capsys.readouterr().out.splitlines()
+                if line.startswith("TSP_PHYSICAL_STUDY_DELIVERY ")]
+    opened, settled = next(e for e in evidence if e["phase"] == "entry"), next(e for e in evidence if e["phase"] == "result")
+    assert "presentation_contract" not in opened
+    assert settled["presentation_contract"] == "EXPLICIT_PRICE_EVIDENCE_V1"
+    assert settled["direction"] == row["direction"]
+    assert settled["entry_price"] == 1.1 and settled["expiry_price"] == price
+    assert settled["entry_quote_source"] == settled["expiry_quote_source"] == "LIVE_STREAM_CURRENT_M1_CLOSE"
+    assert settled["observation_reason"] == "OBSERVED_PAIRED_EXPIRY"
+    assert settled["buffer_position"] == "INSIDE_BUFFER" and settled["buffer_full_margin_status"] == "NOT_MET"
+    assert not {"caption", "destination_id", "chat_id", "token"} & settled.keys()
     # A later buffer hit remains a diagnostic; the original label stays unchanged.
     later = target+60
     clock[0] = later+.1
@@ -310,7 +322,7 @@ def test_study_result_render_failure_falls_back_but_ambiguous_upload_does_not(st
         assert (receipt["status"], receipt["format"]) == ("UNKNOWN", "PHOTO")
 
 
-def test_study_result_without_an_expiry_quote_still_sends_a_chart(study_setup):
+def test_study_result_without_an_expiry_quote_still_sends_a_chart(study_setup, capsys):
     _, study, _, _, _, _, messages, clock = study_setup
     row = _capture(study_setup)
     study.advance(now_ts=BASE + 32, active_provider="FINNHUB", price_loader=lambda _: _sample(BASE + 32, 1.1))
@@ -319,8 +331,15 @@ def test_study_result_without_an_expiry_quote_still_sends_a_chart(study_setup):
     study.advance(now_ts=now, active_provider="FINNHUB", price_loader=lambda _: None)
     assert len(messages) == 2
     assert messages[1]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
-    assert "cotație lipsă" in messages[1]["text"]
-    assert "Direcție la expirare: UNKNOWN" in messages[1]["text"]
+    assert "Cotație expirare: LIPSĂ" in messages[1]["text"]
+    assert "Rezultat: UNKNOWN — date incomplete" in messages[1]["text"]
+    evidence = [json.loads(line.split(" ", 1)[1]) for line in capsys.readouterr().out.splitlines()
+                if line.startswith("TSP_PHYSICAL_STUDY_DELIVERY ")]
+    settled = next(e for e in evidence if e["phase"] == "result")
+    assert settled["entry_price"] == 1.1 and settled["expiry_price"] is None
+    assert settled["entry_quote_source"] == "LIVE_STREAM_CURRENT_M1_CLOSE" and settled["expiry_quote_source"] is None
+    assert settled["observation_reason"] == "EXPIRY_OBSERVATION_MISSING"
+    assert settled["buffer_position"] == settled["buffer_full_margin_status"] == "UNAVAILABLE"
 
 
 def test_late_worker_recovers_earlier_real_quote_inside_original_tolerance(study_setup):
@@ -585,3 +604,170 @@ def test_transport_thread_does_not_block_sampling_or_start_a_second_sender(canon
     assert delivery.dispatch_async(now_ts=BASE+1,active_provider="FINNHUB") is None
     release.set();thread.join(2)
     assert not thread.is_alive() and len(calls)==1
+
+
+def _report_row(direction, outcome, expiry_price, *, buffer_distance=0.0002):
+    """Minimal immutable projection of an observed study for rendering tests."""
+    from intelligence import buffer_expiry_evidence
+
+    observation = {"horizon_seconds": 169.0, "duration_seconds": 169,
+                   "outcome": outcome, "reason": "OBSERVED_PAIRED_EXPIRY" if expiry_price is not None else "EXPIRY_OBSERVATION_MISSING",
+                   "quote": _sample(BASE + 201, expiry_price, buffered=True) if expiry_price is not None else None}
+    if observation["quote"] is not None:
+        observation["quote"]["source"] = "DURABLE_STREAM_PROVIDER_TICK_BUFFER_V1"
+    return {"direction": direction, "created_ts": BASE + 31,
+            "entry": _sample(BASE + 32, 1.1, buffered=True),
+            "study_observation": observation, "candidates": [copy.deepcopy(observation)],
+            "buffer_snapshot": buffer_expiry_evidence.snapshot(buffer_distance, "a" * 64),
+            "quote_recovery_policy": {"policy": "RETAINED_SOURCE_QUOTE_RECOVERY_V1",
+                "arrival_grace_seconds": 15.0, "expiry_window_seconds": 2.0, "entry_window_seconds": 10.0}}
+
+
+@pytest.mark.parametrize("direction,expiry,outcome,relation,position,margin,edge", [
+    ("BUY", 1.1001, "WIN", ">", "În buffer · câștig fragil", "NU", "1.1002"),
+    ("BUY", 1.1002, "WIN", ">", "La limita favorabilă", "DA", "1.1002"),
+    ("BUY", 1.1003, "WIN", ">", "Dincolo de buffer", "DA", "1.1002"),
+    ("BUY", 1.0999, "LOSS", "<", "Dincolo de intrare · pierdere", "NU", "1.1002"),
+    ("BUY", 1.1, "DRAW", "=", "La intrare · egalitate", "NU", "1.1002"),
+    ("SELL", 1.0999, "WIN", "<", "În buffer · câștig fragil", "NU", "1.0998"),
+    ("SELL", 1.0998, "WIN", "<", "La limita favorabilă", "DA", "1.0998"),
+    ("SELL", 1.0997, "WIN", "<", "Dincolo de buffer", "DA", "1.0998"),
+    ("SELL", 1.1001, "LOSS", ">", "Dincolo de intrare · pierdere", "NU", "1.0998"),
+    ("SELL", 1.1, "DRAW", "=", "La intrare · egalitate", "NU", "1.0998"),
+])
+def test_result_caption_keeps_price_verdict_separate_from_buffer(
+    direction, expiry, outcome, relation, position, margin, edge,
+):
+    from intelligence import physical_study_delivery as delivery
+
+    row = _report_row(direction, outcome, expiry)
+    before = copy.deepcopy(row)
+    text = delivery.render_result("study", row, "10.11.2026 · nr. 289")
+    assert f"Rezultat: {outcome}\n" in text and "Rezultat: WIN fragil" not in text
+    assert f"Comparație {direction}: {expiry} {relation} 1.1 → {outcome}" in text
+    assert "Intrare colectată: 1.1" in text and f"Cotație expirare colectată: {expiry}" in text
+    assert "Surse intrare/expirare: Finnhub memorie / Finnhub arhivă" in text
+    assert f"Poziție buffer: {position}" in text
+    assert f"Limită buffer: {edge}" in text
+    assert f"Marjă completă la expirare: {margin}" in text
+    assert row == before
+
+
+def test_missing_expiry_caption_discloses_evidence_and_ignores_favorable_other_horizons():
+    from intelligence import physical_study_delivery as delivery
+
+    row = _report_row("BUY", "UNKNOWN", None)
+    row["candidates"][0].update(outcome="WIN", quote=_sample(BASE + 180, 1.2))
+    row["post_model_observations"] = [{"outcome": "WIN", "quote": _sample(BASE + 400, 1.3)}]
+    before = copy.deepcopy(row)
+    text = delivery.render_result("study", row, "10.11.2026 · nr. 289")
+    assert "Rezultat: UNKNOWN — date incomplete" in text and "Rezultat: WIN" not in text
+    assert "Intrare colectată: 1.1" in text and "Cotație expirare: LIPSĂ" in text
+    assert "Comparație: indisponibilă; prețuri incomplete." in text
+    assert "Surse intrare/expirare: Finnhub memorie / lipsă" in text
+    assert "Interval expirare: 08:03:21 UTC – 08:03:23 UTC" in text
+    assert "Motiv: cotația validă din intervalul expirării lipsește." in text
+    assert "Poziție buffer: Poziție indisponibilă" in text
+    assert "Marjă completă la expirare: DATE INDISPONIBILE" in text
+    assert "colectată: 1.2" not in text and "colectată: 1.3" not in text
+    assert "Comparație BUY:" not in text
+    assert "furnizor" not in text.lower()  # generic absence is not proof of vendor failure
+    assert row == before
+
+
+def test_missing_entry_caption_does_not_invent_an_expiry_timestamp():
+    from intelligence import physical_study_delivery as delivery
+
+    row = _report_row("BUY", "UNKNOWN", None)
+    row["entry"] = None
+    row["study_observation"]["reason"] = "ENTRY_OBSERVATION_MISSING"
+    text = delivery.render_result("study", row, None)
+    assert "Intrare: LIPSĂ" in text and "Cotație expirare: LIPSĂ" in text
+    assert "Expirare declarată: nedeterminată fără intrare" in text
+    assert "Interval intrare: 08:00:31 UTC – 08:00:41 UTC" in text
+    assert "Interval expirare:" not in text
+    assert "Motiv: cotația validă de intrare lipsește." in text
+
+
+@pytest.mark.parametrize("direction,expiry", [("BUY", 1.1001), ("SELL", 1.0999)])
+def test_missing_buffer_does_not_hide_collected_directional_win(direction, expiry):
+    from intelligence import physical_study_delivery as delivery
+
+    row = _report_row(direction, "WIN", expiry, buffer_distance=None)
+    text = delivery.render_result("study", row, None)
+    assert "Rezultat: WIN\n" in text and "UNKNOWN" not in text
+    assert "Intrare colectată: 1.1" in text and f"Cotație expirare colectată: {expiry}" in text
+    assert "Limită buffer: LIPSĂ" in text and "Marjă completă la expirare: DATE INDISPONIBILE" in text
+
+
+def test_comparison_keeps_distinct_prices_and_fractional_target_times_visible():
+    import math
+    from intelligence import physical_study_delivery as delivery
+
+    expiry = math.nextafter(1.1, math.inf)
+    row = _report_row("BUY", "WIN", expiry)
+    text = delivery.render_result("study", row, None)
+    assert f"Comparație BUY: {expiry} > 1.1 → WIN" in text
+    row = _report_row("BUY", "UNKNOWN", None)
+    row["study_observation"]["horizon_seconds"] = 169.25
+    row["study_observation"].pop("duration_seconds")
+    text = delivery.render_result("study", row, None)
+    assert "Expirare declarată: 08:03:21.25 UTC" in text
+    assert "Interval expirare: 08:03:21.25 UTC – 08:03:23.25 UTC" in text
+
+
+def test_short_exact_buffer_boundary_does_not_look_equal_to_inside_quote():
+    from intelligence import physical_study_delivery as delivery
+
+    row = _report_row("BUY", "WIN", 1.0000000000000002, buffer_distance=2.1e-16)
+    row["entry"]["price"] = 1.0
+    text = delivery.render_result("study", row, None)
+    assert "Comparație BUY: 1.0000000000000002 > 1.0 → WIN" in text
+    assert "Limită buffer: 1.00000000000000021\n" in text
+    assert "Poziție buffer: În buffer · câștig fragil" in text
+    assert "Marjă completă la expirare: NU" in text
+
+
+def test_long_computed_buffer_boundary_marks_approximation_without_rounding_actual_quotes():
+    from intelligence import physical_study_delivery as delivery
+
+    row = _report_row("BUY", "WIN", 1.0000000000000002, buffer_distance=2.1e-200)
+    row["entry"]["price"] = 1.0
+    text = delivery.render_result("study", row, "🧭" * 128)
+    assert "Limită buffer: ~1.0000000000000000 (aprox.)\n" in text
+    assert "Comparație BUY: 1.0000000000000002 > 1.0 → WIN" in text
+    assert "Poziție buffer: Dincolo de buffer" in text
+    assert "Marjă completă la expirare: DA" in text
+    assert len(text.encode("utf-16-le")) // 2 <= 1024
+
+
+@pytest.mark.parametrize("outcome,expiry", [("WIN", 1.1001), ("LOSS", 1.0999), ("DRAW", 1.1), ("UNKNOWN", None)])
+def test_result_captions_fit_telegram_with_full_maximum_unicode_signal_label(outcome, expiry):
+    import math
+    from intelligence import physical_study_delivery as delivery
+
+    row = _report_row("BUY", outcome, expiry)
+    entry = 1.2345678901234567e-200
+    row["entry"]["price"] = entry
+    if expiry is not None:
+        row["study_observation"]["quote"]["price"] = {
+            "WIN": math.nextafter(entry, math.inf), "LOSS": math.nextafter(entry, 0), "DRAW": entry,
+        }[outcome]
+    label = "🧭" * 128
+    text = delivery.render_result("study", row, label)
+    assert len(text.encode("utf-16-le")) // 2 <= 1024
+    assert f"{label} · Dublin" in text
+    assert "Intrare colectată:" in text and "Surse intrare/expirare:" in text
+
+
+def test_report_evidence_bounds_unknown_source_and_reason_without_disclosing_raw_content():
+    from intelligence import physical_study_delivery as delivery
+
+    row = _report_row("BUY", "UNKNOWN", None)
+    row["entry"]["source"] = "PRIVATE_RAW_SOURCE"
+    row["study_observation"]["reason"] = "PRIVATE_RAW_EXCEPTION"
+    text = delivery.render_result("study", row, None)
+    evidence = delivery._result_evidence(row)
+    assert "PRIVATE" not in text and "PRIVATE" not in json.dumps(evidence)
+    assert evidence["entry_quote_source"] == evidence["observation_reason"] == "UNSPECIFIED"
+    assert "Motiv: motiv nedetaliat în înregistrare." in text

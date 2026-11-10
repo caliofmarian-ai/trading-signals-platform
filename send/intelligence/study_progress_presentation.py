@@ -34,7 +34,7 @@ def _line(name, counts):
             f"DRAW {counts['draws']}, UNKNOWN {counts['unknown']}")
 
 
-def _details(row, counts):
+def _quote_details(row, counts, *, explicit_missing=False):
     total = sum(counts.values())
     observed = total - counts["unknown"]
     lines = [f"Cotație la expirare: {observed}/{total}; fără rezultat observat: {counts['unknown']}."]
@@ -49,10 +49,20 @@ def _details(row, counts):
             if sum(values.values()) != counts["unknown"]:
                 raise ValueError("INCONSISTENT_UNKNOWN_REASONS")
             missing = values.get("EXPIRY_OBSERVATION_MISSING", 0)
-            if missing:
+            if missing or explicit_missing:
                 lines.append(f"Fără cotație în fereastra expirării: {missing}.")
+            if explicit_missing and counts["unknown"] > missing:
+                lines.append(f"UNKNOWN din alte cauze: {counts['unknown'] - missing}.")
         except ValueError:
             lines.append("Cauzele UNKNOWN: statistici neconcordante.")
+    elif explicit_missing:
+        lines.append("Lipsa cotației la expirare: statistici indisponibile.")
+    return lines
+
+
+def _details(row, counts, *, explicit_missing=False):
+    total = sum(counts.values())
+    lines = _quote_details(row, counts, explicit_missing=explicit_missing)
     try:
         met, not_met, unavailable = (_count(row.get(key)) for key in
                                     ("buffer_met", "buffer_not_met", "buffer_unavailable"))
@@ -71,10 +81,50 @@ def _details(row, counts):
     return lines
 
 
-def render_published_study_progress(observed, *, active_policy, legacy_policy, legacy_open_policy):
-    """Put the current duration cohort first; reconcile every displayed total.
+def _reconciled_cohorts(cohorts, identities, counts):
+    if not isinstance(cohorts, Mapping) or not cohorts:
+        raise ValueError("POLICY_COHORTS_REQUIRED")
+    if (any(type(policy) is not str or not policy for policy in identities)
+            or len(set(identities)) != len(identities)):
+        raise ValueError("POLICY_IDENTITIES_REQUIRED")
+    # Never discard a future policy family, expose arbitrary labels or accept
+    # equal row totals whose WIN/LOSS/DRAW/UNKNOWN columns disagree.
+    if set(cohorts) - set(identities):
+        raise ValueError("UNKNOWN_POLICY_FAMILY")
+    by_policy = {policy: _counts(row) for policy, row in cohorts.items()}
+    if any(sum(row[key] for row in by_policy.values()) != counts[key] for key in _OUTCOMES):
+        raise ValueError("COHORT_OUTCOME_TOTAL_MISMATCH")
+    return by_policy
 
-    Cohorts are duration policies, NOT release/time-window performance groups.
+
+def _recovery_lines(observed, counts, recovery_policy, legacy_recovery_policy):
+    labels = ((recovery_policy, "Politica nouă de cotații"),
+              (legacy_recovery_policy, "Istoric · politica anterioară de cotații"))
+    cohorts = observed.get("published_study_results_by_quote_recovery_policy")
+    try:
+        by_policy = _reconciled_cohorts(cohorts, (recovery_policy, legacy_recovery_policy), counts)
+    except (TypeError, ValueError):
+        return [f"{label}: statistici indisponibile." for _, label in labels] + [
+            "Grupele de cotații: sursă absentă sau neconcordantă."]
+    lines = []
+    for policy, label in labels:
+        if policy not in by_policy:
+            # An absent family is not evidence for an explicit zero cohort.
+            lines.append(f"{label}: statistici indisponibile.")
+            continue
+        lines.append(_line(label, by_policy[policy]))
+        details = _details if policy == recovery_policy else _quote_details
+        lines.extend(details(cohorts[policy], by_policy[policy], explicit_missing=True))
+    return lines
+
+
+def render_published_study_progress(observed, *, active_policy, legacy_policy, legacy_open_policy,
+                                    recovery_policy=None, legacy_recovery_policy=None):
+    """Separate quote-recovery history before showing duration groupings.
+
+    Each policy grouping independently reconciles to the same published total;
+    the two groupings must never be added together. Policy families are supplied
+    by their authoritative modules, not inferred from dates or outcome counts.
     No win percentage is inferred from a subset that drops UNKNOWN or DRAW.
     Missing source evidence is unavailable, never silently replaced with zero.
     """
@@ -100,24 +150,19 @@ def render_published_study_progress(observed, *, active_policy, legacy_policy, l
     except ValueError:
         return header + "\n" + _UNAVAILABLE
 
+    lines = [header, *_recovery_lines(observed, counts, recovery_policy, legacy_recovery_policy),
+             "Aceleași rezultate, grupate după durată (nu se adună cu grupele de cotații):"]
     cohorts = observed.get("published_study_results_by_duration_policy")
     if not isinstance(cohorts, Mapping) or not cohorts:
-        return "\n".join([header, "La secundă: statistici indisponibile.",
+        return "\n".join([*lines, "La secundă: statistici indisponibile.",
                           _line("Total istoric", counts),
                           *_details(observed["published_study_results"], counts)])
     try:
-        # Current contract declares exactly these three policy families. Never
-        # silently discard an unknown future family or expose arbitrary labels.
-        if set(cohorts) - {active_policy, legacy_policy, legacy_open_policy}:
-            raise ValueError("UNKNOWN_DURATION_POLICY")
-        by_policy = {policy: _counts(row) for policy, row in cohorts.items()}
-        if any(sum(row[key] for row in by_policy.values()) != counts[key] for key in _OUTCOMES):
-            raise ValueError("COHORT_OUTCOME_TOTAL_MISMATCH")
+        by_policy = _reconciled_cohorts(cohorts, (active_policy, legacy_policy, legacy_open_policy), counts)
     except (TypeError, ValueError):
-        return "\n".join([header, "Grupele de durată: statistici neconcordante.",
+        return "\n".join([*lines, "Grupele de durată: statistici neconcordante.",
                           _line("Total istoric", counts)])
 
-    lines = [header]
     if active_policy in by_policy:
         lines.append(_line("La secundă", by_policy[active_policy]))
         lines.extend(_details(cohorts[active_policy], by_policy[active_policy]))

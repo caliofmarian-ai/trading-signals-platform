@@ -19,7 +19,7 @@ _BUFFER = "#f4c871"
 _BUFFER_BAND = "#3d3425"
 _TEXT = "#eff5fc"
 _MUTED = "#a3b4ca"
-_STUDY_TITLE = "OPEN NOW  /  STUDIU V3"
+_STUDY_TITLE = "REZULTAT  /  STUDIU V3"
 _ENTRY_LABEL = "PREȚ INTRARE"
 _EXPIRY_OBSERVATION_LABEL = "COTAȚIE PENTRU EXPIRARE"
 
@@ -87,12 +87,15 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
     hit_bar = next((stamp for stamp, (_, high, low, _) in bars
                     if at_or_beyond_buffer_edge(high if sign == 1 else low)), None)
 
-    image = Image.new("RGB", (1200, 800), "#0d1725")
+    image = Image.new("RGB", (1200, 940), "#0d1725")
     draw = ImageDraw.Draw(image)
 
-    def label(x, y, value, *, color=_TEXT, size=23, anchor=None):
+    def label(x, y, value, *, color=_TEXT, size=23, anchor=None, max_width=None):
         # The bundled font is portable, but omits some Romanian accents.
         readable = "".join(c for c in unicodedata.normalize("NFD", value) if not unicodedata.combining(c))
+        if max_width is not None:
+            while size > 18 and draw.textbbox((0, 0), readable, font=_font(size))[2] > max_width:
+                size -= 1
         draw.text((x, y), readable, fill=color, font=_font(size), anchor=anchor)
 
     def dashed(start, end, color):
@@ -107,10 +110,8 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
 
     outcome_label, outcome_color = {
         "WIN": ("WIN · Câștig", _UP), "LOSS": ("LOSS · Pierdere", _DOWN),
-        "DRAW": ("DRAW · Egal", _ENTRY), "UNKNOWN": ("UNKNOWN · Date lipsă", _BUFFER),
+        "DRAW": ("DRAW · Egal", _ENTRY), "UNKNOWN": ("UNKNOWN · Date incomplete", _BUFFER),
     }.get(outcome, ("Verdict indisponibil", _MUTED))
-    if outcome == "WIN" and expiry_position == "INSIDE_BUFFER":
-        outcome_label, outcome_color = "WIN fragil · În buffer", _BUFFER
     label(48, 29, report_title, color=_ENTRY, size=22)
     label(48, 61, f"EUR/USD  ·  {direction}", size=49)
     label(1152, 73, outcome_label, color=outcome_color, size=29, anchor="ra")
@@ -118,18 +119,35 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
                   datetime.fromtimestamp(entry_ts, timezone.utc).strftime("%d.%m.%Y  ·  UTC"))
     label(1152, 36, date_label, color=_MUTED, size=20, anchor="ra")
 
-    def price_label(value):
-        return f"{value:.7f}" if value is not None else "—"
+    def price_label(value, *, boundary=False):
+        if value is None:
+            return "LIPSĂ"
+        # Preserve the actual serialized quote. Fixed precision can display
+        # equal prices for a small real WIN/LOSS or a buffer-edge shortfall.
+        decimal = Decimal(str(value))
+        if -7 <= decimal.adjusted() <= 7:
+            text = format(decimal, "f") if decimal.as_tuple().exponent < -7 else format(decimal, ".7f")
+        else:
+            text = str(decimal)
+        # A computed exact boundary can have hundreds of places when B is
+        # tiny. Bound only this reference label, with explicit approximation;
+        # observed entry/expiry prices above retain their serialized precision.
+        return "~" + format(decimal, ".17g") if boundary and len(text) > 22 else text
+
+    def observation_time(stamp):
+        return _time(stamp, milliseconds=stamp % 1 != 0)
 
     left, right, top, bottom = 57, 1054, 218, 586
-    for x, heading, value, color in (
-        (48, entry_label, price_label(entry_price), _ENTRY),
-        (340, "LIMITĂ BUFFER", price_label(threshold), _BUFFER),
-        (625, expiry_observation_label, price_label(expiry_price), _TEXT),
-        (972, "EXPIRARE UTC", _time(expiry_ts), _TEXT),
+    boundary_text = price_label(threshold, boundary=True)
+    boundary_heading = "LIMITĂ BUFFER (~ = aprox.)" if boundary_text.startswith("~") else "LIMITĂ BUFFER · REPER"
+    for x, heading, value, color, width in (
+        (48, entry_label + " · REPER", price_label(entry_price), _ENTRY, 270),
+        (340, boundary_heading, boundary_text, _BUFFER, 263),
+        (625, expiry_observation_label, price_label(expiry_price), _TEXT if expiry_price is not None else _BUFFER, 325),
+        (972, "EXPIRARE UTC", observation_time(expiry_ts), _TEXT, 180),
     ):
         label(x, 133, heading, color=_MUTED, size=16)
-        label(x, 155, value, color=color, size=31)
+        label(x, 155, value, color=color, size=31, max_width=width)
 
     points = [entry_price, *(p for _, bar in bars for p in bar)]
     points.extend(float(p) for p in (threshold, expiry_price, hit_price) if p is not None)
@@ -188,24 +206,54 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
         marker(hit_ts, hit_price, _BUFFER, 9)
         hit_description = f"Limită buffer atinsă în cotație  ·  {_time(hit_ts, milliseconds=hit_ts % 1 != 0)} UTC  ·  {price_label(hit_price)}"
     elif hit_bar is not None:
-        hit_description = f"Limită buffer atinsă în lumânarea {_time(hit_bar)}–{_time(hit_bar + 60)} UTC  ·  secunda necunoscută"
+        hit_description = f"Limită buffer atinsă în lumânarea {_time(hit_bar)}-{_time(hit_bar + 60)} UTC  ·  secunda necunoscută"
     else:
         hit_description = "Atingerea limitei favorabile în interval nu este confirmată."
 
-    label(48, 632, hit_description, color=_BUFFER, size=21)
+    if expiry_price is not None:
+        comparator = ">" if expiry_price > entry_price else "<" if expiry_price < entry_price else "="
+        comparison = (f"Comparație {direction}: expirare {price_label(expiry_price)} "
+                      f"{comparator} intrare {price_label(entry_price)}  |  {outcome}")
+        label(48, 632, comparison, color=_TEXT, size=23, max_width=1104)
+    else:
+        label(48, 632, "Prețul pentru expirare lipsește. Rezultatul rămâne UNKNOWN.",
+              color=_BUFFER, size=23)
+
     expiry_status = BUFFER_POSITION_LABELS[expiry_position]
-    quote_time = f" la {_time(expiry_quote_ts)} UTC" if expiry_price is not None else ""
-    label(48, 665, f"Poziție la cotația observată  ·  {expiry_status}{quote_time}",
-          color=_BUFFER if expiry_position == "INSIDE_BUFFER" else _TEXT, size=21)
+    complete_margin = ("DA" if expiry_position in {"AT_BUFFER_EDGE", "BEYOND_BUFFER"} else
+                       "NU" if expiry_position in {"INSIDE_BUFFER", "AT_ENTRY", "LOSS_SIDE"} else
+                       "indisponibilă")
+    position_text = f"Poziție: {expiry_status}  |  Marjă completă la expirare: {complete_margin}"
+    if expiry_price is None:
+        position_text = "Poziția în buffer nu poate fi stabilită fără cotația de expirare."
+    elif expiry_position == "UNAVAILABLE":
+        position_text = "Limita bufferului este indisponibilă; poziția și marja nu pot fi calculate."
+    label(48, 669, position_text,
+          color=_BUFFER if expiry_position == "INSIDE_BUFFER" else _TEXT, size=21, max_width=1104)
+    expiry_evidence = (f"1/1, la {observation_time(expiry_quote_ts)} UTC"
+                       if expiry_price is not None else "0/1 · LIPSĂ")
+    label(48, 706, f"Cotații pentru verdict: intrare 1/1  |  expirare {expiry_evidence}",
+          color=_TEXT if expiry_price is not None else _BUFFER, size=21, max_width=1104)
+
+    if bars:
+        last_bar = bars[-1][0]
+        bar_description = (f"Context M1: {len(bars)} complete  |  ultima: {_time(last_bar)}-{_time(last_bar + 60)}"
+                           f"  |  expirare: {observation_time(expiry_ts)} UTC")
+    else:
+        bar_description = "Context M1: 0 lumânări complete în intervalul urmărit."
+    label(48, 743, bar_description, color=_MUTED, size=21, max_width=1104)
+    label(48, 780, hit_description, color=_BUFFER, size=20, max_width=1104)
     if earlier_candle:
-        label(48, 692, f"Lumânarea {_time(hit_bar)}–{_time(hit_bar + 60)} UTC arată limita atinsă mai devreme; secunda este necunoscută.", color=_BUFFER, size=18)
-    bar_description = ("Lumânări M1 complete în intervalul urmărit. Spațiile goale nu au cotații M1 complete."
-                       if bars else "Nicio lumânare M1 completă în intervalul urmărit. Punctele arată cotațiile disponibile.")
-    label(48, 716, bar_description, color=_MUTED, size=19)
-    legend = "Albastru  ·  Intrare     |     Alb vertical  ·  Expirare"
+        label(48, 812, f"Contact anterior în M1 {_time(hit_bar)}-{_time(hit_bar + 60)} UTC; secunda nu este cunoscută.",
+              color=_BUFFER, size=19, max_width=1104)
+    label(48, 845, "Lumânările și atingerea limitei sunt context; nu înlocuiesc cotația pentru expirare.",
+          color=_MUTED, size=20, max_width=1104)
+    legend = "Orizontale: albastru = intrare, galben = limită buffer (repere). Alb vertical = ora expirării."
+    label(48, 876, legend, color=_MUTED, size=19, max_width=1104)
+    legend = "Puncte: intrare, expirare și contact confirmat, când sunt disponibile."
     if threshold is not None:
-        legend = "Bandă galbenă  ·  Buffer lângă intrare     |     " + legend
-    label(48, 747, legend, color=_MUTED, size=18)
+        legend = "Bandă galbenă · Buffer lângă intrare  |  Puncte: intrare, expirare și contact confirmat."
+    label(48, 907, legend, color=_MUTED, size=18, max_width=1104)
 
     png = BytesIO()
     image.save(png, format="PNG", optimize=True)

@@ -214,18 +214,21 @@ def report_if_due(*, now_ts: float) -> dict[str, Any] | None:
         try:
             from intelligence import physical_expiry_calibration
             observed = physical_expiry_calibration.summary(now_ts=now_ts)
-            report["physical_study_progress"] = {key: observed.get(key, 0) for key in
+            report["physical_study_progress"] = {key: observed.get(key) for key in
                 ("unique_entry_experiments", "finalized_entry_experiments",
                  "study_open_now_api_accepted", "study_results_api_accepted")}
             from core import confirmed_study_duration as durations
             from intelligence.study_progress_presentation import render_published_study_progress
-            report["study_results_by_duration_policy"] = observed.get("published_study_results_by_duration_policy") or {}
+            report["study_results_by_duration_policy"] = observed.get("published_study_results_by_duration_policy")
+            report["study_results_by_quote_recovery_policy"] = observed.get("published_study_results_by_quote_recovery_policy")
             # Published results only: never substitute independent calibration
             # observations, omit draws or label historical totals current.
             text += "\n" + render_published_study_progress(
                 observed, active_policy=durations.POLICY,
                 legacy_policy=durations.LEGACY_POLICY,
                 legacy_open_policy=durations.LEGACY_OPEN_POLICY,
+                recovery_policy=physical_expiry_calibration.QUOTE_RECOVERY_POLICY,
+                legacy_recovery_policy=physical_expiry_calibration.LEGACY_QUOTE_RECOVERY_POLICY,
             )
         except Exception:
             text += "\nStudy progress is temporarily unavailable."
