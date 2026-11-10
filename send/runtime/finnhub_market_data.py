@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from runtime.market_history_integrity import inspect_candles, inspect_history, summarize_gap_distribution
 from runtime.observation_timing import WINDOW, distribution
+from runtime.candle_store_writer import CandleStoreWriter
 from runtime.quote_window_diagnostics import MAX_REJECTED_TIMESTAMPS, QuoteWindowDiagnostics
 
 
@@ -158,6 +159,8 @@ class FinnhubForexFeed:
         self.clock = clock
         self.websocket_connector = websocket_connector
         self._lock = threading.RLock()
+        self._store_io_lock = threading.Lock()
+        self._store_writer: Optional[CandleStoreWriter] = None
         self._candles: Dict[str, List[Dict[str, Any]]] = {"M1": [], "M5": []}
         self._last_price_ts: Optional[int] = None
         self._last_tick_ms: Optional[int] = None
@@ -250,24 +253,38 @@ class FinnhubForexFeed:
             self._store_load_state = "LOADED"
 
     def _persist_store(self) -> None:
-        with self._lock:
-            payload = {
-                "schema_version": "1.0.0",
-                "provider": "FINNHUB",
-                "symbol": self.symbol,
-                "candles": self._candles,
-            }
-        try:
-            self.store_path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = self.store_path.with_suffix(self.store_path.suffix + ".tmp")
-            temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-            os.chmod(temporary, 0o600)
-            temporary.replace(self.store_path)
-        except OSError:
-            self._store_write_state = "ERROR"
-            raise
-        self._store_write_state = "OK"
-        self._last_persisted_ts = int(self.clock())
+        # Only the snapshot is copied under the quote lock. Serialization and
+        # filesystem I/O must not block price ingestion or mutate a saved view.
+        with self._store_io_lock:
+            with self._lock:
+                payload = {
+                    "schema_version": "1.0.0",
+                    "provider": "FINNHUB",
+                    "symbol": self.symbol,
+                    "candles": {code: [dict(row) for row in rows]
+                                for code, rows in self._candles.items()},
+                }
+            try:
+                self.store_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = self.store_path.with_suffix(self.store_path.suffix + ".tmp")
+                temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+                os.chmod(temporary, 0o600)
+                temporary.replace(self.store_path)
+            except Exception:
+                with self._lock:
+                    self._store_write_state = "ERROR"
+                raise
+            with self._lock:
+                self._store_write_state = "OK"
+                self._last_persisted_ts = int(self.clock())
+
+    def _request_store_persist(self) -> None:
+        if self._store_writer is None:
+            # Explicit/offline ingestion retains the synchronous API. The live
+            # stream installs its one writer before reading provider frames.
+            self._persist_store()
+        else:
+            self._store_writer.request()
 
     def ingest_message(self, message: Any) -> None:
         if isinstance(message, bytes):
@@ -330,7 +347,7 @@ class FinnhubForexFeed:
                 self._stream_last_failure_class = None
             changed = True
         if changed:
-            self._persist_store()
+            self._request_store_persist()
             stream_event = "FIRST_REAL_TICK" if first_trade_seen else None
             with self._lock:
                 # A reconnect/subscribe alone is not recovery. Require a quote
@@ -511,6 +528,20 @@ class FinnhubForexFeed:
                 self.ingest_message(frame)
 
     def _stream_forever(self) -> None:
+        with self._lock:
+            if self._store_writer is not None:
+                raise RuntimeError("Finnhub stream writer has already been started")
+            writer = CandleStoreWriter(self._persist_store)
+            writer.start()
+            self._store_writer = writer
+        try:
+            self._run_stream()
+        finally:
+            # stop() signals the receiver. Only after the last accepted frame
+            # do we drain persistence; never join a worker under the quote lock.
+            writer.close()
+
+    def _run_stream(self) -> None:
         while not self._stop_event.is_set():
             socket = None
             try:
@@ -634,6 +665,8 @@ class FinnhubForexFeed:
     def _observation_timing(self):
         # Caller holds the same lock as ingestion; no price or raw tick history.
         return {"quote_sample_contract":"ATOMIC_REAL_TICK_PRICE_TIMESTAMP_V1",
+                "candle_store_writer": (self._store_writer.summary() if self._store_writer is not None
+                                        else {"mode": "SYNCHRONOUS_DIRECT_INGEST"}),
                 "buffered_real_quote_count":len(self._real_quote_buffer),
                 "out_of_order_tick_count":self._out_of_order_tick_count,
                 "tick_timing_scope":"LAST_128_POSITIVE_PROVIDER_TIMESTAMP_STEPS_AND_ACCEPTED_TICK_RECEIVE_AGES_IN_THIS_PROCESS",
