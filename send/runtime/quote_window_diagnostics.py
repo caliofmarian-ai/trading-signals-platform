@@ -22,6 +22,7 @@ class QuoteWindowDiagnostics:
 
     def __init__(self) -> None:
         self.windows: OrderedDict[tuple[float, float], tuple[str, float]] = OrderedDict()
+        self.precision_windows: OrderedDict[tuple[float, float], str] = OrderedDict()
         self.report_slot: int | None = None
         self.slot_events = 0
         self.suppressed_events = 0
@@ -87,13 +88,8 @@ class QuoteWindowDiagnostics:
         while len(self.windows) > MAX_TRACKED_WINDOWS:
             self.windows.popitem(last=False)
 
-        slot = int(now_ts // 60)
-        if self.report_slot is None or slot > self.report_slot:
-            self.report_slot, self.slot_events = slot, 0
-        if self.slot_events >= MAX_EVENTS_PER_MINUTE:
-            self.suppressed_events += 1
+        if not self._take_report_slot(now_ts):
             return None
-        self.slot_events += 1
         received_ts = selected.get("_received_ts") if selected is not None else None
         if type(received_ts) not in (int, float) or not isfinite(received_ts) or received_ts <= 0:
             received_ts = None
@@ -124,4 +120,48 @@ class QuoteWindowDiagnostics:
             "scope": "CURRENT_PROCESS_RETAINED_TIMESTAMPS_AT_LOOKUP",
             "terminal_outcome": False, "changes_sampling_policy": False,
             "no_prices_or_credentials": True,
+        }
+
+    def _take_report_slot(self, now_ts: float) -> bool:
+        slot = int(now_ts // 60)
+        if self.report_slot is None or slot > self.report_slot:
+            self.report_slot, self.slot_events = slot, 0
+        if self.slot_events >= MAX_EVENTS_PER_MINUTE:
+            self.suppressed_events += 1
+            return False
+        self.slot_events += 1
+        return True
+
+    def observe_precision(
+        self, *, target_ts: float, max_delay: float, now_ts: float,
+        bucket_quote: Mapping[str, Any] | None, exact_quote: Mapping[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Compare candidates from one retained snapshot without changing selection."""
+        if bucket_quote is exact_quote:
+            return None
+        if bucket_quote is None:
+            reason = "ONLY_EXACT"
+        elif exact_quote is None:
+            reason = "ONLY_SECOND_BUCKET"
+        else:
+            reason = "DIFFERENT_FIRST_TICK"
+        key = (target_ts, max_delay)
+        if self.precision_windows.get(key) == reason:
+            return None
+        if not self._take_report_slot(now_ts):
+            return None
+        self.precision_windows[key] = reason
+        self.precision_windows.move_to_end(key)
+        while len(self.precision_windows) > MAX_TRACKED_WINDOWS:
+            self.precision_windows.popitem(last=False)
+        return {
+            "protocol": "RETAINED_SOURCE_TIME_PRECISION_COMPARISON_V1",
+            "reason": reason,
+            "target_ts": target_ts,
+            "max_delay_seconds": max_delay,
+            "lookup_ts": now_ts,
+            "second_bucket_provider_tick_ms": bucket_quote["_provider_tick_ms"] if bucket_quote else None,
+            "exact_provider_tick_ms": exact_quote["_provider_tick_ms"] if exact_quote else None,
+            "terminal_outcome": False,
+            "changes_sampling_policy": False,
         }
