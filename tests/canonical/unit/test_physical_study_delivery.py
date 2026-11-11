@@ -854,3 +854,65 @@ def test_report_evidence_bounds_unknown_source_and_reason_without_disclosing_raw
     assert "PRIVATE" not in text and "PRIVATE" not in json.dumps(evidence)
     assert evidence["entry_quote_source"] == evidence["observation_reason"] == "UNSPECIFIED"
     assert "Motiv: motiv nedetaliat în înregistrare." in text
+
+
+def test_prospective_cutover_preserves_pending_history_and_excludes_old_pre(study_setup):
+    _, study, _, _, _, params, messages, clock = study_setup
+    original = _capture(study_setup)
+    history = study._path()
+    entry_time = BASE + 32
+    study.advance(now_ts=clock[0], active_provider="FINNHUB",
+                  price_loader=lambda _: _sample(entry_time, 1.1))
+    assert len(messages) == 1
+    historical_before = study._read(history)
+    historical_id = next(iter(historical_before["records"]))
+    old_receipt = historical_before["records"][historical_id]["study_delivery"]["entry"]
+    assert old_receipt["status"] == "API_ACCEPTED"
+
+    cutover = BASE + 40
+    startup = study.advance(now_ts=cutover, active_provider="FINNHUB",
+                            price_loader=lambda _: None, start_prospective_cohort=True)
+    assert startup["prospective_cohort"] == {"revision": study.COHORT_REVISION, "starts_at": cutover}
+    assert startup["unique_entry_experiments"] == 0
+    assert study._read(history) == historical_before
+
+    def candidate(identity, pre):
+        return {
+            "policy": "PHYSICAL_ONLY_V3", "direction": "BUY",
+            "opportunity_signal_id": identity, "created_ts": pre + 31, "open_ts": pre + 31,
+            "pre_ts": pre, "confirm_ts": pre + 2, "confirm_model_seconds": 120,
+            "model_seconds": 120, "adjusted_seconds": 100, "buffer_distance": 0.0002,
+        }
+
+    study.capture([candidate("sig-v3-before-cutover", cutover - 1),
+                   candidate("sig-v3-after-cutover", cutover + 1)],
+                  params=params, buffer_mode="SMALL", strategy_version="3.0.0",
+                  canonical_spec="V3_SCORELESS_OWNER_AMENDMENT_v1.1.0", now_ts=cutover + 32)
+    active = study._study_paths(history)[0]
+    new_state = study._read(active)
+    assert new_state["scope"]["prospective_cohort"] == startup["prospective_cohort"]
+    assert new_state["scope"]["parameter_sha256"] == historical_before["scope"]["parameter_sha256"]
+    assert len(new_state["records"]) == 1
+    assert next(iter(new_state["records"].values()))["policies"]["PHYSICAL_ONLY_V3"][
+        "opportunity_signal_id"] == "sig-v3-after-cutover"
+    assert study._read(history) == historical_before
+
+    expiry = entry_time + study.displayed_study_observation(original)["horizon_seconds"]
+    clock[0] = expiry
+    study.advance(now_ts=expiry, active_provider="FINNHUB",
+                  price_loader=lambda _: _sample(expiry, 1.1003), start_prospective_cohort=True)
+    historical_after = study._read(history)
+    row = historical_after["records"][historical_id]
+    assert row["study_delivery"]["entry"] == old_receipt
+    assert row["study_delivery"]["result"]["status"] == "API_ACCEPTED"
+    assert study.displayed_study_observation(row)["outcome"] == "WIN"
+    assert len(messages) == 2
+
+    report = study.summary(now_ts=expiry)
+    assert report["prospective_cohort"]["starts_at"] == cutover
+    assert report["unique_entry_experiments"] == 1
+    assert report["policies"][0]["train_entries"] == 1
+    assert report["study_open_now_api_accepted"] == 0
+    assert report["historical_delivery_counts"] == {
+        "study_open_now_api_accepted": 1, "study_results_api_accepted": 1,
+    }
