@@ -147,6 +147,13 @@ def test_progress_uses_published_study_results_when_open_model_disagrees(canonic
         "published_study_results": {"wins": 3, "losses": 1, "draws": 0, "unknown": 2,
             "buffer_met": 1, "buffer_not_met": 3, "buffer_unavailable": 2,
             "win_buffer_not_met": 2},
+        "buffer_first_hit_time_diagnostic": {
+            "eligible_entries": 4, "observed_hits": 1, "no_observed_hit": 0,
+            "pending": 1, "unavailable": 2,
+            "unavailable_reasons": {"ENTRY_OBSERVATION_MISSING": 1,
+                                      "PATH_OBSERVATION_MISSING": 1},
+            "hit_time_seconds": {"p50": 47},
+        },
     })
     _observe(module, 1000)
     module.report_if_due(now_ts=1001)
@@ -156,6 +163,11 @@ def test_progress_uses_published_study_results_when_open_model_disagrees(canonic
     assert "WIN fragil (în buffer): 2" in text
     assert "Buffer: atins" not in text
     assert "WIN 97" not in text and "Model:" not in text
+    assert "Timp real până la buffer: 1 atingeri observate" in text
+    assert "Lipsește cotația la intrare: 1" in text
+    assert "Lipsește traseul cotațiilor până la expirare: 1" in text
+    assert "Mediana primei atingeri observate: 47 secunde" in text
+    assert "UNKNOWN" not in text
 
 
 def test_progress_never_falls_back_to_model_outcomes_when_published_results_are_unavailable(canonical_runtime_root, monkeypatch):

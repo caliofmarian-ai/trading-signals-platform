@@ -616,6 +616,7 @@ def test_legacy_entry_receipts_keep_their_original_study_number(study_setup, leg
     state = study._read(path)
     row = next(iter(state["records"].values()))
     row.pop("study_observation")  # persisted pre-upgrade record keeps its original OPEN horizon
+    row.pop("buffer_first_hit_time")  # the prospective diagnostic did not exist either
     row.update(entry=_sample(BASE + 32, 1.1), state="OBSERVING")
     receipt = {"status": "API_ACCEPTED", "attempted_ts": BASE + 32,
                "api_accepted_ts": BASE + 32.1, "message_id": 73, "destination_id": 123456789}

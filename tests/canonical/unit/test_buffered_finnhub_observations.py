@@ -151,6 +151,19 @@ def test_study_chart_evidence_excludes_ambiguous_and_post_expiry_prices(tmp_path
     assert ticks[-1] == {"observed_ts": 1202.5, "price": 1.19}
 
 
+def test_study_tick_evidence_preserves_exact_real_tick_provenance(tmp_path):
+    clock = [1202.25]
+    _, feed = _feed(tmp_path, clock)
+    for timestamp, price in ((1025125, 1.1), (1025250, 1.11), (1199999, 1.12),
+                             (1202250, 1.13), (1202501, 1.14)):
+        _tick(feed, timestamp, price)
+    ticks = feed.get_study_tick_evidence(1025.125, 1202.5)
+    assert [tick["provider_tick_ms"] for tick in ticks] == [1025250, 1199999, 1202250]
+    assert ticks[0]["observed_ts"] == 1025.25
+    assert ticks[0]["source"] == "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1"
+    assert all(tick["provider"] == "FINNHUB" and tick["symbol"] == "EUR/USD" for tick in ticks)
+
+
 def test_study_chart_uses_only_existing_active_finnhub_feed(monkeypatch):
     market = importlib.import_module("runtime.market_client")
 

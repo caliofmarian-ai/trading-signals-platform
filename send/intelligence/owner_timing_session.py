@@ -229,6 +229,24 @@ def report_if_due(*, now_ts: float) -> dict[str, Any] | None:
             report["study_results_by_duration_policy"] = observed.get("published_study_results_by_duration_policy")
             report["study_results_by_quote_recovery_policy"] = observed.get("published_study_results_by_quote_recovery_policy")
             report["study_expiry_estimates"] = observed.get("published_study_expiry_estimates")
+            hit_time = observed.get("buffer_first_hit_time_diagnostic") or {}
+            report["buffer_first_hit_time_diagnostic"] = hit_time
+            if hit_time.get("eligible_entries", 0):
+                text += ("\nTimp real până la buffer: "
+                         f"{hit_time.get('observed_hits', 0)} atingeri observate, "
+                         f"{hit_time.get('no_observed_hit', 0)} fără atingere observată, "
+                         f"{hit_time.get('pending', 0)} în curs.")
+                missing_labels = {
+                    "ENTRY_OBSERVATION_MISSING": "Lipsește cotația la intrare",
+                    "PROVIDER_CHANGED": "Furnizorul de cotații s-a schimbat",
+                    "PATH_OBSERVATION_MISSING": "Lipsește traseul cotațiilor până la expirare",
+                    "PATH_EVIDENCE_LOADER_UNAVAILABLE": "Colectarea traseului nu a fost disponibilă",
+                }
+                for reason, count in sorted((hit_time.get("unavailable_reasons") or {}).items()):
+                    text += f"\n{missing_labels.get(reason, reason.replace('_', ' ').lower())}: {count}."
+                p50 = (hit_time.get("hit_time_seconds") or {}).get("p50")
+                if p50 is not None:
+                    text += f"\nMediana primei atingeri observate: {p50:g} secunde de la intrare."
             # Published results only: never substitute independent calibration
             # observations, omit draws or label historical totals current.
             text += "\n" + render_published_study_progress(

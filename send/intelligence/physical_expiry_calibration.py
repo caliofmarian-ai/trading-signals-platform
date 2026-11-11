@@ -18,6 +18,7 @@ from core import storage
 from core import confirmed_study_duration as second_duration
 from intelligence import shadow_model_time_research as quotes
 from intelligence import buffer_expiry_evidence as buffer_evidence
+from intelligence import buffer_first_hit_time as buffer_hit_time
 from intelligence import expiry_price_estimate as expiry_estimate
 from intelligence.second_precision_duration import DurationCandidateUnavailable, prepare_candidate
 from core.market_history_policy import HISTORY_POLICY
@@ -338,7 +339,8 @@ def _delivery_paths(path):
 def _pending_observations(row):
     return (row["state"] != "FINAL"
             or any(c["outcome"] == "PENDING" for c in row.get("post_model_observations", []))
-            or any(row.get(key, {}).get("outcome") == "PENDING" for key in _SUPPLEMENTAL_OBSERVATIONS))
+            or any(row.get(key, {}).get("outcome") == "PENDING" for key in _SUPPLEMENTAL_OBSERVATIONS)
+            or row.get("buffer_first_hit_time", {}).get("status") == "PENDING")
 
 
 def _pending_delivery(row):
@@ -400,6 +402,8 @@ def validate(state):
         if state["buffer_objective"] != _buffer_policy():
             raise ValueError("BUFFER_OBJECTIVE_CHANGED")
         _number(state["buffer_collection_started_ts"])
+    if "buffer_first_hit_time_collection_started_ts" in state:
+        _number(state["buffer_first_hit_time_collection_started_ts"])
     scope = state["scope"]
     if (scope.get("provider") != "FINNHUB" or scope.get("symbol") != "EUR/USD"
         or scope.get("history_policy") != HISTORY_POLICY
@@ -545,6 +549,10 @@ def validate(state):
             _validate_duration_reserve(row, scope)
         if "open_market_duration" in row:
             _validate_open_market_duration(row, scope, precise=precise)
+        if "buffer_first_hit_time" in row:
+            if "buffer_first_hit_time_collection_started_ts" not in state:
+                raise ValueError("BUFFER_HIT_TIME_COLLECTION_START_MISSING")
+            buffer_hit_time.validate(row["buffer_first_hit_time"], row, allow_pending=True)
         observations = row["candidates"] + row.get("post_model_observations", [])
         observations += [row[key] for key in _SUPPLEMENTAL_OBSERVATIONS
                          if key in row]
@@ -677,6 +685,9 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
                         second_duration.validate_observation(row, scope)
                         if cohort is not None and "decision_snapshot" in row:
                             _capture_duration_diagnostics(row, plan, scope, precise=precise)
+                    row["buffer_first_hit_time"] = buffer_hit_time.pending(
+                        horizon_seconds=confirmed_seconds, captured_ts=now)
+                    state.setdefault("buffer_first_hit_time_collection_started_ts", now)
             state["records"][identity] = row
         _save(path, state)
 
@@ -725,7 +736,8 @@ def _window_quote(loader, latest, target, delay, now, *, precise=False):
 
 
 def advance(*, now_ts, active_provider, price_loader, observation_loader=None, bracket_loader=None,
-            start_prospective_cohort=False, precise_observation_loader=None, prospective_cohort_revision=None):
+            path_loader=None, start_prospective_cohort=False, precise_observation_loader=None,
+            prospective_cohort_revision=None):
     path = _path()
     if path is None:
         return None
@@ -746,14 +758,15 @@ def advance(*, now_ts, active_provider, price_loader, observation_loader=None, b
             raise ValueError("PRECISE_OBSERVATION_LOADER_REQUIRED")
         report = _advance_ledger(ledger, now=now, active_provider=active_provider,
                                 price_loader=price_loader, observation_loader=loader,
-                                bracket_loader=bracket_loader, historical=index > 0, cohort=cohort)
+                                bracket_loader=bracket_loader, path_loader=path_loader,
+                                historical=index > 0, cohort=cohort)
         if index == 0:
             result = report
     return result
 
 
 def _advance_ledger(path, *, now, active_provider, price_loader, observation_loader, bracket_loader,
-                    historical, cohort):
+                    path_loader, historical, cohort):
     precise = _cohort_uses_precise_quotes(cohort)
     with storage.with_lock("physical_v3_expiry_calibration", timeout_sec=0.2):
         state = _read(path)
@@ -809,6 +822,26 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                             changed = True
                 if all(c["outcome"] != "PENDING" for c in row["candidates"]):
                     row["state"] = "FINAL"
+                timing = row.get("buffer_first_hit_time")
+                if timing is not None and timing["status"] == "PENDING":
+                    terminal = reason if row["entry"] is None and reason else None
+                    ticks = None
+                    loader_available = path_loader is not None
+                    should_settle = terminal is not None or active_provider != "FINNHUB"
+                    if row["entry"] is not None:
+                        end_ts = row["entry"]["observed_ts"] + timing["horizon_seconds"]
+                        should_settle = should_settle or now > end_ts + buffer_hit_time.ARRIVAL_GRACE_SECONDS
+                        if should_settle and path_loader is not None:
+                            try:
+                                ticks = path_loader(row["entry"]["observed_ts"], end_ts)
+                            except Exception:
+                                should_settle = False  # retry a transient bounded read
+                    if should_settle and buffer_hit_time.settle(
+                        timing, row, now_ts=now, active_provider=active_provider,
+                        ticks=ticks, evidence_loader_available=loader_available,
+                        terminal_reason=terminal,
+                    ):
+                        changed = True
             estimate_updates = _enrich_expiry_estimates(state, now=now,
                 active_provider=active_provider, bracket_loader=bracket_loader)
             changed = bool(estimate_updates) or changed
@@ -841,6 +874,10 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
         else:
             marker = "TSP_PHYSICAL_V3_EXPIRY_CALIBRATION"
         print(marker + " " + json.dumps(_compact(report), sort_keys=True), flush=True)
+        timing = report.get("buffer_first_hit_time_diagnostic", {})
+        if not historical and timing.get("eligible_entries", 0):
+            print("TSP_PHYSICAL_BUFFER_FIRST_HIT_TIME "
+                  + json.dumps(timing, sort_keys=True), flush=True)
         _last_report[str(path)] = slot
         return report
     return None
@@ -940,6 +977,63 @@ def _open_market_duration_report(records):
     }
 
 
+def _buffer_first_hit_time_report(records):
+    rows = [row for row in records if "buffer_first_hit_time" in row]
+    statuses = Counter(row["buffer_first_hit_time"]["status"] for row in rows)
+    unavailable = Counter(row["buffer_first_hit_time"]["reason"] for row in rows
+                          if row["buffer_first_hit_time"]["status"] == "UNAVAILABLE")
+    hits = [row for row in rows if row["buffer_first_hit_time"]["status"] == "OBSERVED_HIT"]
+    expiry_outcomes = Counter()
+    missing_reasons = Counter()
+    expiry_buffer = Counter()
+    for row in hits:
+        observation = displayed_study_observation(row)
+        outcome = observation["outcome"]
+        if outcome in {"WIN", "LOSS", "DRAW"}:
+            expiry_outcomes[outcome] += 1
+        elif outcome == "UNKNOWN":
+            missing_reasons[observation.get("reason") or "CAUSE_UNAVAILABLE"] += 1
+        if row.get("entry") is not None and observation.get("quote") is not None:
+            measured = buffer_evidence.measure(
+                row["direction"], row["entry"], observation["quote"], row["buffer_snapshot"])
+            expiry_buffer[measured["status"]] += 1
+        else:
+            expiry_buffer["UNAVAILABLE"] += 1
+    return {
+        "contract": buffer_hit_time.CONTRACT,
+        "eligible_entries": len(rows),
+        "pending": statuses["PENDING"],
+        "observed_hits": statuses["OBSERVED_HIT"],
+        "no_observed_hit": statuses["NO_OBSERVED_HIT"],
+        "unavailable": statuses["UNAVAILABLE"],
+        "unavailable_reasons": dict(unavailable),
+        "hit_time_seconds": _quantiles([
+            row["buffer_first_hit_time"]["seconds_from_entry"] for row in hits]),
+        "hit_horizon_fraction": _quantiles([
+            row["buffer_first_hit_time"]["horizon_fraction"] for row in hits]),
+        "path_max_tick_gap_seconds": _quantiles([
+            row["buffer_first_hit_time"]["max_tick_gap_seconds"] for row in rows
+            if row["buffer_first_hit_time"]["max_tick_gap_seconds"] is not None]),
+        "hit_then_expiry": {
+            "wins": expiry_outcomes["WIN"],
+            "losses": expiry_outcomes["LOSS"],
+            "draws": expiry_outcomes["DRAW"],
+            "result_measurement_missing": sum(missing_reasons.values()),
+            "result_measurement_missing_reasons": dict(missing_reasons),
+            "buffer_met_at_expiry": expiry_buffer["MET"],
+            "buffer_not_met_at_expiry": expiry_buffer["NOT_MET"],
+            "buffer_expiry_measurement_unavailable": expiry_buffer["UNAVAILABLE"],
+        },
+        "first_observed_tick_only": True,
+        "interpolation_allowed": False,
+        "execution_authority": False,
+        "publication_authority": False,
+        "calibration_authority": False,
+        "automatic_parameter_change": False,
+        "no_historical_backfill": True,
+    }
+
+
 def analyze(state, *, now_ts):
     report = {"protocol": PROTOCOL, "truth_domain": "HYPOTHETICAL_RESEARCH", "observed_at": now_ts,
               "status": "WAITING_FIRST_COMPLETE_CHAIN", "bias_grid": list(BIASES),
@@ -948,6 +1042,8 @@ def analyze(state, *, now_ts):
               "entry_quote_delay_seconds":_quantiles([]), "paired_expiry_observations":[],
               "buffer_objective":_buffer_policy(), "legacy_directional_only_entries":0,
               "prospective_buffer_entries":0, "buffer_collection_started_ts":None,
+              "buffer_first_hit_time_collection_started_ts":None,
+              "buffer_first_hit_time_diagnostic":_buffer_first_hit_time_report([]),
               "buffered_quote_collection": {"entry_source_window_seconds": quotes.MAX_ENTRY_DELAY_SECONDS,
                   "expiry_source_window_seconds": quotes.MAX_SAMPLE_DELAY_SECONDS,
                   "missing_quote_arrival_grace_seconds": BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS,
@@ -994,6 +1090,9 @@ def analyze(state, *, now_ts):
     report["legacy_directional_only_entries"] = sum("buffer_snapshot" not in r for r in records)
     report["prospective_buffer_entries"] = sum("buffer_snapshot" in r for r in records)
     report["buffer_collection_started_ts"] = state.get("buffer_collection_started_ts")
+    report["buffer_first_hit_time_collection_started_ts"] = state.get(
+        "buffer_first_hit_time_collection_started_ts")
+    report["buffer_first_hit_time_diagnostic"] = _buffer_first_hit_time_report(records)
     report["decision_snapshot_entries"] = sum("decision_snapshot" in r for r in records)
     report["entry_quote_sources"] = dict(Counter(r["entry"]["source"] for r in records if r["entry"]))
     report["expiry_quote_sources"] = dict(Counter(c["quote"]["source"] for r in records
