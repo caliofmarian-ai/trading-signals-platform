@@ -157,3 +157,23 @@ def test_status_explains_separate_saved_context_and_recent_window(physical_histo
         "market_data_candle_counts": health["candle_counts"], "market_data_history_ready": True})
     assert "Saved market context" in text
     assert "Recent physical window: M1 220/22; M5 15/15" in text
+
+
+@pytest.mark.parametrize("head_exclusion", ["forming", "isolated"])
+def test_flat_structural_boundary_comes_from_a_confirmed_window(head_exclusion):
+    from core.sr_corridor_engine import _structural_levels
+
+    bars = [
+        {"ts": 30000 - i * 300, "high": 1.1, "low": 1.09, "complete": True}
+        for i in range(80)
+    ]
+    # This unconfirmed candle is close enough to the plateau to trigger
+    # the horizontal-level fallback.
+    bars[0].update(high=1.100009, low=1.089991)
+    if head_exclusion == "forming":
+        bars[0]["complete"] = False
+    else:
+        bars[0]["ts"] += 300
+
+    assert _structural_levels(bars, gap_aware=True) == ((1.09,), (1.1,))
+    assert _structural_levels(bars) == ((1.089991,), (1.100009,))
