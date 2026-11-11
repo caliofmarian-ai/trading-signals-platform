@@ -56,8 +56,13 @@ def _quote_details(row, counts, *, explicit_missing=False):
                 lines.append(f"{expiry_issue}: 0.")
             lines.extend(f"{label}: {count}." for label, count in sorted(by_label.items()) if count)
         except ValueError:
-            lines.append("Cauzele lipsei datelor: statistici neconcordante.")
-    elif counts["unknown"] or explicit_missing:
+            if counts["unknown"]:
+                lines.append(f"Cauza lipsei datelor este indisponibilă: {counts['unknown']}.")
+            else:
+                lines.append("Cauzele lipsei datelor: statistici neconcordante.")
+    elif counts["unknown"]:
+        lines.append(f"Cauza lipsei datelor este indisponibilă: {counts['unknown']}.")
+    elif explicit_missing:
         lines.append("Cauzele lipsei datelor: statistici indisponibile.")
     return lines
 
