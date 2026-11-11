@@ -98,7 +98,8 @@ def test_physical_failures_reject_every_stage(physical, monkeypatch, gate):
         monkeypatch.setattr(strategy, "evaluate_market", lambda *a, **k: market)
     elif gate == "space":
         corridor = replace(baseline.corridor, structure=replace(baseline.corridor.structure,
-            available_distance=baseline.market.context.buffer_distance / 2))
+            available_distance=baseline.market.context.buffer_distance / 2,
+            feasibility_state="CONSTRAINED"))
         monkeypatch.setattr(strategy, "evaluate_corridor", lambda *a, **k: corridor)
     else:
         monkeypatch.setattr(strategy, "evaluate_time", lambda *a, **k: replace(baseline.time,
@@ -322,3 +323,40 @@ def test_physical_calibration_rejects_rewriting_frozen_buffer(physical_calibrati
     row["buffer_snapshot"]["buffer_distance"] = 2
     with pytest.raises(ValueError):
         module.validate(state)
+
+
+@pytest.mark.parametrize(
+    ("direction", "barrier", "expected"),
+    [
+        ("BUY", 1.1002999999999, "CONSTRAINED"),
+        ("BUY", 1.1003, "VALID"),
+        ("BUY", 1.1003000000001, "VALID"),
+        ("SELL", 1.0997000000001, "CONSTRAINED"),
+        ("SELL", 1.0997, "VALID"),
+        ("SELL", 1.0996999999999, "VALID"),
+    ],
+)
+def test_v3_directional_room_uses_one_exact_verdict(physical, monkeypatch, direction, barrier, expected):
+    from dataclasses import replace
+    from core import strategy_v3
+
+    _, m1, m5, params = physical
+    baseline = strategy_v3.decide(m1, m5, params, buffer_mode="SMALL")
+    price = 1.1
+    market = replace(
+        baseline.market,
+        direction_bias=direction,
+        context=replace(baseline.market.context, latest_price=price, buffer_distance=0.0003),
+    )
+    monkeypatch.setattr(strategy_v3, "evaluate_market", lambda *args, **kwargs: market)
+    support = barrier if direction == "SELL" else 1.099
+    resistance = barrier if direction == "BUY" else 1.101
+    for candle in m5:
+        candle.update(open=price, close=price, high=resistance, low=support, complete=True)
+
+    result = strategy_v3.decide(m1, m5, params, buffer_mode="SMALL")
+    assert result.corridor.structure.feasibility_state == expected
+    constrained = expected == "CONSTRAINED"
+    assert result.trade_physics.physically_constrained == constrained
+    assert result.decision.fsm_inputs["physically_constrained"] == constrained
+    assert result.decision.kind == ("REJECT" if constrained else "PRE")

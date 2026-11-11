@@ -7,6 +7,7 @@ scores, FSM states, signals, or execution instructions.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, localcontext
 from math import isclose, isfinite
 from typing import Any, Mapping, Sequence
 
@@ -147,22 +148,43 @@ def evaluate_corridor(
     # buffer_distance.  Keep params in the public interface for pipeline
     # compatibility, but do not let the legacy sr_required_multiplier tighten
     # or relax this hard structural-feasibility gate.
-    _ = params
+    physical_only = params.get("decision_policy") == "PHYSICAL_ONLY_V3"
     required_distance = float(market.context.buffer_distance)
     if not isfinite(required_distance) or required_distance <= 0:
         raise CorridorUnavailable("required structural distance cannot be established")
 
     price = market.context.latest_price
-    support_levels, resistance_levels = _structural_levels(candles_m5,
-        gap_aware=params.get("decision_policy") == "PHYSICAL_ONLY_V3")
+    support_levels, resistance_levels = _structural_levels(candles_m5, gap_aware=physical_only)
     support_candidates = [level for level in support_levels if level < price]
     resistance_candidates = [level for level in resistance_levels if level > price]
     support = max(support_candidates) if support_candidates else None
     resistance = min(resistance_candidates) if resistance_candidates else None
-    distance_to_support = price - support if support is not None else None
-    distance_to_resistance = resistance - price if resistance is not None else None
-
-    corridor_width = resistance - support if support is not None and resistance is not None else None
+    if physical_only and support is not None and resistance is not None:
+        # Compare the serialized price operands before converting the distance
+        # back to float for evidence. A real deficit must not round to equality.
+        with localcontext() as arithmetic:
+            arithmetic.prec = 1100
+            observed, lower, upper = (Decimal(str(value)) for value in (price, support, resistance))
+            exact_required = Decimal(str(required_distance))
+            exact_to_support = observed - lower
+            exact_to_resistance = upper - observed
+            exact_width = upper - lower
+            exact_room = exact_to_resistance if market.direction_bias == "BUY" else exact_to_support
+            insufficient_room = exact_room < exact_required
+            compressed = exact_width < exact_required
+        distance_to_support = float(exact_to_support)
+        distance_to_resistance = float(exact_to_resistance)
+        corridor_width = float(exact_width)
+    else:
+        distance_to_support = price - support if support is not None else None
+        distance_to_resistance = resistance - price if resistance is not None else None
+        corridor_width = resistance - support if support is not None and resistance is not None else None
+        legacy_room = distance_to_resistance if market.direction_bias == "BUY" else distance_to_support
+        insufficient_room = (
+            legacy_room is not None and legacy_room < required_distance
+            and not isclose(legacy_room, required_distance, rel_tol=1e-12, abs_tol=1e-12)
+        )
+        compressed = corridor_width is not None and corridor_width < required_distance
     available_distance = distance_to_resistance if market.direction_bias == "BUY" else distance_to_support
     room_ratio = available_distance / required_distance if available_distance is not None else None
 
@@ -176,13 +198,11 @@ def evaluate_corridor(
         feasibility = "UNAVAILABLE"
         position = "UNBOUNDED"
         explanation = "A complete corridor cannot be established from the observed M5 structure."
-    elif available_distance < required_distance and not isclose(
-        available_distance, required_distance, rel_tol=1e-12, abs_tol=1e-12
-    ):
+    elif insufficient_room:
         feasibility = "CONSTRAINED"
         position = "INTERIOR"
         conflicts.append("INSUFFICIENT_DIRECTIONAL_ROOM")
-        if corridor_width is not None and corridor_width < required_distance:
+        if compressed:
             conflicts.append("CORRIDOR_COMPRESSED")
         boundary = "resistance" if market.direction_bias == "BUY" else "support"
         explanation = f"The setup is too close to {boundary} for the canonical required distance."
