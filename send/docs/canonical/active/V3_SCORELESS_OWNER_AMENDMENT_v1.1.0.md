@@ -51,6 +51,27 @@ their existing contracts. The decision remains scoreless.
 Prospective validation of the new rule uses `V3_DIRECTIONAL_FLOW_GATE_V1`.
 Earlier observations retain their original cohort and can settle there.
 
+## Real market time to the price buffer
+
+Owner correction, 2026-11-11. The safety buffer is a price distance, not a
+manually added time reserve. For each new private OPEN study, freeze the buffer
+and confirmed study horizon already declared before entry, then measure the
+earliest genuine Finnhub EUR/USD tick after the observed entry that reaches the
+favorable buffer edge. Persist the elapsed seconds and its fraction of the
+confirmed horizon under `BUFFER_FIRST_OBSERVED_HIT_TIME_V1`.
+
+This is a prospective diagnostic only. It does not change PRE, CONFIRM,
+OPEN_NOW, Model Time, the confirmed duration, the true expiry, publication or
+execution. It must use retained provider ticks with original millisecond source
+and receipt times; it may not interpolate, substitute OHLC, infer a crossing
+inside a source gap or backfill earlier studies. `OBSERVED_HIT` means only that
+an eligible tick was observed at or beyond the frozen edge. A path without such
+a tick is reported separately from a missing path. The expiry result and
+buffer-at-expiry result remain separate, because an earlier hit can reverse
+before expiry. No observation may auto-select or activate a new duration.
+Bounded aggregate evidence is emitted as `TSP_PHYSICAL_BUFFER_FIRST_HIT_TIME`;
+it contains counts and timing distributions, never prices or private identities.
+
 ## Continuity of operation and research
 
 The cloud feed collects independently of the Android phone's connection. Phone

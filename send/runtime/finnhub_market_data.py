@@ -845,6 +845,32 @@ class FinnhubForexFeed:
             candles = []
         return list(reversed(candles)), ticks
 
+    def get_study_tick_evidence(self, entry_ts, expiry_ts):
+        """Return exact retained real ticks for a bounded prospective path.
+
+        This is evidence for a first-observed-hit diagnostic only.  It never
+        starts another feed, queries history, interpolates or substitutes OHLC.
+        """
+        if (type(entry_ts) not in (int, float) or type(expiry_ts) not in (int, float)
+                or not math.isfinite(entry_ts) or not math.isfinite(expiry_ts)
+                or entry_ts <= 0 or expiry_ts <= entry_ts):
+            raise ValueError("invalid study tick evidence window")
+        now = float(self.clock())
+        with self._lock:
+            end_ts = min(float(expiry_ts), now)
+            ticks = [{
+                "provider": "FINNHUB", "symbol": "EUR/USD",
+                "price": sample["price"],
+                "observed_ts": sample["_provider_tick_ms"] / 1000,
+                "source": sample["source"],
+                "provider_tick_ms": sample["_provider_tick_ms"],
+                "received_ts": sample["_received_ts"],
+            } for sample in self._real_quote_buffer
+                if entry_ts < sample["_provider_tick_ms"] / 1000 <= end_ts
+                and sample["_received_ts"] <= now]
+        ticks.sort(key=lambda row: (row["provider_tick_ms"], row["received_ts"]))
+        return ticks
+
     def health(self) -> Dict[str, Any]:
         with self._lock:
             last_price_ts = self._last_price_ts

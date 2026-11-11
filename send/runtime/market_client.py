@@ -394,6 +394,16 @@ def get_finnhub_study_chart_evidence(entry_ts, expiry_ts):
     return feed.get_study_chart_evidence(entry_ts, expiry_ts)
 
 
+def get_finnhub_study_tick_evidence(entry_ts, expiry_ts):
+    """Read exact retained Finnhub ticks without starting or querying a feed."""
+    if configured_provider() != "FINNHUB":
+        return []
+    feed = _FINNHUB_FEED
+    if feed is None:
+        return []
+    return feed.get_study_tick_evidence(entry_ts, expiry_ts)
+
+
 def _update_finnhub_status(health, *, state, note):
     runtime_status.update_status(
         market_data_state=state,

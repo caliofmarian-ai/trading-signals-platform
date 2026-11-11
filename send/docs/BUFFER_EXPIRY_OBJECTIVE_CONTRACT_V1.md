@@ -22,6 +22,14 @@ at the evaluated expiry**. Reaching B earlier and maintaining B at expiry are
 different labels. This contract measures only the latter. It never infers an
 earlier touch or a guarantee from the feasibility calculation.
 
+The separate prospective diagnostic `BUFFER_FIRST_OBSERVED_HIT_TIME_V1`
+measures the first retained genuine provider tick that reaches B between entry
+and the already confirmed study horizon. It never changes this expiry objective
+or treats an earlier touch as MET at expiry. Sparse source intervals remain
+declared: no observed crossing is not proof that the market never crossed
+between ticks. The diagnostic has no decision, publication, calibration,
+execution or automatic-activation authority.
+
 ## Immutable observation
 
 At the first accepted complete PRE → CONFIRM → OPEN_NOW research chain, copy

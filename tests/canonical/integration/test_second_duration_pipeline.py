@@ -267,6 +267,52 @@ def test_prospective_reserve_is_separate_from_actual_open_and_baseline(seconds_p
     assert not evidence["publication_authority"] and not evidence["calibration_authority"]
 
 
+def test_first_observed_buffer_hit_time_is_separate_from_expiry_result(seconds_pipeline):
+    ctx = seconds_pipeline
+    study = ctx["study"]
+    samples = {}
+    paths = []
+
+    def quote(stamp, price):
+        return {"provider": "FINNHUB", "symbol": "EUR/USD", "price": price,
+                "observed_ts": stamp, "source": "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1",
+                "provider_tick_ms": round(stamp * 1000), "received_ts": stamp + .05}
+
+    def advance(now, **extra):
+        ctx["clock"][0] = now + .1
+        return study.advance(now_ts=now, active_provider="FINNHUB", price_loader=lambda _: None,
+            precise_observation_loader=lambda _symbol, target, _delay: samples.get(target),
+            path_loader=lambda _entry, _expiry: list(paths), **extra)
+
+    advance(BASE - 1, prospective_cohort_revision=study.DIRECTIONAL_FLOW_COHORT_REVISION)
+    _step(ctx, "PRE", 0)
+    _step(ctx, "CONFIRM", 3)
+    captured = _capture(ctx)
+    timing = captured["buffer_first_hit_time"]
+    assert timing["status"] == "PENDING" and timing["horizon_seconds"] == 516
+
+    entry = BASE + 35.25
+    samples[BASE + 35] = quote(entry, 1.1)
+    advance(entry + .1)
+    buffer_distance = captured["buffer_snapshot"]["buffer_distance"]
+    paths.extend([quote(entry + 40, 1.1 + buffer_distance / 2),
+                  quote(entry + 100, 1.1 + buffer_distance)])
+    expiry = entry + 516
+    samples[expiry] = quote(expiry, 1.1)  # DRAW at expiry after an earlier buffer hit
+    advance(expiry + study.buffer_hit_time.ARRIVAL_GRACE_SECONDS + .001)
+
+    saved = next(iter(study._read(study._study_paths(study._path())[0])["records"].values()))
+    timing = saved["buffer_first_hit_time"]
+    assert timing["status"] == "OBSERVED_HIT"
+    assert timing["seconds_from_entry"] == 100
+    assert saved["study_observation"]["outcome"] == "DRAW"
+    diagnostic = study.summary(now_ts=expiry + 16)["buffer_first_hit_time_diagnostic"]
+    assert diagnostic["observed_hits"] == 1
+    assert diagnostic["hit_then_expiry"]["draws"] == 1
+    assert diagnostic["hit_then_expiry"]["buffer_not_met_at_expiry"] == 1
+    assert not diagnostic["automatic_parameter_change"]
+
+
 def test_reserve_requires_original_confirm_receipt_in_prospective_cohort(seconds_pipeline):
     ctx = seconds_pipeline
     ctx["study"].advance(now_ts=BASE - 1, active_provider="FINNHUB",
