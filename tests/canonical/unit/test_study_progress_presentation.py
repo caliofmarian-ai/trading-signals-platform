@@ -46,16 +46,16 @@ def test_new_recovery_policy_does_not_inherit_historical_unknown_or_duration_gro
     source = evidence()
     before = deepcopy(source)
     text = render(source)
-    assert "Politica nouă de cotații · 3 rezultate: WIN 1, LOSS 2, DRAW 0, UNKNOWN 0" in text
-    assert "Istoric · politica anterioară de cotații · 348 rezultate: WIN 121, LOSS 98, DRAW 6, UNKNOWN 123" in text
+    assert "Politica nouă de cotații · 3 rezultate: WIN 1, LOSS 2, DRAW 0, fără verdict 0" in text
+    assert "Istoric · politica anterioară de cotații · 348 rezultate: WIN 121, LOSS 98, DRAW 6, fără verdict 123" in text
     current = text.split("Istoric · politica anterioară")[0]
     assert "Cotație la expirare: 3/3" in current
-    assert "Fără cotație în fereastra expirării: 0." in current
+    assert "Lipsește cotația la expirare: 0." in current
     assert "Marjă completă la expirare: DA 0, NU 3, indisponibilă 0" in current
     assert "WIN fragil (în buffer): 1" in current  # Still a directional WIN.
     assert "Aceleași rezultate, grupate după durată (nu se adună cu grupele de cotații)" in text
     assert text.index("Politica nouă") < text.index("Istoric · politica anterioară") < text.index("La secundă")
-    assert "La secundă · 23 rezultate: WIN 7, LOSS 4, DRAW 0, UNKNOWN 12" in text
+    assert "La secundă · 23 rezultate: WIN 7, LOSS 4, DRAW 0, fără verdict 12" in text
     assert "Total istoric · 351 rezultate" in text
     assert "999" not in text and source == before
 
@@ -64,11 +64,11 @@ def test_draws_reconcile_total_and_current_policy_precedes_history():
     source = evidence()
     before = deepcopy(source)
     text = render(source)
-    assert "La secundă · 23 rezultate: WIN 7, LOSS 4, DRAW 0, UNKNOWN 12" in text
-    assert "Total istoric · 351 rezultate: WIN 122, LOSS 100, DRAW 6, UNKNOWN 123" in text
+    assert "La secundă · 23 rezultate: WIN 7, LOSS 4, DRAW 0, fără verdict 12" in text
+    assert "Total istoric · 351 rezultate: WIN 122, LOSS 100, DRAW 6, fără verdict 123" in text
     assert text.index("La secundă") < text.index("Istoric · minute") < text.index("Total istoric")
     assert "Cotație la expirare: 11/23" in text
-    assert "Fără cotație în fereastra expirării: 12." in text
+    assert "Lipsește cotația la expirare: 12." in text
     assert "Marjă completă la expirare: DA 6, NU 5, indisponibilă 12" in text
     assert "WIN fragil (în buffer): 1" in text
     assert "999" not in text and "%" not in text
@@ -99,7 +99,7 @@ def test_missing_recovery_cohort_is_unavailable_but_explicit_zero_is_preserved()
     current = text.split("Istoric · politica anterioară")[0]
     assert "Politica nouă de cotații · 0 rezultate" in current
     assert "fără rezultate publicate încă" in current and "0/0" not in current
-    assert "Fără cotație în fereastra expirării: 0." in current
+    assert "Lipsește cotația la expirare: 0." in current
 
 
 @pytest.mark.parametrize("identities", [(None, None), (RECOVERY, RECOVERY), (RECOVERY, "")])
@@ -121,14 +121,14 @@ def test_unavailable_recovery_missing_quote_details_do_not_become_zero(reasons):
     assert "Politica nouă de cotații · 3 rezultate" in text
     assert "Cotație la expirare: 3/3" in text
     assert "indisponibile" in text or "neconcordante" in text
-    assert "Fără cotație în fereastra expirării: 0." not in text
+    assert "Lipsește cotația la expirare: 0." not in text
 
 
 def test_recovery_optional_buffer_failure_keeps_known_results_and_collected_quotes():
     source = evidence()
     source["published_study_results_by_quote_recovery_policy"][RECOVERY]["buffer_met"] = 999
     text = render(source).split("Istoric · politica anterioară")[0]
-    assert "WIN 1, LOSS 2, DRAW 0, UNKNOWN 0" in text
+    assert "WIN 1, LOSS 2, DRAW 0, fără verdict 0" in text
     assert "Cotație la expirare: 3/3" in text
     assert "Marja bufferului: statistici indisponibile sau neconcordante." in text
     assert "DA 999" not in text
@@ -216,10 +216,11 @@ def test_unknown_causes_are_not_all_relabelled_as_expiry_quotes():
     source["published_study_results_by_duration_policy"][ACTIVE]["unknown_reasons"] = {
         "EXPIRY_OBSERVATION_MISSING": 8, "ENTRY_OBSERVATION_MISSING": 4}
     text = render(source)
-    assert "Fără cotație în fereastra expirării: 8." in text
-    assert "fără rezultat observat: 12." in text
+    assert "Lipsește cotația la expirare: 8." in text
+    assert "Lipsește cotația la intrare: 4." in text
+    assert "UNKNOWN" not in text
     source["published_study_results_by_duration_policy"][ACTIVE]["unknown_reasons"]["EXTRA"] = 1
-    assert "Cauzele UNKNOWN: statistici neconcordante." in render(source)
+    assert "Cauzele lipsei datelor: statistici neconcordante." in render(source)
 
 
 @pytest.mark.parametrize("source", [None, [], {}, {"baseline_model_observations": counts()}])
@@ -265,8 +266,8 @@ def test_periodic_report_uses_formatter_keeps_one_send_per_slot_and_does_not_cha
     assert result["study_results_by_duration_policy"] == source["published_study_results_by_duration_policy"]
     assert result["study_results_by_quote_recovery_policy"] == source["published_study_results_by_quote_recovery_policy"]
     assert result["physical_study_progress"]["unique_entry_experiments"] is None
-    assert "Politica nouă de cotații · 3 rezultate: WIN 1, LOSS 2, DRAW 0, UNKNOWN 0" in sent[0]["text"]
-    assert "Istoric · politica anterioară de cotații · 348 rezultate: WIN 121, LOSS 98, DRAW 6, UNKNOWN 123" in sent[0]["text"]
+    assert "Politica nouă de cotații · 3 rezultate: WIN 1, LOSS 2, DRAW 0, fără verdict 0" in sent[0]["text"]
+    assert "Istoric · politica anterioară de cotații · 348 rezultate: WIN 121, LOSS 98, DRAW 6, fără verdict 123" in sent[0]["text"]
     assert "La secundă · 23 rezultate" in sent[0]["text"]
     assert "DRAW 6" in sent[0]["text"] and "remains unproven" in sent[0]["text"]
     assert len(sent[0]["text"]) < 4096

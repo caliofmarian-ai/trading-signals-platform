@@ -45,7 +45,7 @@ def test_caption_reports_estimates_without_claiming_settlement(direction, before
     original = deepcopy(row)
     text = render_result("synthetic", row, "10.11.2026 · 11:25:15 · nr. 337")
     assert f"Estimare: {label}" in text
-    assert "Cotație expirare: LIPSĂ · rezultat exact: UNKNOWN" in text
+    assert "Rezultat: Lipsește cotația la expirare" in text and "UNKNOWN" not in text
     assert "Prețul dintre observații poate ieși din interval." in text
     assert "Estimarea nu intră în rata WIN verificată." in text
     assert "Interval orientativ" in text and "Înainte:" in text and "După:" in text
@@ -64,7 +64,7 @@ def test_caption_keeps_close_distinct_prices_and_maximum_unicode_label():
     assert "1.1000000000000003" in text and "1.1000000000000005" in text
     assert "🧪" * 128 in text
     assert len(text.encode("utf-16-le")) // 2 <= 4096
-    assert "WIN estimat" in text and "exact: UNKNOWN" in text
+    assert "WIN estimat" in text and "Rezultat: Lipsește cotația la expirare" in text
 
 
 def test_forged_estimate_and_actual_settlement_cannot_display_estimated_win():
@@ -105,7 +105,8 @@ def test_chart_separates_neighbor_panel_without_a_fake_expiry_marker(monkeypatch
     with Image.open(BytesIO(png)) as image:
         assert image.size == (1200, 1200)
     assert label in texts and "LIPSA" in texts
-    assert any("Rezultat exact: UNKNOWN" in item for item in texts)
+    assert any("Lipseste cotatia la expirare" in item for item in texts)
+    assert all("UNKNOWN" not in item for item in texts)
     assert any("Pretul dintre observatii poate iesi din interval" in item for item in texts)
     assert "#eff5fc" not in markers
     assert all(0 <= left < right <= 1200 and 0 <= top < bottom <= 1200
@@ -121,7 +122,7 @@ def test_summary_estimates_are_a_partition_of_unknown_not_added_wins():
     before = deepcopy(source)
     text = render(source)
     assert "WIN estimat 2, LOSS estimat 1, neconcludente 2, fără estimare 118" in text
-    assert "Total istoric · 351 rezultate: WIN 122, LOSS 100, DRAW 6, UNKNOWN 123" in text
+    assert "Total istoric · 351 rezultate: WIN 122, LOSS 100, DRAW 6, fără verdict 123" in text
     assert "nu intră în rata WIN verificată" in text and source == before
     source["published_study_expiry_estimates"]["estimated_wins"] = 10
     text = render(source)

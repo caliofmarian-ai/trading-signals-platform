@@ -10,6 +10,7 @@ import unicodedata
 from PIL import Image, ImageDraw, ImageFont
 
 from core.buffer_zone import BUFFER_POSITION_LABELS, classify_buffer_position
+from intelligence.observation_issue_presentation import collection_issue_label
 
 
 _UP = "#48d3a2"
@@ -57,7 +58,7 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
                        first_buffer_hit=None, report_title=_STUDY_TITLE,
                        entry_label=_ENTRY_LABEL, signal_label: str | None = None,
                        expiry_observation_label=_EXPIRY_OBSERVATION_LABEL,
-                       expiry_estimate=None):
+                       expiry_estimate=None, observation_reason=None):
     """Return a PNG from observed M1 bars and optional observed quote evidence.
 
     The buffer is the favorable price band anchored at entry, not the region
@@ -121,8 +122,10 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
 
     outcome_label, outcome_color = {
         "WIN": ("WIN · Câștig", _UP), "LOSS": ("LOSS · Pierdere", _DOWN),
-        "DRAW": ("DRAW · Egal", _ENTRY), "UNKNOWN": ("UNKNOWN · Date incomplete", _BUFFER),
+        "DRAW": ("DRAW · Egal", _ENTRY),
     }.get(outcome, ("Verdict indisponibil", _MUTED))
+    if outcome == "UNKNOWN":
+        outcome_label, outcome_color = collection_issue_label(observation_reason), _BUFFER
     estimate_labels = {"WIN": "WIN estimat", "LOSS": "LOSS estimat",
                        "INCONCLUSIVE": "Estimare neconcludentă", "UNAVAILABLE": "Estimare indisponibilă"}
     if expiry_estimate is not None:
@@ -130,7 +133,7 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
         outcome_color = _BUFFER
     label(48, 29, report_title, color=_ENTRY, size=22)
     label(48, 61, f"EUR/USD  ·  {direction}", size=49)
-    label(1152, 73, outcome_label, color=outcome_color, size=29, anchor="ra")
+    label(1152, 73, outcome_label, color=outcome_color, size=29, anchor="ra", max_width=650)
     date_label = (f"{signal_label}  ·  Dublin" if signal_label else
                   datetime.fromtimestamp(entry_ts, timezone.utc).strftime("%d.%m.%Y  ·  UTC"))
     label(1152, 36, date_label, color=_MUTED, size=20, anchor="ra")
@@ -234,7 +237,7 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
     else:
         missing_label = ("Cotația exactă lipsește; estimarea din cotațiile vecine este prezentată separat."
                          if expiry_estimate is not None else
-                         "Prețul pentru expirare lipsește. Rezultatul rămâne UNKNOWN.")
+                         "Verdictul de piață nu poate fi calculat fără cotația de expirare.")
         label(48, 632, missing_label, color=_BUFFER, size=23, max_width=1104)
 
     expiry_status = BUFFER_POSITION_LABELS[expiry_position]
@@ -294,7 +297,8 @@ def render_trade_chart(*, candles, direction, entry_ts, entry_price, expiry_ts,
         label(48, 1069, description, color=_BUFFER, size=22, max_width=1104)
         label(48, 1107, "Prețul dintre observații poate ieși din interval; închiderea exactă nu este confirmată.",
               color=_MUTED, size=21, max_width=1104)
-        label(48, 1143, "Rezultat exact: UNKNOWN. Estimarea este exclusă din rata WIN verificată.",
+        issue = collection_issue_label("EXPIRY_OBSERVATION_MISSING")
+        label(48, 1143, f"{issue}. Estimarea este exclusă din rata WIN verificată.",
               color=_MUTED, size=20, max_width=1104)
 
     png = BytesIO()
@@ -307,7 +311,7 @@ def render_market_chart(*, direction, entry_ts, entry_price, expiry_ts,
                         report_title=_STUDY_TITLE, entry_label=_ENTRY_LABEL,
                         signal_label: str | None = None,
                         expiry_observation_label=_EXPIRY_OBSERVATION_LABEL,
-                        expiry_estimate=None):
+                        expiry_estimate=None, observation_reason=None):
     """Render a report from the Finnhub process's retained market observations."""
     from intelligence import buffer_expiry_evidence
     from runtime import market_client
@@ -324,5 +328,5 @@ def render_market_chart(*, direction, entry_ts, entry_price, expiry_ts,
         expiry_price=expiry_price, buffer_distance=buffer_distance, outcome=outcome,
         first_buffer_hit=first_hit, report_title=report_title, entry_label=entry_label,
         signal_label=signal_label, expiry_observation_label=expiry_observation_label,
-        expiry_estimate=expiry_estimate)
+        expiry_estimate=expiry_estimate, observation_reason=observation_reason)
 

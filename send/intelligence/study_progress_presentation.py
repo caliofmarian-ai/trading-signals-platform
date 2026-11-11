@@ -5,7 +5,10 @@ missing fields and absent policy cohorts cannot become replacement outcomes.
 """
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
+
+from intelligence.observation_issue_presentation import collection_issue_label
 
 
 _OUTCOMES = ("wins", "losses", "draws", "unknown")
@@ -31,32 +34,31 @@ def _counts(row):
 def _line(name, counts):
     total = sum(counts.values())
     return (f"{name} · {total} rezultate: WIN {counts['wins']}, LOSS {counts['losses']}, "
-            f"DRAW {counts['draws']}, UNKNOWN {counts['unknown']}")
+            f"DRAW {counts['draws']}, fără verdict {counts['unknown']}")
 
 
 def _quote_details(row, counts, *, explicit_missing=False):
     total = sum(counts.values())
     observed = total - counts["unknown"]
-    lines = [f"Cotație la expirare: {observed}/{total}; fără rezultat observat: {counts['unknown']}."]
+    lines = [f"Cotație la expirare: {observed}/{total}."]
     if total == 0:
         lines = ["Cotație la expirare: fără rezultate publicate încă."]
-    # UNKNOWN may have several causes. Never call all of it missing expiry
-    # quotes unless that reason is actually supplied by the source summary.
     reasons = row.get("unknown_reasons")
     if isinstance(reasons, Mapping):
         try:
-            values = {key: _count(value) for key, value in reasons.items()}
-            if sum(values.values()) != counts["unknown"]:
+            by_label = Counter()
+            for reason, value in reasons.items():
+                by_label[collection_issue_label(reason)] += _count(value)
+            if sum(by_label.values()) != counts["unknown"]:
                 raise ValueError("INCONSISTENT_UNKNOWN_REASONS")
-            missing = values.get("EXPIRY_OBSERVATION_MISSING", 0)
-            if missing or explicit_missing:
-                lines.append(f"Fără cotație în fereastra expirării: {missing}.")
-            if explicit_missing and counts["unknown"] > missing:
-                lines.append(f"UNKNOWN din alte cauze: {counts['unknown'] - missing}.")
+            expiry_issue = collection_issue_label("EXPIRY_OBSERVATION_MISSING")
+            if explicit_missing and not by_label[expiry_issue]:
+                lines.append(f"{expiry_issue}: 0.")
+            lines.extend(f"{label}: {count}." for label, count in sorted(by_label.items()) if count)
         except ValueError:
-            lines.append("Cauzele UNKNOWN: statistici neconcordante.")
-    elif explicit_missing:
-        lines.append("Lipsa cotației la expirare: statistici indisponibile.")
+            lines.append("Cauzele lipsei datelor: statistici neconcordante.")
+    elif counts["unknown"] or explicit_missing:
+        lines.append("Cauzele lipsei datelor: statistici indisponibile.")
     return lines
 
 
@@ -136,7 +138,7 @@ def _estimate_lines(observed, counts):
             raise ValueError("INCONSISTENT_ESTIMATE_COUNTS")
     except (TypeError, ValueError):
         return ["Estimări din cotații vecine: statistici indisponibile sau neconcordante."]
-    return [(f"Dintre {eligible} UNKNOWN eligibile: WIN estimat {values['estimated_wins']}, "
+    return [(f"Dintre {eligible} cazuri fără cotație la expirare: WIN estimat {values['estimated_wins']}, "
              f"LOSS estimat {values['estimated_losses']}, neconcludente {values['inconclusive']}, "
              f"fără estimare {values['unavailable']}."),
             "Estimările sunt separate; nu intră în rata WIN verificată."]
@@ -186,7 +188,8 @@ def render_published_study_progress(observed, *, active_policy, legacy_policy, l
         by_policy = _reconciled_cohorts(cohorts, (active_policy, legacy_policy, legacy_open_policy), counts)
     except (TypeError, ValueError):
         return "\n".join([*lines, "Grupele de durată: statistici neconcordante.",
-                          _line("Total istoric", counts)])
+                          _line("Total istoric", counts),
+                          *_quote_details(observed["published_study_results"], counts)])
 
     if active_policy in by_policy:
         lines.append(_line("La secundă", by_policy[active_policy]))
@@ -197,5 +200,7 @@ def render_published_study_progress(observed, *, active_policy, legacy_policy, l
                           (legacy_open_policy, "Istoric · OPEN")):
         if policy in by_policy:
             lines.append(_line(label, by_policy[policy]))
+            lines.extend(_quote_details(cohorts[policy], by_policy[policy]))
     lines.append(_line("Total istoric", counts))
+    lines.extend(_quote_details(observed["published_study_results"], counts))
     return "\n".join(lines)

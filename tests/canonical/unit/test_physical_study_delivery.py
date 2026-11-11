@@ -391,7 +391,8 @@ def test_study_result_without_an_expiry_quote_still_sends_a_chart(study_setup, c
     assert len(messages) == 2
     assert messages[1]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
     assert "Cotație expirare: LIPSĂ" in messages[1]["text"]
-    assert "Rezultat: UNKNOWN — date incomplete" in messages[1]["text"]
+    assert "Rezultat: Lipsește cotația la expirare" in messages[1]["text"]
+    assert "UNKNOWN" not in messages[1]["text"]
     evidence = [json.loads(line.split(" ", 1)[1]) for line in capsys.readouterr().out.splitlines()
                 if line.startswith("TSP_PHYSICAL_STUDY_DELIVERY ")]
     settled = next(e for e in evidence if e["phase"] == "result")
@@ -744,12 +745,12 @@ def test_missing_expiry_caption_discloses_evidence_and_ignores_favorable_other_h
     row["post_model_observations"] = [{"outcome": "WIN", "quote": _sample(BASE + 400, 1.3)}]
     before = copy.deepcopy(row)
     text = delivery.render_result("study", row, "10.11.2026 · nr. 289")
-    assert "Rezultat: UNKNOWN — date incomplete" in text and "Rezultat: WIN" not in text
+    assert "Rezultat: Lipsește cotația la expirare" in text
+    assert "UNKNOWN" not in text and "Rezultat: WIN" not in text
     assert "Intrare colectată: 1.1" in text and "Cotație expirare: LIPSĂ" in text
     assert "Comparație: indisponibilă; prețuri incomplete." in text
     assert "Surse intrare/expirare: Finnhub memorie / lipsă" in text
     assert "Interval expirare: 08:03:21 UTC – 08:03:23 UTC" in text
-    assert "Motiv: cotația validă din intervalul expirării lipsește." in text
     assert "Poziție buffer: Poziție indisponibilă" in text
     assert "Marjă completă la expirare: DATE INDISPONIBILE" in text
     assert "colectată: 1.2" not in text and "colectată: 1.3" not in text
@@ -769,7 +770,7 @@ def test_missing_entry_caption_does_not_invent_an_expiry_timestamp():
     assert "Expirare declarată: nedeterminată fără intrare" in text
     assert "Interval intrare: 08:00:31 UTC – 08:00:41 UTC" in text
     assert "Interval expirare:" not in text
-    assert "Motiv: cotația validă de intrare lipsește." in text
+    assert "Rezultat: Lipsește cotația la intrare" in text and "UNKNOWN" not in text
 
 
 @pytest.mark.parametrize("direction,expiry", [("BUY", 1.1001), ("SELL", 1.0999)])
@@ -853,7 +854,7 @@ def test_report_evidence_bounds_unknown_source_and_reason_without_disclosing_raw
     evidence = delivery._result_evidence(row)
     assert "PRIVATE" not in text and "PRIVATE" not in json.dumps(evidence)
     assert evidence["entry_quote_source"] == evidence["observation_reason"] == "UNSPECIFIED"
-    assert "Motiv: motiv nedetaliat în înregistrare." in text
+    assert "Rezultat: Cauza lipsei datelor este indisponibilă" in text and "UNKNOWN" not in text
 
 
 def test_prospective_cutover_preserves_pending_history_and_excludes_old_pre(study_setup):
