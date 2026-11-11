@@ -627,13 +627,23 @@ class FinnhubForexFeed:
             self._stream_state = "STOPPED"
 
     def get_candles(self, symbol: str, timeframe: str) -> List[Dict[str, Any]]:
-        normalize_symbol(symbol)
         code, _seconds = timeframe_code(timeframe)
+        histories, _observed_at = self._candle_snapshot(symbol, (code,))
+        return histories[0]
+
+    def get_decision_candles(self, symbol: str) -> tuple[list[dict], list[dict], float]:
+        """Read both timeframe windows and their clock from one feed generation."""
+        histories, observed_at = self._candle_snapshot(symbol, ("M1", "M5"))
+        return histories[0], histories[1], observed_at
+
+    def _candle_snapshot(self, symbol: str, codes: tuple[str, ...]) -> tuple[list[list[dict]], float]:
+        normalize_symbol(symbol)
         self.start()
         with self._lock:
             last_price_ts = self._last_price_ts
-            candles = [dict(row) for row in self._candles[code]]
+            histories = [[dict(row) for row in self._candles[code]] for code in codes]
             integrity = inspect_history(self._candles)
+            observed_at = float(self.clock())
         if last_price_ts is None:
             raise FinnhubMarketDataUnavailable("Finnhub live price has not been received yet")
         if integrity["state"] == "INVALID":
@@ -641,9 +651,20 @@ class FinnhubForexFeed:
                 "Finnhub candle history failed integrity checks: "
                 f"hard_errors={integrity['hard_error_count']}"
             )
-        # Speed and ATR require recent exact-cadence evidence. Older validated
-        # M5 bars remain observed context for EMA and confirmed S/R; they must
-        # not be presented as a continuous temporal measurement window.
+        usable = [
+            self._usable_history(code, candles, integrity)
+            for code, candles in zip(codes, histories)
+        ]
+        age_seconds = int(observed_at) - int(last_price_ts)
+        if age_seconds < 0 or age_seconds > self.freshness_seconds:
+            raise FinnhubStaleMarketData(
+                f"Finnhub live price is stale: age={age_seconds}s, limit={self.freshness_seconds}s"
+            )
+        return usable, observed_at
+
+    def _usable_history(self, code: str, candles: list[dict], integrity: dict) -> list[dict]:
+        # Speed and ATR require recent exact cadence. Keep older genuine M5
+        # context for EMA and S/R without marking it as temporally contiguous.
         contiguous_count = int(integrity["contiguous_candle_counts"].get(code, 0))
         context_minimum = self.minimum_candles_by_timeframe[code]
         if len(candles) < context_minimum:
@@ -653,17 +674,11 @@ class FinnhubForexFeed:
         minimum = self.minimum_contiguous_candles_by_timeframe[code]
         if contiguous_count < minimum:
             raise FinnhubInsufficientHistory(
-                f"Finnhub {code} history is still collecting: "
-                f"{contiguous_count}/{minimum} real candles contiguous "
+                f"Finnhub {code} history is still collecting: {contiguous_count}/{minimum} real candles contiguous "
                 f"(stored={len(candles)})"
             )
-        age_seconds = int(self.clock()) - int(last_price_ts)
-        if age_seconds < 0 or age_seconds > self.freshness_seconds:
-            raise FinnhubStaleMarketData(
-                f"Finnhub live price is stale: age={age_seconds}s, limit={self.freshness_seconds}s"
-            )
         if code == "M5" and self.history_policy != "STRICT_CONTIGUOUS_CONTEXT":
-            return candles  # all genuine context; the model bounds temporal math separately
+            return candles
         return candles[:contiguous_count]
 
     def _history_windows_ready(self, integrity, counts=None) -> bool:

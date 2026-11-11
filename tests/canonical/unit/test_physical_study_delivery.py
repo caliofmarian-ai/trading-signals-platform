@@ -66,6 +66,65 @@ def _sample(stamp, price, *, buffered=False):
             "source":"LIVE_STREAM_PROVIDER_TICK_BUFFER_V1" if buffered else "LIVE_STREAM_CURRENT_M1_CLOSE"}
 
 
+def test_compact_calibration_reports_exact_fixed_training_gate_failures(study_setup):
+    _, study, _, _, _, params, _, _ = study_setup
+    entries = []
+    for index in range(60):
+        created = BASE + index * 180
+        entries.append({
+            "policy": "PHYSICAL_ONLY_V3", "direction": "BUY",
+            "opportunity_signal_id": f"sig-v3-test-{index}",
+            "created_ts": created, "open_ts": created, "pre_ts": created - 32,
+            "confirm_ts": created - 30, "confirm_model_seconds": 120,
+            "model_seconds": 120, "adjusted_seconds": 100 if index < 32 else 90,
+            "buffer_distance": 0.0002 if index < 54 else None,
+        })
+    study.capture(entries, params=params, buffer_mode="SMALL", strategy_version="3.0.0",
+                  canonical_spec="V3_SCORELESS_OWNER_AMENDMENT_v1.1.0", now_ts=BASE + 10800)
+    state = study._read(study._path())
+    pending_report = study._compact(study.analyze(state, now_ts=BASE + 10800))
+    assert all(candidate["blocking_gates"] == ["TRAINING_LOT_INCOMPLETE"]
+               for candidate in pending_report["policies"][0]["training_candidate_quality"])
+
+    for index, row in enumerate(state["records"].values()):
+        entry = _sample(row["created_ts"] + 1, 1.1)
+        row.update(state="FINAL", entry=entry)
+        for position, candidate in enumerate(row["candidates"]):
+            if candidate["outcome"] == "INFEASIBLE":
+                continue
+            if (position == 0 and index >= 53) or (position == 1 and index < 6):
+                candidate.update(outcome="UNKNOWN", reason="EXPIRY_OBSERVATION_MISSING")
+                continue
+            draw = position == 3 and index < 31
+            price = 1.1 if draw else 1.1003
+            candidate.update(outcome="DRAW" if draw else "WIN", reason="OBSERVED_PAIRED_EXPIRY",
+                             quote=_sample(entry["observed_ts"] + candidate["horizon_seconds"], price))
+
+    original_state = copy.deepcopy(state)
+    report = study.analyze(state, now_ts=BASE + 10800)
+    row = study._compact(report)["policies"][0]
+    evidence = row["training_candidate_quality"]
+    assert state == original_state
+    assert row["training_selected_bias"] == 0.10
+    assert len(evidence) == len(study.BIASES)
+    assert evidence[0]["blocking_gates"] == [
+        "DIRECTION_UNKNOWN_FRACTION_ABOVE_MAXIMUM", "BUFFER_UNKNOWN_FRACTION_ABOVE_MAXIMUM",
+    ]
+    assert evidence[0]["unknown_reasons"] == {"EXPIRY_OBSERVATION_MISSING": 7}
+    assert evidence[1]["unknown_fraction"] == 0.10
+    assert evidence[1]["blocking_gates"] == ["BUFFER_UNKNOWN_FRACTION_ABOVE_MAXIMUM"]
+    assert evidence[2]["buffer_unknown_fraction"] == 0.10
+    assert evidence[2]["blocking_gates"] == []
+    assert evidence[3]["blocking_gates"] == ["DIRECTION_DECISIVE_COUNT_BELOW_MINIMUM"]
+    assert evidence[4]["infeasible"] == 32
+    assert evidence[4]["blocking_gates"] == [
+        "DIRECTION_DECISIVE_COUNT_BELOW_MINIMUM", "BUFFER_KNOWN_COUNT_BELOW_MINIMUM",
+        "BUFFER_UNKNOWN_FRACTION_ABOVE_MAXIMUM",
+    ]
+    assert "train_candidates" not in row and "buffer_coverage" not in evidence[0]
+    assert "sig-v3-test-" not in json.dumps(evidence)
+
+
 def _confirmed_duration(setup, seconds):
     """Simulate a previously delivered CONFIRM whose horizon differs at OPEN."""
     _, _, _, _, handoff, _, _, _ = setup
@@ -466,6 +525,30 @@ def test_ambiguous_transport_is_not_retried(study_setup, monkeypatch):
     saved=next(iter(study._read(study._path())["records"].values()))
     assert saved["study_delivery"]["entry"]["status"]=="UNKNOWN"
     assert saved["study_delivery"]["entry"]["format"]=="PHOTO"
+
+
+def test_entry_render_crossing_original_window_skips_transport(study_setup, monkeypatch):
+    _, study, delivery, _, _, _, messages, clock = study_setup
+    _capture(study_setup)
+    path = study._path()
+    state = study._read(path)
+    record = next(iter(state["records"].values()))
+    record.update(entry=_sample(BASE + 32, 1.1), state="OBSERVING")
+    study._save(path, state)
+    clock[0] = BASE + 40.5
+
+    def delayed_card(*_):
+        clock[0] = BASE + 41.5
+        return b"synthetic photo"
+
+    monkeypatch.setattr(delivery, "_render_entry_card", delayed_card)
+    delivery.dispatch(now_ts=clock[0], active_provider="FINNHUB")
+
+    assert not messages
+    saved = next(iter(study._read(path)["records"].values()))
+    assert saved["study_delivery"]["entry"]["status"] == "SKIPPED_STALE"
+    assert saved["study_delivery"]["result"] is None
+    assert saved["entry"] == record["entry"]
 
 
 def test_photo_entry_reuses_pre_number_and_frozen_observation(study_setup):
