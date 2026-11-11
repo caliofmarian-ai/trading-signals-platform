@@ -6,6 +6,7 @@ The V2 module remains available exclusively for historical replay.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from math import isclose
 from typing import Any, Mapping, Optional
 
 from .decision_assembly import FrozenInputs, assemble_decision
@@ -106,6 +107,12 @@ def decide(candles_m1, candles_m5, params, buffer_mode="MEDIUM", want_open_now=F
     if not physical.ready:
         blockers.append(f"TRADE_PHYSICS_{physical.readiness_state}")
     stage = supplied.get("physical_stage", "PRE")
+    # The favorable share of weighted gross travel is below half exactly
+    # when the closed M1 intervals moved more against the proposed side.
+    flow = market.context.flow_efficiency
+    if (stage in {"CONFIRM", "OPEN_NOW"} and flow is not None
+            and flow < 0.5 and not isclose(flow, 0.5, rel_tol=1e-12)):
+        blockers.append("MARKET_DIRECTIONAL_FLOW_OPPOSED")
     opportunity_id = supplied.get("opportunity_signal_id")
     if opportunity_id and supplied.get("opportunity_direction") != market.direction_bias:
         # Changing direction invalidates the existing opportunity; it cannot

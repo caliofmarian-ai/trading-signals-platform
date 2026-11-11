@@ -48,6 +48,73 @@ def _advance_cycle(m1, m5, params, state, stamp):
     return evaluation, handoff
 
 
+def _opposing_m1(candles):
+    result = copy.deepcopy(candles)
+    # Keep the same latest close and trend evidence. The last 20 intervals
+    # alternate larger declines with smaller recoveries.
+    closes = [result[0]["close"] + 0.003]
+    for index in range(20):
+        closes.append(closes[-1] + (-0.0007 if index % 2 == 0 else 0.0004))
+    prior_closes = [closes[0] - 0.0004, *closes[:-1]]
+    for candle, close, prior in zip(reversed(result[:21]), closes, prior_closes):
+        candle.update(open=prior, close=close, high=max(prior, close) + 0.00005,
+                      low=min(prior, close) - 0.00005)
+    return result
+
+
+def _reflect_candles(candles):
+    return [{**candle, "open": 2.2 - candle["open"], "close": 2.2 - candle["close"],
+             "high": 2.2 - candle["low"], "low": 2.2 - candle["high"]} for candle in candles]
+
+
+@pytest.mark.parametrize("direction", ["BUY", "SELL"])
+@pytest.mark.parametrize("blocked_stage", ["CONFIRM", "OPEN_NOW"])
+def test_opposing_recent_move_blocks_only_actionable_direction_checks(physical, direction, blocked_stage):
+    from state_store.state_store import default_fsm_state
+
+    _, m1, m5, params = physical
+    opposing = _opposing_m1(m1)
+    if direction == "SELL":
+        m1, m5, opposing = map(_reflect_candles, (m1, m5, opposing))
+    initial = opposing if blocked_stage == "CONFIRM" else m1
+    watched, pre = _advance_cycle(initial, m5, params, default_fsm_state(), 1000)
+    assert pre.accepted_stage == "PRE"
+    assert watched.decision.setup.direction == direction
+    state, stamp = pre.next_state, 1002
+    if blocked_stage == "OPEN_NOW":
+        _, confirm = _advance_cycle(m1, m5, params, state, stamp)
+        assert confirm.accepted_stage == "CONFIRM"
+        state, stamp = confirm.next_state, 1031
+
+    evaluation, handoff = _advance_cycle(opposing, m5, params, state, stamp)
+    market = evaluation.market.context
+    assert 0 < market.directional_effective_speed < market.weighted_gross_speed / 2
+    assert evaluation.decision.setup.direction == direction
+    assert evaluation.decision.kind == "REJECT"
+    assert evaluation.decision.reject.hard_blockers == ("MARKET_DIRECTIONAL_FLOW_OPPOSED",)
+    assert not evaluation.execution_time.available
+    assert handoff.accepted_stage is None
+    assert not handoff.stage_handoff_ready
+
+
+@pytest.mark.parametrize("flow_efficiency", [0.5, 0.49999999999999994])
+def test_balanced_recent_movement_is_not_opposition(physical, monkeypatch, flow_efficiency):
+    from dataclasses import replace
+    from core import strategy_v3
+
+    _, m1, m5, params = physical
+    baseline = strategy_v3.decide(m1, m5, params, buffer_mode="SMALL")
+    context = baseline.market.context
+    balanced = replace(baseline.market, context=replace(context,
+        weighted_gross_speed=context.directional_effective_speed / flow_efficiency,
+        flow_efficiency=flow_efficiency))
+    monkeypatch.setattr(strategy_v3, "evaluate_market", lambda *args, **kwargs: balanced)
+    for stage in ("CONFIRM", "OPEN_NOW"):
+        result = strategy_v3.decide(m1, m5, params, buffer_mode="SMALL", context={"physical_stage": stage})
+        assert result.decision.kind == stage
+        assert not result.decision.reject.hard_blockers
+
+
 def test_physical_stages_order_identity_lead_and_restart(physical):
     _, m1, m5, params = physical
     from state_store.state_store import default_fsm_state, validate_fsm_state
