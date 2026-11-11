@@ -9,6 +9,7 @@ from core import trade_temporal_telemetry as telemetry
 from core.buffer_zone import BUFFER_POSITION_LABELS, classify_buffer_position
 from core.signal_presentation import direction_label, stamp
 from intelligence import buffer_expiry_evidence, physical_study_chart
+from intelligence.observation_issue_presentation import collection_issue_label
 
 
 _IN_FLIGHT = threading.Lock()
@@ -58,7 +59,11 @@ def _caption(record, expiry, outcome, number):
     buffer_status = {"MET": "DA", "NOT_MET": "NU", "UNAVAILABLE": "DATE INDISPONIBILE"}[measured["status"]]
     position = classify_buffer_position(record["direction"], record["entry_price"],
         record["buffer_price"], expiry.get("price") if outcome != "UNKNOWN" else None)
-    result = "WIN fragil" if outcome == "WIN" and position == "INSIDE_BUFFER" else outcome
+    result = outcome
+    if outcome == "UNKNOWN":
+        result = collection_issue_label(expiry.get("gap_reason"))
+    elif outcome == "WIN" and position == "INSIDE_BUFFER":
+        result = "WIN fragil"
     quote = "indisponibilă"
     if outcome != "UNKNOWN":
         lag = expiry["observed_ts"] - expiry["target_ts"]
@@ -98,7 +103,7 @@ def dispatch():
                 expiry_quote_ts=expiry["observed_ts"], expiry_price=expiry["price"],
                 buffer_distance=record["buffer_price"], outcome=outcome, report_title=_TITLE,
                 entry_label="PREȚ DE REFERINȚĂ", signal_label=number,
-                expiry_observation_label="PRIMA COTAȚIE DE LA EXPIRARE")
+                expiry_observation_label="PRIMA COTAȚIE DE LA EXPIRARE", observation_reason=expiry.get("gap_reason"))
         except Exception:
             photo = None  # preserve the textual result if rendering fails before any send
         if owner.destination() != destination:

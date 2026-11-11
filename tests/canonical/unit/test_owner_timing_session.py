@@ -151,7 +151,7 @@ def test_progress_uses_published_study_results_when_open_model_disagrees(canonic
     _observe(module, 1000)
     module.report_if_due(now_ts=1001)
     text = sent[0]["text"]
-    assert "Total istoric · 6 rezultate: WIN 3, LOSS 1, DRAW 0, UNKNOWN 2" in text
+    assert "Total istoric · 6 rezultate: WIN 3, LOSS 1, DRAW 0, fără verdict 2" in text
     assert "Marjă completă la expirare: DA 1, NU 3, indisponibilă 2" in text
     assert "WIN fragil (în buffer): 2" in text
     assert "Buffer: atins" not in text

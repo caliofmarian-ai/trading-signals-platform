@@ -118,12 +118,15 @@ def test_new_private_publication_is_armed_only_while_expiry_is_pending(reports, 
         assert delivery.dispatch() is None and not photo_calls
 
 
-def test_recorded_expiry_gap_sends_unknown_without_inventing_a_quote(reports):
+def test_recorded_expiry_gap_displays_its_reason_without_inventing_a_quote(reports):
     telemetry, delivery, chart_calls, photo_calls = reports
     record = _register(telemetry)
     telemetry.mark_due_provider_mismatch("TWELVE_DATA", now_ts=int(record["expiry_ts"]))
     assert delivery.dispatch() == "API_ACCEPTED"
     assert chart_calls[0]["outcome"] == "UNKNOWN"
+    assert chart_calls[0]["observation_reason"] == "ACTIVE_PROVIDER_CHANGED_BEFORE_CHECKPOINT"
+    assert "Rezultat: Furnizorul de cotații s-a schimbat înainte de expirare" in photo_calls[0]["caption"]
+    assert "UNKNOWN" not in photo_calls[0]["caption"]
     assert chart_calls[0]["expiry_price"] is None and chart_calls[0]["expiry_quote_ts"] is None
     assert "Prima cotație la sau după expirare: indisponibilă" in photo_calls[0]["caption"]
     assert telemetry.get_open_trade(record["trade_id"])["result_at_expiry"] is None

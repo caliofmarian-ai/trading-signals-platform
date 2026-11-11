@@ -10,7 +10,8 @@ BASE = 1_800_000_000
 def _chart_options(**overrides):
     return {"candles": [], "direction": "BUY", "entry_ts": BASE + 10, "entry_price": 1.1,
             "expiry_ts": BASE + 190, "expiry_quote_ts": None, "expiry_price": None,
-            "buffer_distance": 0.0002, "outcome": "UNKNOWN", **overrides}
+            "buffer_distance": 0.0002, "outcome": "UNKNOWN",
+            "observation_reason": "EXPIRY_OBSERVATION_MISSING", **overrides}
 
 
 def _candle(offset, *, complete=True):
@@ -164,11 +165,12 @@ def test_favorable_earlier_evidence_cannot_imply_a_missing_expiry_price(
         candles=[_candle(60)],
         first_buffer_hit={"observed_ts": BASE + 121.3, "price": hit},
     ))
-    assert "UNKNOWN · Date incomplete" in labels
+    assert "Lipseste cotatia la expirare" in labels
+    assert all("UNKNOWN" not in label for label in labels)
     assert "LIPSA" in labels
     assert not any(label.startswith(("WIN ·", "LOSS ·", "DRAW ·")) for label in labels)
     assert any("intrare 1/1" in label and "expirare 0/1 · LIPSA" in label for label in labels)
-    assert any("Pretul pentru expirare lipseste" in label for label in labels)
+    assert any("Verdictul de piata nu poate fi calculat" in label for label in labels)
     assert any("Context M1: 1 complete" in label and "08:01:00-08:02:00" in label
                and "08:03:10" in label for label in labels)
     assert any("nu inlocuiesc cotatia pentru expirare" in label for label in labels)

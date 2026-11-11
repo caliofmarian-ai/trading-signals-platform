@@ -223,9 +223,9 @@ def test_periodic_report_separates_new_seconds_results_from_old_minutes(canonica
     _observe(module, 1000)
     report = module.report_if_due(now_ts=1001)
     text = sent[0]["text"]
-    assert "Total istoric · 161 rezultate: WIN 100, LOSS 50, DRAW 1, UNKNOWN 10" in text
-    assert "La secundă · 7 rezultate: WIN 2, LOSS 1, DRAW 1, UNKNOWN 3" in text
-    assert "Istoric · minute întregi · 154 rezultate: WIN 98, LOSS 49, DRAW 0, UNKNOWN 7" in text
+    assert "Total istoric · 161 rezultate: WIN 100, LOSS 50, DRAW 1, fără verdict 10" in text
+    assert "La secundă · 7 rezultate: WIN 2, LOSS 1, DRAW 1, fără verdict 3" in text
+    assert "Istoric · minute întregi · 154 rezultate: WIN 98, LOSS 49, DRAW 0, fără verdict 7" in text
     assert "Cotație la expirare: 4/7" in text
     assert text.index("La secundă") < text.index("Istoric · minute") < text.index("Total istoric")
     assert report["study_results_by_duration_policy"][plans.POLICY]["wins"] == 2

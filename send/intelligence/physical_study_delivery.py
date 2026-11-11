@@ -14,6 +14,7 @@ from core import owner_signal_delivery as owner, owner_signal_number, storage, t
 from core.buffer_zone import BUFFER_POSITION_LABELS, classify_buffer_position
 from intelligence import buffer_expiry_evidence
 from intelligence import physical_expiry_calibration as study
+from intelligence.observation_issue_presentation import collection_issue_label
 from core.signal_presentation import direction_label
 from core import confirmed_study_duration as second_duration
 
@@ -178,7 +179,7 @@ def _render_estimated_result(row, signal_label, estimate):
     else:
         lines.append("Interval orientativ: indisponibil fără ambele cotații.")
     delay = row.get("quote_recovery_policy", {}).get("expiry_window_seconds", study.quotes.MAX_SAMPLE_DELAY_SECONDS)
-    lines.extend(["Cotație expirare: LIPSĂ · rezultat exact: UNKNOWN",
+    lines.extend([f"Rezultat: {collection_issue_label(observation['reason'])}",
                   f"Fereastră verificată: {_stamp(target)} – {_stamp(target + delay)}",
                   "Prețul dintre observații poate ieși din interval.",
                   "Estimarea nu intră în rata WIN verificată.",
@@ -203,7 +204,7 @@ def render_result(identity, row, signal_label):
     distance = frozen.get("buffer_distance") if frozen else None
     label = {"MET": "DA", "NOT_MET": "NU", "UNAVAILABLE": "DATE INDISPONIBILE"}[evidence["buffer_full_margin_status"]]
     position = evidence["buffer_position"]
-    result = "UNKNOWN — date incomplete" if outcome == "UNKNOWN" else outcome
+    result = collection_issue_label(evidence["observation_reason"]) if outcome == "UNKNOWN" else outcome
     expiry_ts = entry["observed_ts"] + baseline["horizon_seconds"] if entry else None
 
     def price(value):
@@ -243,12 +244,6 @@ def render_result(identity, row, signal_label):
         elif row.get("created_ts") is not None:
             delay = row.get("quote_recovery_policy", {}).get("entry_window_seconds", study.quotes.MAX_ENTRY_DELAY_SECONDS)
             lines.append(f"Interval intrare: {_stamp(row['created_ts'])} – {_stamp(row['created_ts'] + delay)}")
-        reason = {
-            "ENTRY_OBSERVATION_MISSING": "cotația validă de intrare lipsește.",
-            "EXPIRY_OBSERVATION_MISSING": "cotația validă din intervalul expirării lipsește.",
-            "PROVIDER_CHANGED": "furnizor schimbat; observarea a fost oprită.",
-        }.get(evidence["observation_reason"], "motiv nedetaliat în înregistrare.")
-        lines.append(f"Motiv: {reason}")
     limit = "LIPSĂ"
     if entry is not None and distance is not None:
         with localcontext() as context:
@@ -282,6 +277,7 @@ def _render_chart(row, signal_label):
                                expiry_quote_ts=quote.get("observed_ts"), expiry_price=quote.get("price"),
                                buffer_distance=row["buffer_snapshot"]["buffer_distance"],
                                outcome=baseline["outcome"], signal_label=signal_label,
+                               observation_reason=baseline.get("reason"),
                                expiry_estimate=_expiry_estimate(row))
 
 
