@@ -341,8 +341,12 @@ def dispatch(*, now_ts, active_provider):
     path = study._path()
     if destination is None or path is None or active_provider != "FINNHUB":
         return
+    paths = study._delivery_paths(path)
     for phase in ("entry", "result"):
-        reserved = _reserve(path, phase, now_ts, destination)
+        for path in paths:
+            reserved = _reserve(path, phase, now_ts, destination)
+            if reserved is not None:
+                break
         if reserved is None:
             continue
         identity, row = reserved

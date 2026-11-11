@@ -217,6 +217,13 @@ def report_if_due(*, now_ts: float) -> dict[str, Any] | None:
             report["physical_study_progress"] = {key: observed.get(key) for key in
                 ("unique_entry_experiments", "finalized_entry_experiments",
                  "study_open_now_api_accepted", "study_results_api_accepted")}
+            if "prospective_cohort" in observed:
+                report["physical_study_cohort"] = observed["prospective_cohort"]
+                historical = observed["historical_delivery_counts"]
+                report["historical_physical_study_deliveries"] = historical
+                text += ("\nCohorta prospectivă V3 după corectarea spațiului direcțional."
+                         f" Cohorta anterioară: {historical['study_open_now_api_accepted']} OPEN STUDIU,"
+                         f" {historical['study_results_api_accepted']} rezultate acceptate de API.")
             from core import confirmed_study_duration as durations
             from intelligence.study_progress_presentation import render_published_study_progress
             report["study_results_by_duration_policy"] = observed.get("published_study_results_by_duration_policy")
