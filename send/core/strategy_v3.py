@@ -92,7 +92,8 @@ def decide(candles_m1, candles_m5, params, buffer_mode="MEDIUM", want_open_now=F
     timing = evaluate_time(market, corridor, params)
     physical = evaluate_trade_physics(market, corridor, timing, include_scores=False)
     physical = replace(physical, formula_version="V3_PHYSICAL_ONLY_1.0.0",
-                       schema_version="2.0.0", weights_version="NOT_APPLICABLE")
+                       schema_version="2.0.0", weights_version="NOT_APPLICABLE",
+                       corridor_constrained=corridor.structure.feasibility_state == "CONSTRAINED")
     blockers = []
     if market.context.volatility_state != "ACTIVE":
         blockers.append("MARKET_ACTIVITY_NOT_ACTIVE")
@@ -104,8 +105,6 @@ def decide(candles_m1, candles_m5, params, buffer_mode="MEDIUM", want_open_now=F
         blockers.append("TIME_NOT_FEASIBLE")
     if not physical.ready:
         blockers.append(f"TRADE_PHYSICS_{physical.readiness_state}")
-    elif physical.physically_constrained:
-        blockers.append("TRADE_PHYSICS_INSUFFICIENT_SPACE")
     stage = supplied.get("physical_stage", "PRE")
     opportunity_id = supplied.get("opportunity_signal_id")
     if opportunity_id and supplied.get("opportunity_direction") != market.direction_bias:

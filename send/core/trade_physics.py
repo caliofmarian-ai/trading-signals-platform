@@ -57,6 +57,7 @@ class TradePhysicsResult:
     formula_version: str
     weights_version: str
     explanation: str
+    corridor_constrained: Optional[bool] = None
 
     @property
     def ready(self) -> bool:
@@ -64,6 +65,8 @@ class TradePhysicsResult:
 
     @property
     def physically_constrained(self) -> bool:
+        if self.corridor_constrained is not None:
+            return self.corridor_constrained
         return (
             self.available_space is not None
             and self.required_space is not None
