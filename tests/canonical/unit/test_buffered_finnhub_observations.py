@@ -171,3 +171,37 @@ def test_study_chart_uses_only_existing_active_finnhub_feed(monkeypatch):
 
     monkeypatch.setattr(market, "configured_provider", lambda: "TWELVE_DATA")
     assert market.get_finnhub_study_chart_evidence(1000, 1100) == ([], [])
+
+
+@pytest.mark.parametrize("restored", [False, True])
+@pytest.mark.parametrize("window", [2, 10])
+@pytest.mark.parametrize("late,reason", [
+    (False, "ONLY_EXACT"),
+    (True, "ONLY_SECOND_BUCKET"),
+])
+def test_source_precision_comparison_preserves_current_selection(
+    tmp_path, capsys, restored, window, late, reason
+):
+    import json
+
+    clock = [1012.0]
+    module, feed = _feed(tmp_path, clock)
+    tick_ms = 1000900 + window * 1000 if late else 1000500
+    _tick(feed, tick_ms, 1.234567)
+    if restored:
+        feed = module.FinnhubForexFeed(token="OFFLINE_TEST_ONLY", clock=lambda: clock[0],
+            store_path=feed.store_path, minimum_candles=2)
+
+    for _ in range(2):
+        selected = feed.get_price_sample_at_or_after("EUR/USD", 1000.25, window)
+        assert (selected is not None) == late
+    prefix = "TSP_QUOTE_WINDOW_PRECISION_COMPARISON "
+    lines = [line.removeprefix(prefix) for line in capsys.readouterr().out.splitlines()
+             if line.startswith(prefix)]
+    assert len(lines) == 1
+    evidence = json.loads(lines[0])
+    assert evidence["reason"] == reason
+    assert evidence["second_bucket_provider_tick_ms"] == (tick_ms if late else None)
+    assert evidence["exact_provider_tick_ms"] == (None if late else tick_ms)
+    assert evidence["changes_sampling_policy"] is False
+    assert "1.234567" not in lines[0]

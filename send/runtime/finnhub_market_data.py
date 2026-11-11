@@ -732,13 +732,20 @@ class FinnhubForexFeed:
             or target_ts <= 0 or max_delay < 0):
             raise ValueError("invalid quote observation window")
         now = float(self.clock())
-        selected = diagnostic = None
+        bucket_end = min(target_ts + max_delay, now)
+        now_ms = now * 1000
+        selected = exact = diagnostic = precision = None
         with self._lock:
             for sample in self._real_quote_buffer:
-                if (target_ts <= sample["observed_ts"] <= min(target_ts + max_delay, now)
-                    and sample["_provider_tick_ms"] <= now * 1000 and sample["_received_ts"] <= now):
-                    if selected is None or sample["_provider_tick_ms"] < selected["_provider_tick_ms"]:
+                tick_ms = sample["_provider_tick_ms"]
+                if not (tick_ms <= now_ms and sample["_received_ts"] <= now):
+                    continue
+                if target_ts <= sample["observed_ts"] <= bucket_end:
+                    if selected is None or tick_ms < selected["_provider_tick_ms"]:
                         selected = sample  # stable receipt order breaks equal source-time ties
+                if target_ts <= tick_ms / 1000 <= bucket_end:
+                    if exact is None or tick_ms < exact["_provider_tick_ms"]:
+                        exact = sample
             result = ({key: value for key, value in selected.items() if not key.startswith("_")}
                       if selected is not None else None)
             try:
@@ -748,14 +755,22 @@ class FinnhubForexFeed:
                     target_ts=target_ts, max_delay=max_delay, now_ts=now,
                     selected=selected, accepted_tick_count=self._retained_quote_total,
                 )
+                precision = self._quote_window_diagnostics.observe_precision(
+                    target_ts=target_ts, max_delay=max_delay, now_ts=now,
+                    bucket_quote=selected, exact_quote=exact,
+                )
             except Exception:
                 pass  # Diagnostic failure must not erase a valid selected quote.
-        if diagnostic is not None:
-            try:
-                # Never print while holding the ingestion lock.
-                print("TSP_QUOTE_WINDOW_EVIDENCE " + json.dumps(diagnostic, sort_keys=True), flush=True)
-            except Exception:
-                pass
+        for marker, evidence in (
+            ("TSP_QUOTE_WINDOW_EVIDENCE", diagnostic),
+            ("TSP_QUOTE_WINDOW_PRECISION_COMPARISON", precision),
+        ):
+            if evidence is not None:
+                try:
+                    # Never print while holding the ingestion lock.
+                    print(marker + " " + json.dumps(evidence, sort_keys=True), flush=True)
+                except Exception:
+                    pass
         return result
 
     def get_expiry_quote_bracket(self, symbol, target_ts, max_side_seconds=60.0):
