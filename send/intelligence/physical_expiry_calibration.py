@@ -49,6 +49,8 @@ _last_report: dict[str, int] = {}
 _drained_historical: set[Path] = set()
 POST_MODEL_OFFSETS = (60, 180, 300)  # existing diagnostic checkpoints; never execution expiry
 STUDY_DURATION_SOURCE = "CONFIRM_MODEL_TIME"
+CONFIRM_RESERVE_POLICY = "CONFIRMED_DURATION_PLUS_3_SECONDS_V1"
+CONFIRM_RESERVE_SECONDS = 3
 MAX_EXPIRY_ESTIMATES_PER_PASS = 8
 EXPIRY_ESTIMATE_ARRIVAL_GRACE_SECONDS = 15.0
 
@@ -146,6 +148,54 @@ def _confirmed_study_feasible(horizon_seconds, adjusted_seconds):
     )
 
 
+def _reserve_study_horizon(row):
+    plan = row["study_observation"]["duration_plan"]
+    horizon = plan["duration_seconds"] + CONFIRM_RESERVE_SECONDS
+    eligible = (horizon <= plan["maximum_minutes"] * 60
+                and _confirmed_study_feasible(horizon, row["adjusted_seconds"]))
+    return horizon, eligible
+
+
+def _capture_duration_reserve(row, plan):
+    """Bind a separate candidate before entry quote lookup."""
+    from core import owner_signal_delivery as owner
+
+    event = {"stage": "OPEN_NOW", "signal_id": plan["signal_id"],
+             **second_duration.event_fields(plan)}
+    if owner.stage_block_reason(event, now_ts=row["created_ts"]) is not None:
+        return
+    horizon, eligible = _reserve_study_horizon(row)
+    row["confirm_duration_reserve"] = {
+        "policy": CONFIRM_RESERVE_POLICY, "horizon_seconds": horizon,
+        "outcome": "PENDING" if eligible else "INFEASIBLE", "reason": None, "quote": None,
+    }
+
+
+def _validate_duration_reserve(row, scope):
+    reserve = row["confirm_duration_reserve"]
+    if ("prospective_cohort" not in scope or "decision_snapshot" not in row
+            or "duration_plan" not in row.get("study_observation", {})
+            or not isinstance(reserve, dict)
+            or set(reserve) != {"policy", "horizon_seconds", "outcome", "reason", "quote"}
+            or reserve["policy"] != CONFIRM_RESERVE_POLICY):
+        raise ValueError("INVALID_CONFIRMED_DURATION_RESERVE")
+    horizon, eligible = _reserve_study_horizon(row)
+    outcome, quote = reserve["outcome"], reserve["quote"]
+    if (reserve["horizon_seconds"] != horizon or (not eligible) != (outcome == "INFEASIBLE")
+            or outcome not in {"PENDING", "INFEASIBLE", "UNKNOWN", "WIN", "LOSS", "DRAW"}):
+        raise ValueError("CHANGED_CONFIRMED_DURATION_RESERVE")
+    if outcome in {"WIN", "LOSS", "DRAW"}:
+        entry = row["entry"]
+        stamp = _number(quote.get("observed_ts"))
+        if (entry is None or _observed_quote(quote, stamp) != quote
+                or not entry["observed_ts"] + horizon <= stamp
+                <= entry["observed_ts"] + horizon + quotes.MAX_SAMPLE_DELAY_SECONDS
+                or quotes._classify(row["direction"], entry["price"], quote["price"]) != outcome):
+            raise ValueError("INVALID_CONFIRMED_DURATION_RESERVE_LABEL")
+    elif quote is not None:
+        raise ValueError("UNOBSERVED_CONFIRMED_DURATION_RESERVE_LABEL")
+
+
 def _buffer_policy():
     return {"contract": buffer_evidence.CONTRACT, "numeric_policy": buffer_evidence.NUMERIC_POLICY,
             "primary_target": "BUFFER_MET_AT_EXPIRY", "target_rate": TARGET_WIN_RATE,
@@ -226,7 +276,8 @@ def _delivery_paths(path):
 def _pending_observations(row):
     return (row["state"] != "FINAL"
             or any(c["outcome"] == "PENDING" for c in row.get("post_model_observations", []))
-            or row.get("study_observation", {}).get("outcome") == "PENDING")
+            or row.get("study_observation", {}).get("outcome") == "PENDING"
+            or row.get("confirm_duration_reserve", {}).get("outcome") == "PENDING")
 
 
 def _pending_delivery(row):
@@ -427,6 +478,8 @@ def validate(state):
                     raise ValueError("INVALID_CONFIRMED_STUDY_LABEL")
             elif sample is not None:
                 raise ValueError("UNOBSERVED_CONFIRMED_STUDY_LABEL")
+        if "confirm_duration_reserve" in row:
+            _validate_duration_reserve(row, scope)
         from intelligence.physical_study_delivery import validate_delivery
         validate_delivery(row)
         if "expiry_price_estimate" in row:
@@ -547,6 +600,8 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
                         row["study_observation"].update(duration_policy=second_duration.POLICY,
                             duration_seconds=confirmed_seconds, duration_plan=deepcopy(plan))
                         second_duration.validate_observation(row, scope)
+                        if cohort is not None and "decision_snapshot" in row:
+                            _capture_duration_reserve(row, plan)
             state["records"][identity] = row
         _save(path, state)
 
@@ -634,8 +689,8 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                     elif now > row["created_ts"] + quotes.MAX_ENTRY_DELAY_SECONDS + arrival_grace:
                         reason = "ENTRY_OBSERVATION_MISSING"
                 observations = row["candidates"] + row.get("post_model_observations", [])
-                if "study_observation" in row:
-                    observations += [row["study_observation"]]
+                observations += [row[key] for key in ("study_observation", "confirm_duration_reserve")
+                                 if key in row]
                 for candidate in observations:
                     if candidate["outcome"] != "PENDING":
                         continue
@@ -720,6 +775,37 @@ def _training_blockers(counts, training_complete):
     return blockers
 
 
+def _duration_reserve_report(records):
+    rows = [row for row in records if "confirm_duration_reserve" in row]
+    rescued = [row for row in rows if row["study_observation"]["outcome"] == "INFEASIBLE"
+               and row["confirm_duration_reserve"]["outcome"] != "INFEASIBLE"]
+    observed = {"WIN", "LOSS", "DRAW"}
+    paired = [row for row in rows if row["study_observation"]["outcome"] in observed
+              and row["confirm_duration_reserve"]["outcome"] in observed]
+
+    def counts(group, key):
+        result = _counts([{**row, "candidates": [row[key]]} for row in group], 0)
+        return {key: result[key] for key in (
+            "wins", "losses", "draws", "unknown", "infeasible",
+            "buffer_met", "buffer_not_met", "buffer_unavailable",
+        )}
+
+    return {
+        "policy": CONFIRM_RESERVE_POLICY, "reserve_seconds": CONFIRM_RESERVE_SECONDS,
+        "observed_open_chains": len(rows),
+        "confirmed_duration_passed": sum(row["study_observation"]["outcome"] != "INFEASIBLE" for row in rows),
+        "reserve_duration_passed": sum(row["confirm_duration_reserve"]["outcome"] != "INFEASIBLE" for row in rows),
+        "duration_gate_rescues": len(rescued),
+        "reserve_pending": sum(row["confirm_duration_reserve"]["outcome"] == "PENDING" for row in rows),
+        "reserve_on_all_chains": counts(rows, "confirm_duration_reserve"),
+        "reserve_on_rescued_chains": counts(rescued, "confirm_duration_reserve"),
+        "paired_real_quote_count": len(paired),
+        "confirmed_on_paired": counts(paired, "study_observation"),
+        "reserve_on_paired": counts(paired, "confirm_duration_reserve"),
+        "publication_authority": False, "calibration_authority": False,
+    }
+
+
 def analyze(state, *, now_ts):
     report = {"protocol": PROTOCOL, "truth_domain": "HYPOTHETICAL_RESEARCH", "observed_at": now_ts,
               "status": "WAITING_FIRST_COMPLETE_CHAIN", "bias_grid": list(BIASES),
@@ -754,9 +840,12 @@ def analyze(state, *, now_ts):
     if state is None:
         from intelligence.same_symbol_sequences import summarize
         report["same_symbol_10min_sequences"] = summarize([])
+        report["confirm_duration_reserve_diagnostic"] = _duration_reserve_report([])
         return report
     validate(state)
     records = list(state["records"].values())
+    if "prospective_cohort" in state["scope"]:
+        report["confirm_duration_reserve_diagnostic"] = _duration_reserve_report(records)
     from intelligence.same_symbol_sequences import summarize
     report["same_symbol_10min_sequences"] = summarize(records)
     report.update(scope=state["scope"], unique_entry_experiments=len(records),

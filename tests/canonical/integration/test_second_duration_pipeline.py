@@ -67,7 +67,7 @@ def _capture(ctx, *, needed=8.6):
     assert not execution.available  # this experiment cannot activate execution
     assert ctx["study"].observe_accepted_chain(decision, handoff, ctx["params"],
         now_ts=BASE + 35, provider="FINNHUB", buffer_mode="SMALL", publish_study=True)
-    return next(iter(ctx["study"]._read(ctx["study"]._path())["records"].values()))
+    return next(iter(ctx["study"]._read(ctx["study"]._study_paths(ctx["study"]._path())[0])["records"].values()))
 
 
 def _sample(stamp, price):
@@ -79,7 +79,7 @@ def _advance(ctx, stamp, price):
     ctx["clock"][0] = stamp + .1
     ctx["study"].advance(now_ts=stamp, active_provider="FINNHUB",
                         price_loader=lambda _: _sample(stamp, price) if price is not None else None)
-    return next(iter(ctx["study"]._read(ctx["study"]._path())["records"].values()))
+    return next(iter(ctx["study"]._read(ctx["study"]._study_paths(ctx["study"]._path())[0])["records"].values()))
 
 
 def test_confirm_photo_open_result_chart_and_summary_use_one_primary_seconds_plan(seconds_pipeline, monkeypatch):
@@ -229,3 +229,48 @@ def test_periodic_report_separates_new_seconds_results_from_old_minutes(canonica
     assert "Cotație la expirare: 4/7" in text
     assert text.index("La secundă") < text.index("Istoric · minute") < text.index("Total istoric")
     assert report["study_results_by_duration_policy"][plans.POLICY]["wins"] == 2
+
+
+@pytest.mark.parametrize("open_needed,rescued", [(8.59, False), (8.63, True)])
+def test_prospective_reserve_is_separate_from_actual_open_and_baseline(seconds_pipeline, open_needed, rescued):
+    ctx = seconds_pipeline
+    study = ctx["study"]
+    study.advance(now_ts=BASE - 1, active_provider="FINNHUB",
+                  price_loader=lambda _: None, start_prospective_cohort=True)
+    _step(ctx, "PRE", 0)
+    _step(ctx, "CONFIRM", 3)
+    captured = _capture(ctx, needed=open_needed)
+    assert captured["study_observation"]["horizon_seconds"] == 516
+    assert captured["confirm_duration_reserve"]["horizon_seconds"] == 519
+    assert captured["confirm_duration_reserve"]["outcome"] == "PENDING"
+    assert captured["candidates"][0]["horizon_seconds"] == 600
+
+    entry = BASE + 36
+    _advance(ctx, entry, 1.1)
+    sent_at_open = len(ctx["photos"])
+    assert sent_at_open == (2 if rescued else 3)
+    saved = _advance(ctx, entry + 516, 1.1)
+    assert saved["study_observation"]["outcome"] == ("INFEASIBLE" if rescued else "DRAW")
+    assert saved["confirm_duration_reserve"]["outcome"] == "PENDING"
+    sent_at_control_expiry = len(ctx["photos"])
+    assert sent_at_control_expiry == (2 if rescued else 4)
+
+    saved = _advance(ctx, entry + 519, 1.105)
+    assert saved["confirm_duration_reserve"]["outcome"] == "WIN"
+    assert saved["candidates"][0]["outcome"] == "PENDING"
+    assert len(ctx["photos"]) == sent_at_control_expiry
+    evidence = study.summary(now_ts=entry + 519)["confirm_duration_reserve_diagnostic"]
+    assert evidence["duration_gate_rescues"] == int(rescued)
+    assert evidence["paired_real_quote_count"] == int(not rescued)
+    assert evidence["reserve_on_all_chains"]["wins"] == 1
+    assert evidence["reserve_on_all_chains"]["buffer_met"] == 1
+    assert not evidence["publication_authority"] and not evidence["calibration_authority"]
+
+
+def test_reserve_requires_original_confirm_receipt_in_prospective_cohort(seconds_pipeline):
+    ctx = seconds_pipeline
+    ctx["study"].advance(now_ts=BASE - 1, active_provider="FINNHUB",
+                         price_loader=lambda _: None, start_prospective_cohort=True)
+    _step(ctx, "PRE", 0)
+    _step(ctx, "CONFIRM", 3, publish=False)
+    assert "confirm_duration_reserve" not in _capture(ctx)
