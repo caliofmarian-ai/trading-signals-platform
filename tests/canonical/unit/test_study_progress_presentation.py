@@ -220,7 +220,15 @@ def test_unknown_causes_are_not_all_relabelled_as_expiry_quotes():
     assert "Lipsește cotația la intrare: 4." in text
     assert "UNKNOWN" not in text
     source["published_study_results_by_duration_policy"][ACTIVE]["unknown_reasons"]["EXTRA"] = 1
-    assert "Cauzele lipsei datelor: statistici neconcordante." in render(source)
+    assert "Cauza lipsei datelor este indisponibilă: 12." in render(source)
+
+
+def test_missing_reason_evidence_uses_owner_fallback_with_the_case_count():
+    source = evidence()
+    source["published_study_results_by_duration_policy"][ACTIVE].pop("unknown_reasons")
+    text = render(source)
+    assert "Cauza lipsei datelor este indisponibilă: 12." in text
+    assert "UNKNOWN" not in text
 
 
 @pytest.mark.parametrize("source", [None, [], {}, {"baseline_model_observations": counts()}])
