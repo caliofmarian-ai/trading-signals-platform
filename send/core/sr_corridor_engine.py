@@ -85,12 +85,11 @@ def _structural_levels(candles: Sequence[Mapping[str, Any]], *, gap_aware: bool 
     recent = candles[:LEGACY_STRUCTURE_LOOKBACK]
     highs = [float(candle["high"]) for candle in recent]
     lows = [float(candle["low"]) for candle in recent]
-    observed_range = max(highs) - min(lows)
-    tolerance = observed_range * LEGACY_LEVEL_CLUSTER_TOLERANCE if observed_range > 0 else 1e-9
     pivot_highs: list[float] = []
     pivot_lows: list[float] = []
     span = STRUCTURAL_PIVOT_SPAN
-    valid_windows = 0
+    confirmed_centers: list[int] = []
+    confirmed_rows: set[int] = set()
     for index in range(span, len(recent) - span):
         if gap_aware:
             window = recent[index-span:index+span+1]
@@ -98,7 +97,8 @@ def _structural_levels(candles: Sequence[Mapping[str, Any]], *, gap_aware: bool 
                 or any(int(newer["ts"])-int(older["ts"]) != 300
                        for newer, older in zip(window, window[1:]))):
                 continue
-        valid_windows += 1
+            confirmed_rows.update(range(index - span, index + span + 1))
+        confirmed_centers.append(index)
         neighboring_highs = highs[index - span:index] + highs[index + 1:index + span + 1]
         neighboring_lows = lows[index - span:index] + lows[index + 1:index + span + 1]
         if highs[index] >= max(neighboring_highs) and any(
@@ -109,12 +109,20 @@ def _structural_levels(candles: Sequence[Mapping[str, Any]], *, gap_aware: bool 
             lows[index] < value for value in neighboring_lows
         ):
             pivot_lows.append(lows[index])
-    # A repeatedly tested horizontal boundary is structurally relevant even
-    # when it forms a perfectly flat plateau with no single strict pivot.
-    if valid_windows and not pivot_highs and max(highs) - min(highs) <= tolerance:
-        pivot_highs.append(highs[0])
-    if valid_windows and not pivot_lows and max(lows) - min(lows) <= tolerance:
-        pivot_lows.append(lows[0])
+    if not confirmed_centers:
+        return (), ()
+
+    # V3 tests horizontal boundaries and clusters levels only using bars
+    # that participated in complete, consecutive pivot windows.
+    evidence_highs = [highs[index] for index in confirmed_rows] if gap_aware else highs
+    evidence_lows = [lows[index] for index in confirmed_rows] if gap_aware else lows
+    observed_range = max(evidence_highs) - min(evidence_lows)
+    tolerance = observed_range * LEGACY_LEVEL_CLUSTER_TOLERANCE if observed_range > 0 else 1e-9
+    plateau_center = confirmed_centers[0] if gap_aware else 0
+    if not pivot_highs and max(evidence_highs) - min(evidence_highs) <= tolerance:
+        pivot_highs.append(highs[plateau_center])
+    if not pivot_lows and max(evidence_lows) - min(evidence_lows) <= tolerance:
+        pivot_lows.append(lows[plateau_center])
     return _cluster_levels(pivot_lows, tolerance), _cluster_levels(pivot_highs, tolerance)
 
 
