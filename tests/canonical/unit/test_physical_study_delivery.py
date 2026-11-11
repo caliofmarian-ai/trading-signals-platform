@@ -916,3 +916,61 @@ def test_prospective_cutover_preserves_pending_history_and_excludes_old_pre(stud
     assert report["historical_delivery_counts"] == {
         "study_open_now_api_accepted": 1, "study_results_api_accepted": 1,
     }
+
+
+def test_exact_source_cutover_keeps_bucket_records_and_uses_fractional_targets(study_setup):
+    _, study, _, _, _, params, messages, _ = study_setup
+    path = study._path()
+    def sample_at(stamp, price, *, received=None):
+        return {**_sample(stamp, price, buffered=True), "provider_tick_ms": round(stamp * 1000),
+                "received_ts": stamp if received is None else received}
+    def advance(now, *, precise=None, legacy=None, start=False):
+        return study.advance(now_ts=now, active_provider="FINNHUB", price_loader=lambda _: None,
+                             observation_loader=legacy, precise_observation_loader=precise,
+                             start_prospective_cohort=start)
+    def capture(pre, identity):
+        created = pre + 31
+        study.capture([{"policy": "PHYSICAL_ONLY_V3", "direction": "BUY",
+            "opportunity_signal_id": identity, "created_ts": created, "open_ts": created,
+            "pre_ts": pre, "confirm_ts": pre + 2, "confirm_model_seconds": 120,
+            "model_seconds": 120, "adjusted_seconds": 100, "buffer_distance": 0.0002}],
+            params=params, buffer_mode="SMALL", strategy_version="3.0.0",
+            canonical_spec="V3_SCORELESS_OWNER_AMENDMENT_v1.1.0", now_ts=created)
+        return created
+
+    advance(BASE, start=True)
+    old_open = capture(BASE + 1, "sig-v3-bucket")
+    advance(old_open + 1, legacy=lambda *_: _sample(old_open + 1, 1.1, buffered=True))
+    bucket_path = study._study_paths(path)[0]
+    bucket_before = study._read(bucket_path)
+    def unavailable(*_):
+        return None
+
+    cutover = BASE + 40
+    report = advance(cutover, precise=unavailable, start=True)
+    assert report["prospective_cohort"]["revision"] == study.PRECISE_COHORT_REVISION
+    capture(cutover - 1, "sig-v3-pre-cutover")
+    assert study._read(bucket_path) == bucket_before
+    new_open = capture(cutover + 1, "sig-v3-precise")
+    active = study._study_paths(path)[0]
+    def observe(now, precise):
+        advance(now, precise=precise, legacy=unavailable)
+        return next(iter(study._read(active)["records"].values()))
+    entry = new_open + .192
+    assert observe(new_open + .2, lambda *_: _sample(new_open, 1.09, buffered=True))["entry"] is None
+    assert observe(new_open + .2, lambda *_: sample_at(entry, 1.1, received=new_open + 1))["entry"] is None
+    assert observe(new_open + 1, lambda *_: sample_at(entry, 1.1))["entry"]["observed_ts"] == entry
+    old_expiry = old_open + 121
+    advance(old_expiry, precise=unavailable, legacy=lambda symbol, target, delay:
+            _sample(old_expiry, 1.101, buffered=True) if target == old_expiry else None)
+    expiry = entry + 120
+    assert observe(expiry + 2.5, lambda *_: sample_at(expiry + 2.456, 1.2))["candidates"][0]["outcome"] == "PENDING"
+    saved = observe(expiry + 3, lambda *_: sample_at(expiry + .25, 1.101))
+    assert saved["candidates"][0]["outcome"] == "WIN"
+    assert saved["candidates"][0]["quote"]["provider_tick_ms"] == round((expiry + .25) * 1000)
+    old = next(iter(study._read(bucket_path)["records"].values()))
+    assert old["entry"] == next(iter(bucket_before["records"].values()))["entry"]
+    assert "provider_tick_ms" not in old["entry"]
+    assert old["candidates"][0]["outcome"] == "WIN"
+    assert "provider_tick_ms" not in old["candidates"][0]["quote"]
+    assert not messages

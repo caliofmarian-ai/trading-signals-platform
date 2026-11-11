@@ -719,11 +719,11 @@ class FinnhubForexFeed:
                 "provider_tick_receive_age_seconds":distribution(self._tick_receive_ages),
                 "provider_tick_intervals_gt_2s":sum(value>2 for value in self._tick_intervals)}
 
-    def get_price_sample_at_or_after(self, symbol, target_ts, max_delay):
+    def get_price_sample_at_or_after(self, symbol, target_ts, max_delay, *, exact_source_time=False):
         """Earliest retained actual tick in a declared window, never a candle substitute.
 
-        Preserve the existing source-second convention. Restored and late
-        genuine observations retain their actual provenance. Future source or
+        Historical callers keep the source-second convention. The precise cohort
+        receives the original millisecond and receipt provenance. Future source or
         receipt times remain ineligible; no provider request is made.
         """
         normalize_symbol(symbol)
@@ -746,14 +746,20 @@ class FinnhubForexFeed:
                 if target_ts <= tick_ms / 1000 <= bucket_end:
                     if exact is None or tick_ms < exact["_provider_tick_ms"]:
                         exact = sample
-            result = ({key: value for key, value in selected.items() if not key.startswith("_")}
-                      if selected is not None else None)
+            chosen = exact if exact_source_time else selected
+            result = ({key: value for key, value in chosen.items() if not key.startswith("_")}
+                      if chosen is not None else None)
+            if exact_source_time and result is not None:
+                tick_ms = chosen["_provider_tick_ms"]
+                result.update(observed_ts=tick_ms / 1000, provider_tick_ms=tick_ms,
+                              received_ts=chosen["_received_ts"])
             try:
                 diagnostic = self._quote_window_diagnostics.observe(
                     samples=self._real_quote_buffer,
                     rejected_tick_ms=self._recent_out_of_order_tick_ms,
                     target_ts=target_ts, max_delay=max_delay, now_ts=now,
-                    selected=selected, accepted_tick_count=self._retained_quote_total,
+                    selected=chosen, accepted_tick_count=self._retained_quote_total,
+                    exact_source_time=exact_source_time,
                 )
                 precision = self._quote_window_diagnostics.observe_precision(
                     target_ts=target_ts, max_delay=max_delay, now_ts=now,

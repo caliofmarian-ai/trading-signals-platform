@@ -21,7 +21,7 @@ class QuoteWindowDiagnostics:
     """Observe misses/recovery without selecting, requesting or changing quotes."""
 
     def __init__(self) -> None:
-        self.windows: OrderedDict[tuple[float, float], tuple[str, float]] = OrderedDict()
+        self.windows: OrderedDict[tuple[float, float, bool], tuple[str, float]] = OrderedDict()
         self.precision_windows: OrderedDict[tuple[float, float], str] = OrderedDict()
         self.report_slot: int | None = None
         self.slot_events = 0
@@ -31,6 +31,7 @@ class QuoteWindowDiagnostics:
         self, *, samples: Iterable[Mapping[str, Any]], rejected_tick_ms: Iterable[int],
         target_ts: float, max_delay: float, now_ts: float,
         selected: Mapping[str, Any] | None, accepted_tick_count: int,
+        exact_source_time: bool = False,
     ) -> dict[str, Any] | None:
         for value in (target_ts, max_delay, now_ts):
             if type(value) not in (int, float) or not isfinite(value):
@@ -38,7 +39,7 @@ class QuoteWindowDiagnostics:
         end = target_ts + max_delay
         if target_ts <= 0 or now_ts <= 0 or max_delay < 0 or not isfinite(end):
             raise ValueError("invalid diagnostic observation window")
-        key = (float(target_ts), float(max_delay))
+        key = (float(target_ts), float(max_delay), exact_source_time)
         prior = self.windows.get(key)
         if selected is not None and prior is None:
             return None  # Normal successful lookups produce no diagnostic noise.
@@ -51,7 +52,7 @@ class QuoteWindowDiagnostics:
         retained = eligible = future = 0
         for row in samples:
             retained += 1
-            stamp = row["observed_ts"]
+            stamp = row["_provider_tick_ms"] / 1000 if exact_source_time else row["observed_ts"]
             if row["_provider_tick_ms"] > now_ts * 1000 or stamp > now_ts:
                 future += int(target_ts <= stamp <= end)
                 continue
@@ -62,7 +63,7 @@ class QuoteWindowDiagnostics:
                 before = stamp if before is None else max(before, stamp)
             if stamp > end:
                 after = stamp if after is None else min(after, stamp)
-        rejected = sum(target_ts <= tick // 1000 <= end and tick <= now_ts * 1000
+        rejected = sum(target_ts <= (tick / 1000 if exact_source_time else tick // 1000) <= end and tick <= now_ts * 1000
                        for tick in rejected_tick_ms)
         if selected is not None:
             reason = "OBSERVATION_FOUND_AFTER_MISS"
@@ -111,12 +112,14 @@ class QuoteWindowDiagnostics:
             "future_ticks_in_window": future,
             "recent_out_of_order_ticks_in_window": rejected,
             "rejection_evidence_capacity": MAX_REJECTED_TIMESTAMPS,
-            "selected_source_ts": selected["observed_ts"] if selected is not None else None,
+            "selected_source_ts": (selected["_provider_tick_ms"] / 1000 if exact_source_time else selected["observed_ts"])
+                if selected is not None else None,
             "selected_provider_tick_ms": selected["_provider_tick_ms"] if selected is not None else None,
             "selected_received_ts": received_ts,
             "selected_receive_age_seconds": receive_age,
             "suppressed_diagnostic_events": self.suppressed_events,
-            "source_time_convention": "EXISTING_PROVIDER_SECOND_BUCKET",
+            "source_time_convention": ("EXACT_PROVIDER_MILLISECONDS" if exact_source_time
+                                       else "EXISTING_PROVIDER_SECOND_BUCKET"),
             "scope": "CURRENT_PROCESS_RETAINED_TIMESTAMPS_AT_LOOKUP",
             "terminal_outcome": False, "changes_sampling_policy": False,
             "no_prices_or_credentials": True,

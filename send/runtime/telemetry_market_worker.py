@@ -212,6 +212,7 @@ def telemetry_market_loop(
                         active_provider=market_client.configured_provider(),
                         price_loader=market_client.get_latest_price_sample,
                         observation_loader=market_client.get_price_sample_at_or_after,
+                        precise_observation_loader=market_client.get_precise_price_sample_at_or_after,
                         bracket_loader=market_client.get_expiry_quote_bracket,
                         start_prospective_cohort=True)
             except Exception as exc:
