@@ -276,6 +276,76 @@ def test_reserve_requires_original_confirm_receipt_in_prospective_cohort(seconds
     assert "confirm_duration_reserve" not in _capture(ctx)
 
 
+def test_directional_flow_cutover_isolates_new_chains_and_drains_precise_history(seconds_pipeline, monkeypatch):
+    ctx = seconds_pipeline
+    study = ctx["study"]
+    revision = study.DIRECTIONAL_FLOW_COHORT_REVISION
+    samples = {}
+
+    def advance(now, **cutover):
+        ctx["clock"][0] = now + .1
+        return study.advance(now_ts=now, active_provider="FINNHUB", price_loader=lambda _: None,
+            precise_observation_loader=lambda _symbol, target, _delay: samples.get(target), **cutover)
+
+    def quote(target, stamp, price):
+        samples[target] = {**_sample(stamp, price), "source": "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1",
+                           "provider_tick_ms": round(stamp * 1000), "received_ts": stamp}
+
+    advance(BASE - 1, start_prospective_cohort=True)
+    _step(ctx, "PRE", 0)
+    _step(ctx, "CONFIRM", 3)
+    _capture(ctx)
+    historical_entry = BASE + 35.25
+    quote(BASE + 35, historical_entry, 1.1)
+    advance(historical_entry + .1)
+    history = study._study_paths(study._path())[0]
+    before = history.read_bytes()
+    old_row = next(iter(study._read(history)["records"].values()))
+    assert old_row["study_delivery"]["entry"]["status"] == "API_ACCEPTED"
+
+    def capture(pre, identity):
+        opened = pre + 31
+        study.capture([{"policy": "PHYSICAL_ONLY_V3", "direction": "BUY",
+            "opportunity_signal_id": identity, "created_ts": opened, "open_ts": opened,
+            "pre_ts": pre, "confirm_ts": pre + 2, "confirm_model_seconds": 120,
+            "model_seconds": 120, "adjusted_seconds": 100, "buffer_distance": .0002}],
+            params=ctx["params"], buffer_mode="SMALL", strategy_version="3.0.0",
+            canonical_spec="V3_SCORELESS_OWNER_AMENDMENT_v1.1.0", now_ts=opened, cohort_revision=revision)
+        return opened
+
+    # The engine reaches a chain from the prior cohort before the telemetry
+    # worker has activated the new cohort. It cannot write to the old ledger.
+    cutover = capture(BASE + 9, "sig-v3-previous-policy")
+    active, archived = study._study_paths(study._path())[:2]
+    assert archived == history and history.read_bytes() == before
+    assert not active.exists()
+    assert study.summary(now_ts=cutover)["prospective_cohort"] == {"revision": revision, "starts_at": cutover}
+
+    monkeypatch.setattr(study, "_last_report", {})
+    monkeypatch.setattr(study, "_drained_historical", set())
+    startup = advance(cutover + 1, prospective_cohort_revision=revision)
+    assert startup["prospective_cohort"]["starts_at"] == cutover
+    assert startup["unique_entry_experiments"] == 0
+    assert "open_market_duration_diagnostic" in startup
+    new_open = capture(cutover + 2, "sig-v3-directional-flow")
+    quote(new_open, new_open + .2, 1.1)
+    advance(new_open + .3)
+    new_row = next(iter(study._read(active)["records"].values()))
+    assert new_row["policies"]["PHYSICAL_ONLY_V3"]["opportunity_signal_id"] == "sig-v3-directional-flow"
+    assert new_row["entry"]["provider_tick_ms"] == round((new_open + .2) * 1000)
+
+    historical_expiry = historical_entry + old_row["study_observation"]["horizon_seconds"]
+    quote(historical_expiry, historical_expiry + .25, 1.105)
+    advance(historical_expiry + .3)
+    settled = next(iter(study._read(history)["records"].values()))
+    assert settled["study_delivery"]["entry"] == old_row["study_delivery"]["entry"]
+    assert settled["study_delivery"]["result"]["status"] == "API_ACCEPTED"
+    assert settled["study_observation"]["outcome"] == "WIN"
+    report = study.summary(now_ts=historical_expiry + .3)
+    assert report["study_results_api_accepted"] == 0
+    assert report["historical_delivery_counts"]["study_results_api_accepted"] == 1
+
+
 @pytest.mark.parametrize("needed,seconds,blocked", [(8.50, 510, False), (8.60, 516, False), (8.63, 518, True)])
 def test_market_duration_uses_fresh_open_calculation_and_keeps_confirmed_plan(
     seconds_pipeline, needed, seconds, blocked

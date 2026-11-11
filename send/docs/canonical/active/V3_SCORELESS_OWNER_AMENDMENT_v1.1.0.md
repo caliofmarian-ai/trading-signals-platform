@@ -33,6 +33,24 @@ with a byte-identical backup; physical parameter values are preserved. Unknown
 history policies and scoring controls remain invalid. Rollback restores the saved
 pre-migration bundle together with the preceding code.
 
+## Opposing recent movement at CONFIRM and OPEN_NOW
+
+Owner correction, 2026-11-11. Evaluate net movement using the same 20 completed
+M1 close-to-close intervals and the existing recency weights 1–20. Favorable
+movement is `directional_effective_speed`. Opposing movement is
+`weighted_gross_speed - directional_effective_speed`. For BUY, price declines
+are opposing movement. For SELL, price increases are opposing movement.
+
+At CONFIRM and OPEN_NOW, reject through the existing physical eligibility path
+with `MARKET_DIRECTIONAL_FLOW_OPPOSED` when weighted opposing movement strictly
+exceeds weighted favorable movement. Equal movement is neutral. Existing
+evidence gates govern missing data and PRE eligibility. Rejection preserves the
+original signal direction. Buffer distance and duration are calculated under
+their existing contracts. The decision remains scoreless.
+
+Prospective validation of the new rule uses `V3_DIRECTIONAL_FLOW_GATE_V1`.
+Earlier observations retain their original cohort and can settle there.
+
 ## Continuity of operation and research
 
 The cloud feed collects independently of the Android phone's connection. Phone

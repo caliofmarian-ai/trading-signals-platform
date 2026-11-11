@@ -881,7 +881,8 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                     captured = physical_expiry_calibration.observe_accepted_chain(decision, persistent_fsm, params,
                         now_ts=time.time(), provider=market_client.configured_provider(), buffer_mode=buffer_mode,
                         market_evidence=evaluation.market.evidence,
-                        publish_study=not execution_time.available)
+                        publish_study=not execution_time.available,
+                        cohort_revision=physical_expiry_calibration.DIRECTIONAL_FLOW_COHORT_REVISION)
                     if captured:
                         fsm_runtime.save_state(state)
                 except Exception as calibration_exc:
