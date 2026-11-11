@@ -274,3 +274,67 @@ def test_reserve_requires_original_confirm_receipt_in_prospective_cohort(seconds
     _step(ctx, "PRE", 0)
     _step(ctx, "CONFIRM", 3, publish=False)
     assert "confirm_duration_reserve" not in _capture(ctx)
+
+
+@pytest.mark.parametrize("needed,seconds,blocked", [(8.50, 510, False), (8.60, 516, False), (8.63, 518, True)])
+def test_market_duration_uses_fresh_open_calculation_and_keeps_confirmed_plan(
+    seconds_pipeline, needed, seconds, blocked
+):
+    ctx = seconds_pipeline
+    study = ctx["study"]
+    samples = {}
+    lookups = []
+
+    def loader(symbol, target, delay):
+        lookups.append((target, delay))
+        return samples.get(target)
+
+    def advance(now, *, start=False):
+        ctx["clock"][0] = now + .1
+        study.advance(now_ts=now, active_provider="FINNHUB", price_loader=lambda _: None,
+                      precise_observation_loader=loader, start_prospective_cohort=start)
+        active = study._study_paths(study._path())[0]
+        return study._read(active)
+
+    def quote(timestamp, price):
+        return {**_sample(timestamp, price), "source": "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1",
+                "provider_tick_ms": round(timestamp * 1000), "received_ts": timestamp}
+
+    advance(BASE - 1, start=True)
+    _step(ctx, "PRE", 0)
+    _step(ctx, "CONFIRM", 3)
+    captured = _capture(ctx, needed=needed)
+    assert captured["study_observation"]["horizon_seconds"] == 516
+    assert captured["candidates"][0]["horizon_seconds"] == 600
+    assert captured["confirm_duration_reserve"]["horizon_seconds"] == 519
+    assert captured["open_market_duration"]["horizon_seconds"] == seconds
+
+    entry = BASE + 35.2
+    samples[BASE + 35] = quote(entry, 1.1)
+    advance(entry + .1)
+    assert len(ctx["photos"]) == (2 if blocked else 3)
+    target = entry + seconds
+    samples[target] = quote(target + 2.001, 1.105)
+    row = next(iter(advance(target + 3)["records"].values()))
+    assert row["open_market_duration"]["outcome"] == "PENDING"
+
+    # A favorable close can use part of B and still be a directional win.
+    distance = captured["buffer_snapshot"]["buffer_distance"]
+    close = 1.1 + distance * (.5 if blocked else 2)
+    samples[target] = quote(target + .25, close)
+    lookups.clear()
+    row = next(iter(advance(target + 4)["records"].values()))
+    assert lookups.count((target, 2)) == 1
+    assert row["open_market_duration"]["outcome"] == "WIN"
+    assert row["open_market_duration"]["quote"]["provider_tick_ms"] == round((target + .25) * 1000)
+    assert row["study_observation"]["outcome"] == (
+        "INFEASIBLE" if blocked else "WIN" if seconds == 516 else "PENDING")
+    assert row["candidates"][0]["outcome"] == "PENDING"
+    assert len(ctx["photos"]) == (2 if blocked else 4 if seconds == 516 else 3)
+    diagnostic = study.summary(now_ts=target + 4)["open_market_duration_diagnostic"]
+    assert diagnostic["observed_open_chains"] == diagnostic["market_duration_feasible"] == 1
+    assert diagnostic["confirmed_duration_blocked"] == int(blocked)
+    assert diagnostic["market_on_all_chains"]["wins"] == 1
+    assert diagnostic["market_on_all_chains"]["buffer_met"] == int(not blocked)
+    assert diagnostic["market_on_all_chains"]["win_buffer_not_met"] == int(blocked)
+    assert not diagnostic["publication_authority"] and not diagnostic["calibration_authority"]

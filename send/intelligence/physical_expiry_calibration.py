@@ -19,6 +19,7 @@ from core import confirmed_study_duration as second_duration
 from intelligence import shadow_model_time_research as quotes
 from intelligence import buffer_expiry_evidence as buffer_evidence
 from intelligence import expiry_price_estimate as expiry_estimate
+from intelligence.second_precision_duration import DurationCandidateUnavailable, prepare_candidate
 from core.market_history_policy import HISTORY_POLICY
 
 PROTOCOL = "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V5"
@@ -57,6 +58,8 @@ POST_MODEL_OFFSETS = (60, 180, 300)  # existing diagnostic checkpoints; never ex
 STUDY_DURATION_SOURCE = "CONFIRM_MODEL_TIME"
 CONFIRM_RESERVE_POLICY = "CONFIRMED_DURATION_PLUS_3_SECONDS_V1"
 CONFIRM_RESERVE_SECONDS = 3
+OPEN_MARKET_DURATION_POLICY = "FRESH_OPEN_MARKET_DURATION_V1"
+_SUPPLEMENTAL_OBSERVATIONS = ("study_observation", "confirm_duration_reserve", "open_market_duration")
 MAX_EXPIRY_ESTIMATES_PER_PASS = 8
 EXPIRY_ESTIMATE_ARRIVAL_GRACE_SECONDS = 15.0
 
@@ -162,8 +165,17 @@ def _reserve_study_horizon(row):
     return horizon, eligible
 
 
-def _capture_duration_reserve(row, plan):
-    """Bind a separate candidate before entry quote lookup."""
+def _open_market_study_horizon(row, scope):
+    limits = scope["model_limits_minutes"]
+    try:
+        return prepare_candidate(row["adjusted_seconds"] / 60,
+                                 minimum_minutes=limits["min"], maximum_minutes=limits["max"]).duration_seconds
+    except DurationCandidateUnavailable:
+        return None
+
+
+def _capture_duration_diagnostics(row, plan, scope, *, precise):
+    """Bind research horizons before entry quote lookup and after receipt validation."""
     from core import owner_signal_delivery as owner
 
     event = {"stage": "OPEN_NOW", "signal_id": plan["signal_id"],
@@ -175,6 +187,13 @@ def _capture_duration_reserve(row, plan):
         "policy": CONFIRM_RESERVE_POLICY, "horizon_seconds": horizon,
         "outcome": "PENDING" if eligible else "INFEASIBLE", "reason": None, "quote": None,
     }
+    if precise:
+        horizon = _open_market_study_horizon(row, scope)
+        row["open_market_duration"] = {
+            "policy": OPEN_MARKET_DURATION_POLICY, "horizon_seconds": horizon,
+            "outcome": "PENDING" if horizon is not None else "INFEASIBLE",
+            "reason": None, "quote": None,
+        }
 
 
 def _validate_duration_reserve(row, scope):
@@ -186,20 +205,37 @@ def _validate_duration_reserve(row, scope):
             or reserve["policy"] != CONFIRM_RESERVE_POLICY):
         raise ValueError("INVALID_CONFIRMED_DURATION_RESERVE")
     horizon, eligible = _reserve_study_horizon(row)
-    outcome, quote = reserve["outcome"], reserve["quote"]
-    if (reserve["horizon_seconds"] != horizon or (not eligible) != (outcome == "INFEASIBLE")
+    _validate_duration_diagnostic_label(row, reserve, horizon, eligible)
+
+
+def _validate_open_market_duration(row, scope, *, precise):
+    candidate = row["open_market_duration"]
+    if (not precise or "confirm_duration_reserve" not in row
+            or not isinstance(candidate, dict)
+            or set(candidate) != {"policy", "horizon_seconds", "outcome", "reason", "quote"}
+            or candidate["policy"] != OPEN_MARKET_DURATION_POLICY):
+        raise ValueError("INVALID_OPEN_MARKET_DURATION")
+    horizon = _open_market_study_horizon(row, scope)
+    _validate_duration_diagnostic_label(row, candidate, horizon, horizon is not None)
+
+
+def _validate_duration_diagnostic_label(row, candidate, horizon, eligible):
+    outcome, quote = candidate["outcome"], candidate["quote"]
+    if (candidate["horizon_seconds"] != horizon or (not eligible) != (outcome == "INFEASIBLE")
             or outcome not in {"PENDING", "INFEASIBLE", "UNKNOWN", "WIN", "LOSS", "DRAW"}):
-        raise ValueError("CHANGED_CONFIRMED_DURATION_RESERVE")
+        raise ValueError("CHANGED_STUDY_DURATION_DIAGNOSTIC")
     if outcome in {"WIN", "LOSS", "DRAW"}:
         entry = row["entry"]
+        if entry is None or not isinstance(quote, dict):
+            raise ValueError("INVALID_STUDY_DURATION_DIAGNOSTIC_LABEL")
         stamp = _number(quote.get("observed_ts"))
-        if (entry is None or _observed_quote(quote, stamp) != quote
+        if (_observed_quote(quote, stamp) != quote
                 or not entry["observed_ts"] + horizon <= stamp
                 <= entry["observed_ts"] + horizon + quotes.MAX_SAMPLE_DELAY_SECONDS
                 or quotes._classify(row["direction"], entry["price"], quote["price"]) != outcome):
-            raise ValueError("INVALID_CONFIRMED_DURATION_RESERVE_LABEL")
+            raise ValueError("INVALID_STUDY_DURATION_DIAGNOSTIC_LABEL")
     elif quote is not None:
-        raise ValueError("UNOBSERVED_CONFIRMED_DURATION_RESERVE_LABEL")
+        raise ValueError("UNOBSERVED_STUDY_DURATION_DIAGNOSTIC_LABEL")
 
 
 def _buffer_policy():
@@ -290,8 +326,7 @@ def _delivery_paths(path):
 def _pending_observations(row):
     return (row["state"] != "FINAL"
             or any(c["outcome"] == "PENDING" for c in row.get("post_model_observations", []))
-            or row.get("study_observation", {}).get("outcome") == "PENDING"
-            or row.get("confirm_duration_reserve", {}).get("outcome") == "PENDING")
+            or any(row.get(key, {}).get("outcome") == "PENDING" for key in _SUPPLEMENTAL_OBSERVATIONS))
 
 
 def _pending_delivery(row):
@@ -496,8 +531,10 @@ def validate(state):
                 raise ValueError("UNOBSERVED_CONFIRMED_STUDY_LABEL")
         if "confirm_duration_reserve" in row:
             _validate_duration_reserve(row, scope)
+        if "open_market_duration" in row:
+            _validate_open_market_duration(row, scope, precise=precise)
         observations = row["candidates"] + row.get("post_model_observations", [])
-        observations += [row[key] for key in ("study_observation", "confirm_duration_reserve")
+        observations += [row[key] for key in _SUPPLEMENTAL_OBSERVATIONS
                          if key in row]
         for quote in [row["entry"], *(item["quote"] for item in observations)]:
             if quote is not None and ("provider_tick_ms" in quote) != precise:
@@ -623,7 +660,7 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
                             duration_seconds=confirmed_seconds, duration_plan=deepcopy(plan))
                         second_duration.validate_observation(row, scope)
                         if cohort is not None and "decision_snapshot" in row:
-                            _capture_duration_reserve(row, plan)
+                            _capture_duration_diagnostics(row, plan, scope, precise=precise)
             state["records"][identity] = row
         _save(path, state)
 
@@ -730,8 +767,9 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                     elif now > row["created_ts"] + quotes.MAX_ENTRY_DELAY_SECONDS + arrival_grace:
                         reason = "ENTRY_OBSERVATION_MISSING"
                 observations = row["candidates"] + row.get("post_model_observations", [])
-                observations += [row[key] for key in ("study_observation", "confirm_duration_reserve")
+                observations += [row[key] for key in _SUPPLEMENTAL_OBSERVATIONS
                                  if key in row]
+                expiry_quotes = {}
                 for candidate in observations:
                     if candidate["outcome"] != "PENDING":
                         continue
@@ -740,8 +778,10 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                         changed = True
                     elif row["entry"] is not None:
                         target = row["entry"]["observed_ts"] + candidate["horizon_seconds"]
-                        expiry_quote = _window_quote(observation_loader, sample, target,
-                                                    quotes.MAX_SAMPLE_DELAY_SECONDS, now, precise=precise)
+                        if target not in expiry_quotes:
+                            expiry_quotes[target] = _window_quote(observation_loader, sample, target,
+                                quotes.MAX_SAMPLE_DELAY_SECONDS, now, precise=precise)
+                        expiry_quote = expiry_quotes[target]
                         if expiry_quote:
                             candidate.update(quote=expiry_quote, outcome=quotes._classify(row["direction"], row["entry"]["price"], expiry_quote["price"]), reason="OBSERVED_PAIRED_EXPIRY")
                             changed = True
@@ -820,6 +860,15 @@ def _training_blockers(counts, training_complete):
     return blockers
 
 
+def _duration_diagnostic_counts(records, key):
+    result = _counts([{**row, "candidates": [row[key]]} for row in records], 0)
+    return {field: result[field] for field in (
+        "wins", "losses", "draws", "unknown", "infeasible",
+        "buffer_met", "buffer_not_met", "buffer_unavailable",
+        "win_buffer_met", "win_buffer_not_met", "win_buffer_unavailable",
+    )}
+
+
 def _duration_reserve_report(records):
     rows = [row for row in records if "confirm_duration_reserve" in row]
     rescued = [row for row in rows if row["study_observation"]["outcome"] == "INFEASIBLE"
@@ -828,13 +877,6 @@ def _duration_reserve_report(records):
     paired = [row for row in rows if row["study_observation"]["outcome"] in observed
               and row["confirm_duration_reserve"]["outcome"] in observed]
 
-    def counts(group, key):
-        result = _counts([{**row, "candidates": [row[key]]} for row in group], 0)
-        return {key: result[key] for key in (
-            "wins", "losses", "draws", "unknown", "infeasible",
-            "buffer_met", "buffer_not_met", "buffer_unavailable",
-        )}
-
     return {
         "policy": CONFIRM_RESERVE_POLICY, "reserve_seconds": CONFIRM_RESERVE_SECONDS,
         "observed_open_chains": len(rows),
@@ -842,11 +884,36 @@ def _duration_reserve_report(records):
         "reserve_duration_passed": sum(row["confirm_duration_reserve"]["outcome"] != "INFEASIBLE" for row in rows),
         "duration_gate_rescues": len(rescued),
         "reserve_pending": sum(row["confirm_duration_reserve"]["outcome"] == "PENDING" for row in rows),
-        "reserve_on_all_chains": counts(rows, "confirm_duration_reserve"),
-        "reserve_on_rescued_chains": counts(rescued, "confirm_duration_reserve"),
+        "reserve_on_all_chains": _duration_diagnostic_counts(rows, "confirm_duration_reserve"),
+        "reserve_on_rescued_chains": _duration_diagnostic_counts(rescued, "confirm_duration_reserve"),
         "paired_real_quote_count": len(paired),
-        "confirmed_on_paired": counts(paired, "study_observation"),
-        "reserve_on_paired": counts(paired, "confirm_duration_reserve"),
+        "confirmed_on_paired": _duration_diagnostic_counts(paired, "study_observation"),
+        "reserve_on_paired": _duration_diagnostic_counts(paired, "confirm_duration_reserve"),
+        "publication_authority": False, "calibration_authority": False,
+    }
+
+
+def _open_market_duration_report(records):
+    rows = [row for row in records if "open_market_duration" in row]
+    eligible = [row for row in rows if row["open_market_duration"]["outcome"] != "INFEASIBLE"]
+    blocked = [row for row in eligible if row["study_observation"]["outcome"] == "INFEASIBLE"]
+    observed = {"WIN", "LOSS", "DRAW"}
+    paired = [row for row in eligible if row["study_observation"]["outcome"] in observed
+              and row["open_market_duration"]["outcome"] in observed]
+    changes = [row["open_market_duration"]["horizon_seconds"] - row["study_observation"]["horizon_seconds"]
+               for row in eligible]
+    return {
+        "policy": OPEN_MARKET_DURATION_POLICY, "observed_open_chains": len(rows),
+        "market_duration_feasible": len(eligible), "confirmed_duration_blocked": len(blocked),
+        "market_duration_pending": sum(row["open_market_duration"]["outcome"] == "PENDING" for row in rows),
+        "shorter_than_confirmed": sum(change < 0 for change in changes),
+        "equal_to_confirmed": sum(change == 0 for change in changes),
+        "longer_than_confirmed": sum(change > 0 for change in changes),
+        "market_on_all_chains": _duration_diagnostic_counts(rows, "open_market_duration"),
+        "market_on_confirmed_duration_blocked": _duration_diagnostic_counts(blocked, "open_market_duration"),
+        "paired_real_quote_count": len(paired),
+        "confirmed_on_paired": _duration_diagnostic_counts(paired, "study_observation"),
+        "market_on_paired": _duration_diagnostic_counts(paired, "open_market_duration"),
         "publication_authority": False, "calibration_authority": False,
     }
 
@@ -889,8 +956,11 @@ def analyze(state, *, now_ts):
         return report
     validate(state)
     records = list(state["records"].values())
-    if "prospective_cohort" in state["scope"]:
+    cohort = state["scope"].get("prospective_cohort")
+    if cohort is not None:
         report["confirm_duration_reserve_diagnostic"] = _duration_reserve_report(records)
+        if cohort["revision"] == PRECISE_COHORT_REVISION:
+            report["open_market_duration_diagnostic"] = _open_market_duration_report(records)
     from intelligence.same_symbol_sequences import summarize
     report["same_symbol_10min_sequences"] = summarize(records)
     report.update(scope=state["scope"], unique_entry_experiments=len(records),
@@ -1042,6 +1112,8 @@ def analyze(state, *, now_ts):
 def _report_cohort(report, cohort):
     report["prospective_cohort"] = cohort
     precise = cohort["revision"] == PRECISE_COHORT_REVISION
+    if precise and "open_market_duration_diagnostic" not in report:
+        report["open_market_duration_diagnostic"] = _open_market_duration_report([])
     report["buffered_quote_collection"]["prospective_recovery_policy"] = (
         _quote_recovery_policy(precise=precise)["policy"])
 
