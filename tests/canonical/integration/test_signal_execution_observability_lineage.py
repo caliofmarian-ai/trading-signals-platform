@@ -107,7 +107,8 @@ def test_real_run_once_logging_cannot_abort_before_governed_distribution(
     monkeypatch.setattr(engine.fsm_runtime, "load_state", lambda: state)
     monkeypatch.setattr(engine.fsm_runtime, "reconcile_state", lambda state, *a, **k: (state, []))
     monkeypatch.setattr(engine.fsm_runtime, "save_state", lambda state: None)
-    monkeypatch.setattr(market_client, "get_candles", lambda *a, **k: [{"test": True}])
+    monkeypatch.setattr(market_client, "get_finnhub_decision_candles",
+                        lambda symbol: ([{"test": True}], [{"test": True}], NOW))
     monkeypatch.setattr(engine.candle_adapter, "normalize", lambda raw, **kwargs: raw)
     monkeypatch.setattr(engine.candle_adapter, "validate", lambda candles: None)
     monkeypatch.setattr(engine, "decide", lambda **kwargs: evaluation)

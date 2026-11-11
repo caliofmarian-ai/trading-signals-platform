@@ -769,8 +769,13 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
             )
 
             symbol_in_focus = symbol in focus_symbols
-            raw_m1 = get_candles(symbol, "1min", prefer_live=symbol_in_focus)
-            raw_m5 = get_candles(symbol, "5min", prefer_live=symbol_in_focus)
+            observation_ts = now_ts
+            if (params.get("decision_policy") == "PHYSICAL_ONLY_V3"
+                    and market_client.configured_provider() == "FINNHUB"):
+                raw_m1, raw_m5, observation_ts = market_client.get_finnhub_decision_candles(symbol)
+            else:
+                raw_m1 = get_candles(symbol, "1min", prefer_live=symbol_in_focus)
+                raw_m5 = get_candles(symbol, "5min", prefer_live=symbol_in_focus)
 
             candles_m1 = candle_adapter.normalize(raw_m1, symbol=symbol, timeframe="M1")
             candles_m5 = candle_adapter.normalize(raw_m5, symbol=symbol, timeframe="M5")
@@ -800,7 +805,7 @@ def run_once(now_ts=None, forced_symbols=None, forced_focus_context=None, schedu
                 want_open_now=bool(symbol_in_focus),
                 context=physical_context,
                 execution_calibration=execution_calibration,
-                observation_ts=now_ts,
+                observation_ts=observation_ts,
             )
             decision = evaluation.decision
 

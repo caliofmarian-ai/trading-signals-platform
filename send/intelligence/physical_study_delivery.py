@@ -379,22 +379,26 @@ def dispatch(*, now_ts, active_provider):
             reply_id = entry_receipt["message_id"] if entry_receipt.get("destination_id") == destination else None
             if photo is not None and len(text.encode("utf-16-le")) // 2 > 1024:
                 photo = None  # Full evidence remains available in the text result.
-            if photo is not None:
-                receipt["format"] = "PHOTO"
-                response = telegram_publisher.send_photo(chat_id=destination, photo=photo, caption=text,
-                    reply_to_message_id=reply_id)
-            elif reply_id is not None:
-                response = telegram_publisher.send_message(chat_id=destination, text=text, reply_to_message_id=reply_id)
+            # Reservation precedes rendering, which can outlast the entry window.
+            if phase == "entry" and time.time() - row["created_ts"] > study.quotes.MAX_ENTRY_DELAY_SECONDS:
+                receipt["status"] = "SKIPPED_STALE"
             else:
-                response = telegram_publisher.send_message(chat_id=destination, text=text)
-            message_id = (response.get("result") or {}).get("message_id")
-            accepted_ts = time.time()
-            if (response.get("ok") is True and type(message_id) is int and message_id > 0
-                and accepted_ts >= now_ts):
-                receipt.update(status="API_ACCEPTED", message_id=message_id,
-                               api_accepted_ts=accepted_ts)
-            elif response.get("ok") is False:
-                receipt["status"] = "FAILED"
+                if photo is not None:
+                    receipt["format"] = "PHOTO"
+                    response = telegram_publisher.send_photo(chat_id=destination, photo=photo, caption=text,
+                        reply_to_message_id=reply_id)
+                elif reply_id is not None:
+                    response = telegram_publisher.send_message(chat_id=destination, text=text, reply_to_message_id=reply_id)
+                else:
+                    response = telegram_publisher.send_message(chat_id=destination, text=text)
+                message_id = (response.get("result") or {}).get("message_id")
+                accepted_ts = time.time()
+                if (response.get("ok") is True and type(message_id) is int and message_id > 0
+                    and accepted_ts >= now_ts):
+                    receipt.update(status="API_ACCEPTED", message_id=message_id,
+                                   api_accepted_ts=accepted_ts)
+                elif response.get("ok") is False:
+                    receipt["status"] = "FAILED"
         except telegram_publisher.TelegramAPIError:
             receipt["status"] = "FAILED"
         except Exception:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import threading
 
 import pytest
 
@@ -70,6 +71,46 @@ def test_short_history_still_blocks_the_required_timeframe(tmp_path, monkeypatch
     assert feed.health()["history_ready"] is False
     with pytest.raises(module.FinnhubInsufficientHistory, match=missing):
         feed.get_candles("EUR/USD", code)
+    with pytest.raises(module.FinnhubInsufficientHistory, match=missing):
+        feed.get_decision_candles("EUR/USD")
+
+
+def test_decision_snapshot_uses_one_ingestion_generation(tmp_path, monkeypatch):
+    module, feed = _feed(tmp_path, monkeypatch)
+    original_price = feed._candles["M1"][0]["close"]
+    updated_price = 1.121
+    clock = [NOW + 1.25]
+    feed.clock = lambda: clock[0]
+    ready = threading.Event()
+    attempted = threading.Event()
+    updated = threading.Event()
+    original_inspect = module.inspect_history
+
+    def update():
+        if ready.wait(2):
+            attempted.set()
+            feed.ingest_message({"type": "trade", "data": [
+                {"s": "OANDA:EUR_USD", "t": (NOW + 1) * 1000, "p": updated_price},
+            ]})
+            updated.set()
+
+    def inspect(candles):
+        if not ready.is_set():
+            ready.set()
+            assert attempted.wait(2)
+            assert not updated.wait(.1)
+        return original_inspect(candles)
+
+    monkeypatch.setattr(module, "inspect_history", inspect)
+    thread = threading.Thread(target=update, daemon=True)
+    thread.start()
+    m1, m5, observed_at = feed.get_decision_candles("EUR/USD")
+    assert m1[0]["close"] == m5[0]["close"] == original_price
+    assert observed_at == NOW + 1.25
+    assert updated.wait(2)
+    thread.join(2)
+    m1, m5, observed_at = feed.get_decision_candles("EUR/USD")
+    assert m1[0]["close"] == m5[0]["close"] == updated_price
 
 
 def test_all_available_contiguous_m1_bars_are_used_without_crossing_a_gap(tmp_path, monkeypatch):

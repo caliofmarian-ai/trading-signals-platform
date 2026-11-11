@@ -590,8 +590,34 @@ from intelligence.execution_expiry_calibration import _wilson, _counts, _quantil
 
 
 def _compact(report):
-    return {**report, "policies":[{k:v for k,v in row.items() if k not in {"train_candidates", "proposal_only", "buffer_expiry_observations"}}
-                                for row in report["policies"]]}
+    fields = ("pressure_bias", "blocking_gates", "decisive", "wins", "losses", "draws", "unknown",
+              "unknown_fraction", "unknown_reasons", "infeasible", "buffer_sample",
+              "buffer_unavailable", "buffer_unknown_fraction", "buffer_met",
+              "buffer_not_met", "buffer_wilson_95_lower")
+    policies = []
+    for row in report["policies"]:
+        compact_row = {key: value for key, value in row.items()
+                       if key not in {"train_candidates", "proposal_only", "buffer_expiry_observations"}}
+        compact_row["training_candidate_quality"] = [
+            {key: candidate[key] for key in fields} for candidate in row["train_candidates"]
+        ]
+        policies.append(compact_row)
+    return {**report, "policies": policies}
+
+
+def _training_blockers(counts, training_complete):
+    if not training_complete:
+        return ["TRAINING_LOT_INCOMPLETE"]
+    blockers = []
+    if counts["decisive"] < MIN_TRAIN:
+        blockers.append("DIRECTION_DECISIVE_COUNT_BELOW_MINIMUM")
+    if counts["unknown_fraction"] is not None and counts["unknown_fraction"] > MAX_UNKNOWN_FRACTION:
+        blockers.append("DIRECTION_UNKNOWN_FRACTION_ABOVE_MAXIMUM")
+    if counts["buffer_sample"] < MIN_TRAIN:
+        blockers.append("BUFFER_KNOWN_COUNT_BELOW_MINIMUM")
+    if counts["buffer_unknown_fraction"] is not None and counts["buffer_unknown_fraction"] > MAX_UNKNOWN_FRACTION:
+        blockers.append("BUFFER_UNKNOWN_FRACTION_ABOVE_MAXIMUM")
+    return blockers
 
 
 def analyze(state, *, now_ts):
@@ -701,9 +727,8 @@ def analyze(state, *, now_ts):
         train, holdout = independent[:TRAIN_ENTRIES], independent[TRAIN_ENTRIES:TRAIN_ENTRIES+HOLDOUT_ENTRIES]
         train_counts = [_counts(train,i) for i in range(len(BIASES))]
         training_complete = len(train) == TRAIN_ENTRIES and all(r["state"] == "FINAL" for r in train)
-        eligible = [i for i,c in enumerate(train_counts) if training_complete and c["decisive"] >= MIN_TRAIN
-                    and c["unknown_fraction"] <= MAX_UNKNOWN_FRACTION and c["buffer_sample"] >= MIN_TRAIN
-                    and c["buffer_unknown_fraction"] <= MAX_UNKNOWN_FRACTION]
+        train_blockers = [_training_blockers(counts, training_complete) for counts in train_counts]
+        eligible = [i for i, blockers in enumerate(train_blockers) if not blockers]
         selected = max(eligible,key=lambda i:(train_counts[i]["buffer_wilson_95_lower"],-BIASES[i])) if eligible else None
         validation = _counts(holdout,selected) if selected is not None else None
         if validation is not None:
@@ -755,7 +780,8 @@ def analyze(state, *, now_ts):
         row_summary = {"policy":policy, "unique_entries":len(rows), "prospective_buffer_entries":len(buffer_rows),
                        "legacy_directional_only_entries":len(rows)-len(buffer_rows), "nonoverlapping_entries":len(independent),
                        "train_entries":len(train), "holdout_entries":len(holdout),
-                       "train_candidates":[{"pressure_bias":b,**c} for b,c in zip(BIASES,train_counts)],
+                       "train_candidates": [{"pressure_bias": bias, "blocking_gates": blockers, **counts}
+                                            for bias, blockers, counts in zip(BIASES, train_blockers, train_counts)],
                        "buffer_expiry_observations":[{"pressure_bias":b,**_counts(rows,i)} for i,b in enumerate(BIASES)],
                        "training_selected_bias":BIASES[selected] if selected is not None else None,
                        "holdout_confirm_interval_violations":violations,

@@ -386,82 +386,65 @@ def get_finnhub_study_chart_evidence(entry_ts, expiry_ts):
     return feed.get_study_chart_evidence(entry_ts, expiry_ts)
 
 
-def get_candles(symbol: str, timeframe: str, *, prefer_live: bool = False):
-    """
-    Provider-independent wrapper used by the engine.
-    """
-    if configured_provider() == "FINNHUB":
-        feed = _finnhub_feed()
-        try:
-            candles = feed.get_candles(symbol, timeframe)
-        except Exception as exc:
-            health = feed.health()
-            collecting = exc.__class__.__name__ == "FinnhubInsufficientHistory"
-            runtime_status.update_status(
-                market_data_state=(
-                    "MARKET_DATA_COLLECTING" if collecting else "MARKET_DATA_UNAVAILABLE"
-                ),
-                market_data_note=str(exc),
-                market_data_provider="FINNHUB",
-                market_data_symbol=health["symbol"],
-                last_market_data_success_ts=health["last_price_ts"],
-                market_data_age_seconds=health["price_age_seconds"],
-                market_data_freshness_limit_seconds=health["freshness_limit_seconds"],
-                market_data_candle_counts=health["candle_counts"],
-                market_data_minimum_candles=health["minimum_candles"],
-                **_history_status_evidence(health),
-                market_data_history_ready=health["history_ready"],
-                # A successful WebSocket connect is not evidence of a real FX tick.
-                market_data_stream_state=health.get("stream_state"),
-                market_data_subscription_state=health.get("subscription_state"),
-                market_data_stream_connection_attempts=health.get("stream_connection_attempts"),
-                market_data_stream_failure_count=health.get("stream_failure_count"),
-                market_data_stream_last_failure_class=health.get("stream_last_failure_class"),
-                market_data_valid_trade_tick_count=health.get("valid_trade_tick_count"),
-                market_data_last_stream_connected_ts=health.get("last_stream_connected_ts"),
-                market_data_persistence_state=health.get("persistence_state"),
-                market_data_store_load_state=health.get("store_load_state"),
-                market_data_store_write_state=health.get("store_write_state"),
-                market_data_restored_candle_counts=health.get("restored_candle_counts"),
-                market_data_last_persisted_ts=health.get("last_persisted_ts"),
-                market_data_integrity_state=health.get("integrity_state"),
-                market_data_integrity_report=health.get("integrity_report"),
-            )
-            raise MarketDataUnavailableError(str(exc)) from exc
+def _update_finnhub_status(health, *, state, note):
+    runtime_status.update_status(
+        market_data_state=state,
+        market_data_note=note,
+        market_data_provider="FINNHUB",
+        market_data_symbol=health["symbol"],
+        last_market_data_success_ts=health["last_price_ts"],
+        market_data_age_seconds=health["price_age_seconds"],
+        market_data_freshness_limit_seconds=health["freshness_limit_seconds"],
+        market_data_candle_counts=health["candle_counts"],
+        market_data_minimum_candles=health["minimum_candles"],
+        **_history_status_evidence(health),
+        market_data_history_ready=health["history_ready"],
+        market_data_stream_state=health.get("stream_state"),
+        market_data_subscription_state=health.get("subscription_state"),
+        market_data_stream_connection_attempts=health.get("stream_connection_attempts"),
+        market_data_stream_failure_count=health.get("stream_failure_count"),
+        market_data_stream_last_failure_class=health.get("stream_last_failure_class"),
+        market_data_valid_trade_tick_count=health.get("valid_trade_tick_count"),
+        market_data_last_stream_connected_ts=health.get("last_stream_connected_ts"),
+        market_data_persistence_state=health.get("persistence_state"),
+        market_data_store_load_state=health.get("store_load_state"),
+        market_data_store_write_state=health.get("store_write_state"),
+        market_data_restored_candle_counts=health.get("restored_candle_counts"),
+        market_data_last_persisted_ts=health.get("last_persisted_ts"),
+        market_data_integrity_state=health.get("integrity_state"),
+        market_data_integrity_report=health.get("integrity_report"),
+    )
 
-        health = feed.health()
-        counts = health["candle_counts"]
-        runtime_status.update_status(
-            market_data_state="READY",
-            market_data_note=(
-                "Finnhub live EUR/USD ready; "
-                f"real candles M1={counts['M1']}, M5={counts['M5']}"
-            ),
-            market_data_provider="FINNHUB",
-            market_data_symbol=health["symbol"],
-            last_market_data_success_ts=health["last_price_ts"],
-            market_data_age_seconds=health["price_age_seconds"],
-            market_data_freshness_limit_seconds=health["freshness_limit_seconds"],
-            market_data_candle_counts=health["candle_counts"],
-            market_data_minimum_candles=health["minimum_candles"],
-            **_history_status_evidence(health),
-            market_data_history_ready=health["history_ready"],
-            market_data_stream_state=health.get("stream_state"),
-            market_data_subscription_state=health.get("subscription_state"),
-            market_data_stream_connection_attempts=health.get("stream_connection_attempts"),
-            market_data_stream_failure_count=health.get("stream_failure_count"),
-            market_data_stream_last_failure_class=health.get("stream_last_failure_class"),
-            market_data_valid_trade_tick_count=health.get("valid_trade_tick_count"),
-            market_data_last_stream_connected_ts=health.get("last_stream_connected_ts"),
-            market_data_persistence_state=health.get("persistence_state"),
-            market_data_store_load_state=health.get("store_load_state"),
-            market_data_store_write_state=health.get("store_write_state"),
-            market_data_restored_candle_counts=health.get("restored_candle_counts"),
-            market_data_last_persisted_ts=health.get("last_persisted_ts"),
-            market_data_integrity_state=health.get("integrity_state"),
-            market_data_integrity_report=health.get("integrity_report"),
-        )
-        return candles
+
+def _read_finnhub_candles(load_candles):
+    feed = _finnhub_feed()
+    try:
+        candles = load_candles(feed)
+    except Exception as exc:
+        collecting = exc.__class__.__name__ == "FinnhubInsufficientHistory"
+        _update_finnhub_status(feed.health(),
+            state="MARKET_DATA_COLLECTING" if collecting else "MARKET_DATA_UNAVAILABLE",
+            note=str(exc))
+        raise MarketDataUnavailableError(str(exc)) from exc
+
+    health = feed.health()
+    counts = health["candle_counts"]
+    _update_finnhub_status(health, state="READY", note=(
+        "Finnhub live EUR/USD ready; "
+        f"real candles M1={counts['M1']}, M5={counts['M5']}"
+    ))
+    return candles
+
+
+def get_finnhub_decision_candles(symbol: str):
+    """Return a coherent M1/M5 snapshot for a Finnhub strategy evaluation."""
+    return _read_finnhub_candles(lambda feed: feed.get_decision_candles(symbol))
+
+
+def get_candles(symbol: str, timeframe: str, *, prefer_live: bool = False):
+    """Provider-independent single-timeframe access."""
+    if configured_provider() == "FINNHUB":
+        return _read_finnhub_candles(lambda feed: feed.get_candles(symbol, timeframe))
 
     requested_symbol = str(symbol).strip().upper().replace("_", "/")
     if not (_twelve_data_streaming_enabled() and prefer_live):

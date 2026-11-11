@@ -259,7 +259,8 @@ def test_runtime_wires_source_preserves_evaluation_and_existing_publication_bloc
     monkeypatch.setattr(engine.fsm_runtime, "load_state", lambda: pre.next_state)
     monkeypatch.setattr(engine.fsm_runtime, "reconcile_state", lambda state, *a, **k: (state, []))
     monkeypatch.setattr(engine.fsm_runtime, "save_state", lambda state: None)
-    monkeypatch.setattr("runtime.market_client.get_candles", lambda *a, **k: [{"test": True}])
+    monkeypatch.setattr("runtime.market_client.get_finnhub_decision_candles",
+                        lambda symbol: ([{"test": True}], [{"test": True}], NOW))
     monkeypatch.setattr(engine.candle_adapter, "normalize", lambda raw, **kwargs: raw)
     monkeypatch.setattr(engine.candle_adapter, "validate", lambda candles: None)
     monkeypatch.setattr(engine, "_log_decision_evaluated", lambda *a: None)
