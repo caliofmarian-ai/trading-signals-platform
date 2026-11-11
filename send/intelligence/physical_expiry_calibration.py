@@ -369,7 +369,7 @@ def validate(state):
     seen_opportunities = set()
     for identity, row in state["records"].items():
         recovery = row.get("quote_recovery_policy")
-        if (precise or recovery is not None) and recovery != _quote_recovery_policy(precise=precise):
+        if (precise or "quote_recovery_policy" in row) and recovery != _quote_recovery_policy(precise=precise):
             raise ValueError("INVALID_QUOTE_RECOVERY_POLICY")
         if (not isinstance(identity, str) or len(identity) != 64 or row.get("direction") not in {"BUY", "SELL"}
             or row.get("state") not in {"WAITING_ENTRY", "OBSERVING", "FINAL"}
