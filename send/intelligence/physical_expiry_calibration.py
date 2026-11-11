@@ -38,6 +38,12 @@ VALIDATION_Z = NormalDist().inv_cdf(1 - 0.05 / 2)
 REPORT_SECONDS = 60
 COHORT_REVISION = "V3_EXACT_DIRECTIONAL_ROOM_V1"
 COHORT_FILE = "exact_directional_room_v1_state.json"
+PRECISE_COHORT_REVISION = "V3_EXACT_PROVIDER_MILLISECONDS_V1"
+PRECISE_COHORT_FILE = "exact_provider_milliseconds_v1_state.json"
+_COHORT_PATHS = {
+    PRECISE_COHORT_REVISION: (PRECISE_COHORT_FILE, "exact_provider_milliseconds_v1_cutover.json"),
+    COHORT_REVISION: (COHORT_FILE, "exact_directional_room_v1_cutover.json"),
+}
 # Allow a delayed retained tick to arrive without extending its source-time window.
 # Post-isolation production evidence includes receive delays of 7.366 seconds.
 # This prospectively frozen allowance addresses receipt latency, not source gaps.
@@ -55,8 +61,8 @@ MAX_EXPIRY_ESTIMATES_PER_PASS = 8
 EXPIRY_ESTIMATE_ARRIVAL_GRACE_SECONDS = 15.0
 
 
-def _quote_recovery_policy():
-    return {"policy": QUOTE_RECOVERY_POLICY,
+def _quote_recovery_policy(*, precise=False):
+    return {"policy": ("RETAINED_SOURCE_QUOTE_MILLISECONDS_V1" if precise else QUOTE_RECOVERY_POLICY),
             "arrival_grace_seconds": BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS,
             "expiry_window_seconds": quotes.MAX_SAMPLE_DELAY_SECONDS,
             "entry_window_seconds": quotes.MAX_ENTRY_DELAY_SECONDS}
@@ -230,43 +236,51 @@ def _path():
     return path
 
 
-def _cohort_marker(path):
-    marker = path.with_name("exact_directional_room_v1_cutover.json")
+def _cohort_marker(path, revision):
+    marker = path.with_name(_COHORT_PATHS[revision][1])
     if marker.is_symlink():
         raise ValueError("INVALID_CALIBRATION_COHORT_PATH")
     return marker
 
 
-def _cohort(path):
-    marker = _cohort_marker(path)
+def _cohort(path, revision):
+    marker = _cohort_marker(path, revision)
     if not marker.exists():
         return None
     with marker.open("rb") as stream:
         payload = json.loads(stream.read(512))
     if (not isinstance(payload, dict) or set(payload) != {"revision", "starts_at"}
-        or payload["revision"] != COHORT_REVISION):
+        or payload["revision"] != revision):
         raise ValueError("INVALID_CALIBRATION_COHORT")
     _number(payload["starts_at"])
     return payload
 
 
-def _activate_cohort(path, now):
-    # Cutover is written before any new cohort capture and survives redeploys.
-    if _cohort(path) is not None:
+def _activate_cohort(path, now, revision=COHORT_REVISION):
+    # A durable boundary is written before any new chain can be captured.
+    if _cohort(path, revision) is not None:
         return
     with storage.with_lock("physical_v3_expiry_calibration", timeout_sec=0.2):
-        if _cohort(path) is None:
-            storage.save_json_atomic(str(_cohort_marker(path)),
-                                     {"revision": COHORT_REVISION, "starts_at": now})
+        if _cohort(path, revision) is None:
+            storage.save_json_atomic(str(_cohort_marker(path, revision)),
+                                     {"revision": revision, "starts_at": now})
+
+
+def _study_ledgers(path):
+    ledgers = []
+    for revision, (filename, _) in _COHORT_PATHS.items():
+        cohort = _cohort(path, revision)
+        if cohort is None:
+            continue
+        ledger = path.with_name(filename)
+        if ledger.is_symlink():
+            raise ValueError("INVALID_CALIBRATION_COHORT_PATH")
+        ledgers.append((ledger, cohort))
+    return (*ledgers, (path, None))
 
 
 def _study_paths(path):
-    if _cohort(path) is None:
-        return (path,)
-    prospective = path.with_name(COHORT_FILE)
-    if prospective.is_symlink():
-        raise ValueError("INVALID_CALIBRATION_COHORT_PATH")
-    return prospective, path
+    return tuple(ledger for ledger, _ in _study_ledgers(path))
 
 
 def _delivery_paths(path):
@@ -348,12 +362,14 @@ def validate(state):
     cohort = scope.get("prospective_cohort")
     if cohort is not None:
         if (not isinstance(cohort, dict) or set(cohort) != {"revision", "starts_at"}
-            or cohort["revision"] != COHORT_REVISION):
+            or cohort["revision"] not in _COHORT_PATHS):
             raise ValueError("INVALID_CALIBRATION_COHORT")
         _number(cohort["starts_at"])
+    precise = (cohort or {}).get("revision") == PRECISE_COHORT_REVISION
     seen_opportunities = set()
     for identity, row in state["records"].items():
-        if "quote_recovery_policy" in row and row["quote_recovery_policy"] != _quote_recovery_policy():
+        recovery = row.get("quote_recovery_policy")
+        if (precise or recovery is not None) and recovery != _quote_recovery_policy(precise=precise):
             raise ValueError("INVALID_QUOTE_RECOVERY_POLICY")
         if (not isinstance(identity, str) or len(identity) != 64 or row.get("direction") not in {"BUY", "SELL"}
             or row.get("state") not in {"WAITING_ENTRY", "OBSERVING", "FINAL"}
@@ -480,6 +496,12 @@ def validate(state):
                 raise ValueError("UNOBSERVED_CONFIRMED_STUDY_LABEL")
         if "confirm_duration_reserve" in row:
             _validate_duration_reserve(row, scope)
+        observations = row["candidates"] + row.get("post_model_observations", [])
+        observations += [row[key] for key in ("study_observation", "confirm_duration_reserve")
+                         if key in row]
+        for quote in [row["entry"], *(item["quote"] for item in observations)]:
+            if quote is not None and ("provider_tick_ms" in quote) != precise:
+                raise ValueError("QUOTE_SOURCE_TIME_POLICY_MISMATCH")
         from intelligence.physical_study_delivery import validate_delivery
         validate_delivery(row)
         if "expiry_price_estimate" in row:
@@ -507,12 +529,12 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
              "parameter_sha256": algo_params_sha256(params), "strategy_version": strategy_version,
              "canonical_spec": canonical_spec, "model_limits_minutes": params["expiry_limits_minutes"]}
     with storage.with_lock("physical_v3_expiry_calibration", timeout_sec=0.2):
-        cohort = _cohort(path)
+        path, cohort = _study_ledgers(path)[0]
+        precise = (cohort or {}).get("revision") == PRECISE_COHORT_REVISION
         if cohort is not None:
             entries = [item for item in entries if _number(item["pre_ts"]) >= cohort["starts_at"]]
             if not entries:
                 return
-            path = _study_paths(path)[0]
             scope["prospective_cohort"] = cohort
         state = _read(path) or {"protocol": PROTOCOL, "bias_grid": list(BIASES), "scope": scope,
                                "started_ts": now, "records": {}, "capacity_rejections": 0}
@@ -561,7 +583,7 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
                 state["capacity_rejections"] += 1
                 continue
             row.update(policies={policy: context}, state="WAITING_ENTRY", entry=None,
-                       quote_recovery_policy=_quote_recovery_policy(),
+                       quote_recovery_policy=_quote_recovery_policy(precise=precise),
                        buffer_snapshot=frozen, buffer_snapshot_sha256=_digest(frozen),
                        candidates=[{"bias": bias, "horizon_seconds": row["model_seconds"] * (1 - bias),
                                     "outcome": "INFEASIBLE" if row["model_seconds"] * (1 - bias) < row["adjusted_seconds"] else "PENDING",
@@ -619,12 +641,22 @@ def _observed_quote(raw, now):
             return None
         if stamp > now:
             return None
-        return {"provider": "FINNHUB", "symbol": "EUR/USD", "price": price,
-                "observed_ts": stamp, "source": raw["source"]}
+        sample = {"provider": "FINNHUB", "symbol": "EUR/USD", "price": price,
+                  "observed_ts": stamp, "source": raw["source"]}
+        if "provider_tick_ms" in raw or "received_ts" in raw:
+            tick_ms = raw.get("provider_tick_ms")
+            if type(tick_ms) is not int or tick_ms <= 0 or tick_ms / 1000 != stamp:
+                return None
+            try:
+                received = _number(raw.get("received_ts"))
+            except ValueError:
+                return None
+            sample.update(provider_tick_ms=tick_ms, received_ts=received)
+        return sample
     return quotes._sample(raw, now)
 
 
-def _window_quote(loader, latest, target, delay, now):
+def _window_quote(loader, latest, target, delay, now, *, precise=False):
     if loader is None:
         sample = latest
     else:
@@ -632,24 +664,32 @@ def _window_quote(loader, latest, target, delay, now):
             sample = _observed_quote(loader("EUR/USD", target, delay), now)
         except Exception:
             sample = None
-    return sample if sample and target <= sample["observed_ts"] <= target + delay else None
+    if sample is None or ("provider_tick_ms" in sample) != precise:
+        return None
+    if precise and sample["received_ts"] > now:
+        return None
+    return sample if target <= sample["observed_ts"] <= target + delay else None
 
 
 def advance(*, now_ts, active_provider, price_loader, observation_loader=None, bracket_loader=None,
-            start_prospective_cohort=False):
+            start_prospective_cohort=False, precise_observation_loader=None):
     path = _path()
     if path is None:
         return None
     now = _number(now_ts)
     if start_prospective_cohort and active_provider == "FINNHUB":
-        _activate_cohort(path, now)
-    cohort = _cohort(path)
+        revision = PRECISE_COHORT_REVISION if precise_observation_loader is not None else COHORT_REVISION
+        _activate_cohort(path, now, revision)
     result = None
-    for index, ledger in enumerate(_study_paths(path)):
+    for index, (ledger, cohort) in enumerate(_study_ledgers(path)):
         if index > 0 and ledger in _drained_historical:
             continue
+        precise = (cohort or {}).get("revision") == PRECISE_COHORT_REVISION
+        loader = precise_observation_loader if precise else observation_loader
+        if precise and loader is None:
+            raise ValueError("PRECISE_OBSERVATION_LOADER_REQUIRED")
         report = _advance_ledger(ledger, now=now, active_provider=active_provider,
-                                price_loader=price_loader, observation_loader=observation_loader,
+                                price_loader=price_loader, observation_loader=loader,
                                 bracket_loader=bracket_loader, historical=index > 0, cohort=cohort)
         if index == 0:
             result = report
@@ -658,12 +698,13 @@ def advance(*, now_ts, active_provider, price_loader, observation_loader=None, b
 
 def _advance_ledger(path, *, now, active_provider, price_loader, observation_loader, bracket_loader,
                     historical, cohort):
+    precise = (cohort or {}).get("revision") == PRECISE_COHORT_REVISION
     with storage.with_lock("physical_v3_expiry_calibration", timeout_sec=0.2):
         state = _read(path)
         if state is None:
             state = None
         else:
-            if cohort is not None and state["scope"].get("prospective_cohort") != (None if historical else cohort):
+            if state["scope"].get("prospective_cohort") != cohort:
                 raise ValueError("CALIBRATION_COHORT_SCOPE_CHANGED")
             pending = [r for r in state["records"].values() if _pending_observations(r)]
             sample = None
@@ -682,7 +723,7 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                 reason = "PROVIDER_CHANGED" if active_provider != "FINNHUB" else None
                 if row["entry"] is None and reason is None:
                     entry_quote = _window_quote(observation_loader, sample, row["created_ts"],
-                                                quotes.MAX_ENTRY_DELAY_SECONDS, now)
+                                                quotes.MAX_ENTRY_DELAY_SECONDS, now, precise=precise)
                     if entry_quote:
                         row.update(entry=entry_quote, state="OBSERVING")
                         changed = True
@@ -700,7 +741,7 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                     elif row["entry"] is not None:
                         target = row["entry"]["observed_ts"] + candidate["horizon_seconds"]
                         expiry_quote = _window_quote(observation_loader, sample, target,
-                                                    quotes.MAX_SAMPLE_DELAY_SECONDS, now)
+                                                    quotes.MAX_SAMPLE_DELAY_SECONDS, now, precise=precise)
                         if expiry_quote:
                             candidate.update(quote=expiry_quote, outcome=quotes._classify(row["direction"], row["entry"]["price"], expiry_quote["price"]), reason="OBSERVED_PAIRED_EXPIRY")
                             changed = True
@@ -730,9 +771,13 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
     slot = int(now // REPORT_SECONDS)
     if _last_report.get(str(path), -1) < slot:
         report = analyze(state, now_ts=now)
-        if cohort is not None and not historical:
-            report["prospective_cohort"] = cohort
-        marker = "TSP_PHYSICAL_V3_HISTORICAL_EXPIRY_CALIBRATION" if historical else "TSP_PHYSICAL_V3_EXPIRY_CALIBRATION"
+        if cohort is not None:
+            _report_cohort(report, cohort)
+        if historical:
+            marker = ("TSP_PHYSICAL_V3_SECOND_BUCKET_EXPIRY_CALIBRATION" if cohort is not None
+                      else "TSP_PHYSICAL_V3_HISTORICAL_EXPIRY_CALIBRATION")
+        else:
+            marker = "TSP_PHYSICAL_V3_EXPIRY_CALIBRATION"
         print(marker + " " + json.dumps(_compact(report), sort_keys=True), flush=True)
         _last_report[str(path)] = slot
         return report
@@ -994,16 +1039,24 @@ def analyze(state, *, now_ts):
     return report
 
 
+def _report_cohort(report, cohort):
+    report["prospective_cohort"] = cohort
+    precise = cohort["revision"] == PRECISE_COHORT_REVISION
+    report["buffered_quote_collection"]["prospective_recovery_policy"] = (
+        _quote_recovery_policy(precise=precise)["policy"])
+
+
 def summary(*, now_ts=None):
     path = _path()
     with storage.with_lock("physical_v3_expiry_calibration", timeout_sec=0.2):
-        cohort = _cohort(path) if path else None
-        state = _read(_study_paths(path)[0]) if path else None
-        historical = _read(path) if cohort is not None else None
+        ledgers = _study_ledgers(path) if path else ((None, None),)
+        active, cohort = ledgers[0]
+        state = _read(active) if active else None
+        historical = [_read(ledger) for ledger, _ in ledgers[1:]]
     report = analyze(state, now_ts=time.time() if now_ts is None else now_ts)
     if cohort is not None:
-        report["prospective_cohort"] = cohort
-        historical_rows = historical["records"].values() if historical is not None else ()
+        _report_cohort(report, cohort)
+        historical_rows = [row for prior in historical if prior is not None for row in prior["records"].values()]
         for phase, key in (("entry", "study_open_now_api_accepted"), ("result", "study_results_api_accepted")):
             report.setdefault("historical_delivery_counts", {})[key] = sum(
                 ((row.get("study_delivery") or {}).get(phase) or {}).get("status") == "API_ACCEPTED"

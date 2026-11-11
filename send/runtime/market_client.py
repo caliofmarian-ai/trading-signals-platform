@@ -360,6 +360,14 @@ def get_price_sample_at_or_after(symbol, target_ts, max_delay):
     return _finnhub_feed().get_price_sample_at_or_after(symbol, target_ts, max_delay)
 
 
+def get_precise_price_sample_at_or_after(symbol, target_ts, max_delay):
+    """Read the earliest genuine Finnhub tick by exact source time."""
+    if configured_provider() != "FINNHUB":
+        raise MarketDataUnavailableError("Precise research observations require FINNHUB")
+    return _finnhub_feed().get_price_sample_at_or_after(symbol, target_ts, max_delay,
+                                                       exact_source_time=True)
+
+
 def get_expiry_quote_bracket(symbol, target_ts, max_side_seconds=60.0):
     """Read existing genuine Finnhub neighbors; never create/query another feed.
 
