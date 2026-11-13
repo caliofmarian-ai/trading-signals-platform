@@ -24,7 +24,10 @@ def _unknown(setup):
     study.advance(now_ts=target + 18, active_provider="FINNHUB", price_loader=lambda _: None,
                   observation_loader=lambda *args: None)
     assert _row(study)["study_observation"]["outcome"] == "UNKNOWN"
-    assert len(messages) == 2
+    # The exact baseline is already frozen, but result publication waits for
+    # a complete estimate or the original bounded presentation deadline.
+    assert len(messages) == 1
+    assert _row(study)["study_delivery"]["result"] is None
     return study, target
 
 
@@ -51,6 +54,7 @@ def test_persisted_estimate_never_changes_official_result_or_resends(study_setup
         return _bracket(original, target, outcome=estimate_outcome)
 
     capsys.readouterr()
+    study_setup[7][0] = target + 30.1
     study.advance(now_ts=target + 30, active_provider="FINNHUB", price_loader=lambda _: None,
                   observation_loader=lambda *args: None, bracket_loader=load)
     enriched = _row(study)
@@ -60,7 +64,10 @@ def test_persisted_estimate_never_changes_official_result_or_resends(study_setup
     assert "TSP_PHYSICAL_EXPIRY_PRICE_ESTIMATE " in capsys.readouterr().out
     assert len(study_setup[6]) == 2
     report = study.summary(now_ts=target + 30)
-    assert report["published_study_results"] == report_before["published_study_results"]
+    assert report["baseline_model_observations"] == report_before["baseline_model_observations"]
+    assert report["published_study_results"]["wins"] == 0
+    assert report["published_study_results"]["losses"] == 0
+    assert report["published_study_results"]["unknown"] == 1
     assert report["paired_expiry_observations"] == report_before["paired_expiry_observations"]
     counts = report["published_study_expiry_estimates"]
     assert counts["eligible_unknown"] == counts["estimates_available"] == 1
@@ -71,6 +78,7 @@ def test_persisted_estimate_never_changes_official_result_or_resends(study_setup
     # A restart and a later favorable exact quote do not rewrite the historic
     # result, replace the first complete pair, or resend its accepted message.
     study = importlib.reload(study)
+    study_setup[7][0] = target + 31.1
     study.advance(now_ts=target + 31, active_provider="FINNHUB", price_loader=lambda _: None,
                   observation_loader=lambda *args: _sample(target, 1.2, buffered=True),
                   bracket_loader=load)
@@ -87,17 +95,20 @@ def test_incomplete_estimate_upgrades_only_when_missing_side_arrives(study_setup
     bracket = _bracket(row, target)
     after = bracket.pop("after")
     load = lambda *args, **kwargs: bracket
+    study_setup[7][0] = target + 20.1
     study.advance(now_ts=target + 20, active_provider="FINNHUB", price_loader=lambda _: None,
                   bracket_loader=load)
     partial = _row(study)["expiry_price_estimate"]
     assert partial["estimated_outcome"] == "UNAVAILABLE"
     assert partial["reason"] == "AFTER_QUOTE_UNAVAILABLE"
     capsys.readouterr()
+    study_setup[7][0] = target + 21.1
     study.advance(now_ts=target + 21, active_provider="FINNHUB", price_loader=lambda _: None,
                   bracket_loader=load)
     assert _row(study)["expiry_price_estimate"] == partial
     assert "TSP_PHYSICAL_EXPIRY_PRICE_ESTIMATE " not in capsys.readouterr().out
     bracket["after"] = after
+    study_setup[7][0] = target + 22.1
     study.advance(now_ts=target + 22, active_provider="FINNHUB", price_loader=lambda _: None,
                   bracket_loader=load)
     assert _row(study)["expiry_price_estimate"]["estimated_outcome"] == "WIN"
@@ -111,10 +122,12 @@ def test_missing_estimate_freezes_at_deadline_and_first_historical_check(study_s
         calls.append(args[1])
         return {}
     for stamp in (target + 20, target + 75):
+        study_setup[7][0] = stamp + .1
         study.advance(now_ts=stamp, active_provider="FINNHUB", price_loader=lambda _: None,
                       bracket_loader=missing)
     frozen = copy.deepcopy(_row(study)["expiry_price_estimate"])
     assert frozen["estimated_at"] == target + 75
+    study_setup[7][0] = target + 76.1
     study.advance(now_ts=target + 76, active_provider="FINNHUB", price_loader=lambda _: None,
                   bracket_loader=lambda *args, **kwargs: pytest.fail("expired gap rescanned"))
     assert _row(study)["expiry_price_estimate"] == frozen
@@ -135,6 +148,7 @@ def test_missing_estimate_freezes_at_deadline_and_first_historical_check(study_s
 def test_estimate_validation_and_published_summary_scope(study_setup):
     study, target = _unknown(study_setup)
     original = _row(study)
+    study_setup[7][0] = target + 30.1
     study.advance(now_ts=target + 30, active_provider="FINNHUB", price_loader=lambda _: None,
                   bracket_loader=lambda *args, **kwargs: _bracket(original, target))
     state = study._read(study._path())
@@ -179,6 +193,7 @@ def test_bounded_newest_first_backfill_skips_all_frozen_rows(study_setup):
 def test_provider_switch_and_lookup_failure_leave_official_evidence_unchanged(study_setup):
     study, target = _unknown(study_setup)
     original = copy.deepcopy(_row(study))
+    study_setup[7][0] = target + 30.1
     study.advance(now_ts=target + 30, active_provider="TWELVE_DATA", price_loader=lambda _: None,
                   bracket_loader=lambda *args, **kwargs: pytest.fail("replacement provider queried"))
     switched = _row(study)
@@ -188,6 +203,7 @@ def test_provider_switch_and_lookup_failure_leave_official_evidence_unchanged(st
     original = copy.deepcopy(switched)
     def failed(*args, **kwargs):
         raise RuntimeError("synthetic lookup failure")
+    study_setup[7][0] = target + 31.1
     study.advance(now_ts=target + 31, active_provider="FINNHUB", price_loader=lambda _: None,
                   bracket_loader=failed)
     assert _row(study) == original

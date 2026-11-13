@@ -458,6 +458,8 @@ def _reconcile_receipts(path, now, *, force=False):
             "unresolved_reservations": result["unresolved_reservations"],
             "journal_available": result["journal_available"],
             "error_class": journal_error,
+            "orphan_reason": ("ORPHANED_RESERVATION_RECEIPT_UNAVAILABLE"
+                              if result["orphaned_reservations"] else None),
             "no_retry_ambiguous": True,
             "broker_executed": False,
             "execution_authority": False,

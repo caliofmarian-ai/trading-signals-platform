@@ -55,6 +55,38 @@ def test_orphaned_reservation_becomes_audited_unknown_and_is_never_retried(study
     assert identity not in evidence
 
 
+
+def test_transient_study_ledger_lock_contention_retries_once_without_duplicate(
+        study_setup, monkeypatch):
+    _, study, delivery, _, _, _, messages, clock = _prepared_entry(study_setup)
+    original_commit = delivery._commit_receipt
+    original_with_lock = delivery.storage.with_lock
+
+    def commit_with_one_lock_timeout(*args, **kwargs):
+        failed = {"done": False}
+
+        def flaky_with_lock(lock_name, *lock_args, **lock_kwargs):
+            if lock_name == "physical_v3_expiry_calibration" and not failed["done"]:
+                failed["done"] = True
+                raise TimeoutError("synthetic one-shot study-ledger lock contention")
+            return original_with_lock(lock_name, *lock_args, **lock_kwargs)
+
+        monkeypatch.setattr(delivery.storage, "with_lock", flaky_with_lock)
+        try:
+            return original_commit(*args, **kwargs)
+        finally:
+            monkeypatch.setattr(delivery.storage, "with_lock", original_with_lock)
+
+    monkeypatch.setattr(delivery, "_commit_receipt", commit_with_one_lock_timeout)
+    clock[0] = BASE + 33.1
+    delivery.dispatch(now_ts=BASE + 33, active_provider="FINNHUB")
+    receipt = study._read(study._path())["records"][identity]["study_delivery"]["entry"]
+    assert receipt["status"] == "API_ACCEPTED"
+    assert len(messages) == 1
+    clock[0] = BASE + 34.1
+    delivery.dispatch(now_ts=BASE + 34, active_provider="FINNHUB")
+    assert len(messages) == 1
+
 def test_api_accepted_receipt_is_recovered_after_ledger_commit_interruption_without_duplicate(
         study_setup, monkeypatch):
     identity, path, study, delivery, messages, clock = _prepared_entry(study_setup)

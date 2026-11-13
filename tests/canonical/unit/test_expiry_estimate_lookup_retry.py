@@ -20,7 +20,7 @@ def _opened(setup):
     _, study, _, _, _, _, messages, _ = setup
     _capture(setup)
     study.advance(now_ts=BASE + 32, active_provider="FINNHUB",
-                  price_loader=lambda _: _sample(BASE + 32, 1.1, buffered=True))
+                  price_loader=lambda _: _sample(BASE + 32, 1.1))
     row = _saved(study)
     target = row["entry"]["observed_ts"] + study.displayed_study_observation(row)["horizon_seconds"]
     assert len(messages) == 1
