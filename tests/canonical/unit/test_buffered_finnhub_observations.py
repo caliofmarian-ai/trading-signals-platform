@@ -238,3 +238,25 @@ def test_precise_selector_uses_original_source_and_receipt_time(tmp_path, restor
     assert precise(1000.251, 1.999)["provider_tick_ms"] == 1002250
     assert precise(1002.251, 0.204) is None
     assert feed.get_price_sample_at_or_after("EUR/USD", 1000.25, 2)["observed_ts"] == 1002
+
+
+@pytest.mark.parametrize("restored", [False, True])
+def test_precise_selector_keeps_first_receipt_for_equal_source_timestamp(tmp_path, restored):
+    clock = [1006.0]
+    module, feed = _feed(tmp_path, clock)
+    _tick(feed, 1000250, 1.11)
+    clock[0] = 1006.1
+    _tick(feed, 1000250, 1.22)
+
+    if restored:
+        feed = module.FinnhubForexFeed(token="OFFLINE_TEST_ONLY", clock=lambda: clock[0],
+            store_path=feed.store_path, minimum_candles=2)
+
+    selected = feed.get_price_sample_at_or_after(
+        "EUR/USD", 1000.25, 2, exact_source_time=True
+    )
+    assert (selected["price"], selected["provider_tick_ms"], selected["received_ts"]) == (
+        1.11, 1000250, 1006.0
+    )
+    assert selected["source"] == ("DURABLE_STREAM_PROVIDER_TICK_BUFFER_V1" if restored
+                                  else "LIVE_STREAM_PROVIDER_TICK_BUFFER_V1")
