@@ -291,7 +291,9 @@ def _render_chart(row, signal_label):
 
 
 def _receipt_journal_path(path):
-    if not isinstance(path, str) or not path:
+    # study._path and _delivery_paths use pathlib.Path in the canonical store.
+    path = str(path) if path is not None else ""
+    if not path:
         raise ValueError("INVALID_STUDY_RECEIPT_JOURNAL_PATH")
     stem = path[:-5] if path.endswith(".json") else path
     return stem + ".delivery_receipts.json"
