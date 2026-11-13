@@ -233,7 +233,7 @@ def test_provider_switch_and_lookup_failure_leave_official_evidence_unchanged(st
     assert report["published_study_results"]["unknown"] == 1
     assert report["published_study_results"]["wins"] == 0
     assert report["published_study_results"]["losses"] == 0
-    assert report["published_study_expiry_estimates"]["unavailable"] == 0
+    assert report["published_study_expiry_estimates"]["unavailable"] == 1
     assert len(study_setup[6]) == 2
 
 
