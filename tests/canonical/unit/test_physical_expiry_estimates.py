@@ -59,7 +59,14 @@ def test_persisted_estimate_never_changes_official_result_or_resends(study_setup
                   observation_loader=lambda *args: None, bracket_loader=load)
     enriched = _row(study)
     estimate = enriched.pop("expiry_price_estimate")
+    actual_delivery = enriched.pop("study_delivery")
+    expected_delivery = original.pop("study_delivery")
     assert enriched == original
+    # The estimate does not rewrite the frozen UNKNOWN baseline, but a complete
+    # estimate legitimately releases the first result receipt immediately.
+    assert actual_delivery["entry"] == expected_delivery["entry"]
+    assert actual_delivery["result"]["status"] == "API_ACCEPTED"
+    assert actual_delivery["result"]["attempted_ts"] == target + 30
     assert estimate["estimated_outcome"] == estimate_outcome
     assert "TSP_PHYSICAL_EXPIRY_PRICE_ESTIMATE " in capsys.readouterr().out
     assert len(study_setup[6]) == 2
@@ -207,7 +214,20 @@ def test_provider_switch_and_lookup_failure_leave_official_evidence_unchanged(st
     study.advance(now_ts=target + 31, active_provider="FINNHUB", price_loader=lambda _: None,
                   bracket_loader=failed)
     assert _row(study) == original
-    assert study.summary(now_ts=target + 31)["published_study_expiry_estimates"]["unavailable"] == 1
+    assert study.summary(now_ts=target + 31)["published_study_expiry_estimates"]["unavailable"] == 0
+    assert len(study_setup[6]) == 1
+
+    # A failed lookup is not proof that both adjacent quotes are unavailable.
+    # Keep the result unsent until the original expiry + 60s + 15s deadline.
+    study_setup[7][0] = target + 75.1
+    study.advance(now_ts=target + 75, active_provider="FINNHUB", price_loader=lambda _: None,
+                  bracket_loader=failed)
+    settled = _row(study)
+    assert settled["study_observation"] == original["study_observation"]
+    assert settled["expiry_price_estimate"]["estimated_outcome"] == "UNAVAILABLE"
+    assert settled["study_delivery"]["result"]["status"] == "API_ACCEPTED"
+    assert study.summary(now_ts=target + 75)["published_study_expiry_estimates"]["unavailable"] == 1
+    assert len(study_setup[6]) == 2
 
 
 def test_estimate_is_saved_before_first_unknown_result_delivery(study_setup):
