@@ -348,6 +348,12 @@ def _pending_delivery(row):
     delivery = row.get("study_delivery")
     if row["entry"] is None or not isinstance(delivery, dict):
         return False
+    # RESERVED is not a delivery outcome. It must keep the single sender
+    # scheduled so the receipt journal can recover it or age it into audited
+    # UNKNOWN/no_retry. This applies to both entry and result phases.
+    if any(isinstance(receipt, dict) and receipt.get("status") == "RESERVED"
+           for receipt in delivery.values()):
+        return True
     entry_receipt = delivery["entry"]
     return entry_receipt is None or (
         entry_receipt.get("status") == "API_ACCEPTED" and delivery["result"] is None
