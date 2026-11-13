@@ -184,7 +184,8 @@ def test_new_seconds_expiry_without_quote_remains_unknown_not_a_later_win(second
     assert saved["study_observation"]["quote"] is None
     saved = _advance(ctx, expiry + 20, 1.2)
     assert saved["study_observation"]["outcome"] == "UNKNOWN"
-    report = ctx["study"].summary(now_ts=expiry + 20)
+    _advance(ctx, expiry + 75, None)
+    report = ctx["study"].summary(now_ts=expiry + 75)
     assert report["published_study_results_by_duration_policy"][ctx["plans"].POLICY]["unknown"] == 1
 
 

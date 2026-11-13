@@ -385,9 +385,14 @@ def test_study_result_without_an_expiry_quote_still_sends_a_chart(study_setup, c
     _, study, _, _, _, _, messages, clock = study_setup
     row = _capture(study_setup)
     study.advance(now_ts=BASE + 32, active_provider="FINNHUB", price_loader=lambda _: _sample(BASE + 32, 1.1))
-    now = BASE + 32 + row["model_seconds"] + study.quotes.MAX_SAMPLE_DELAY_SECONDS + 1
+    target = BASE + 32 + row["model_seconds"]
+    now = target + study.quotes.MAX_SAMPLE_DELAY_SECONDS + 1
     clock[0] = now + 0.1
     study.advance(now_ts=now, active_provider="FINNHUB", price_loader=lambda _: None)
+    assert len(messages) == 1
+    deadline = target + 60 + study.EXPIRY_ESTIMATE_ARRIVAL_GRACE_SECONDS
+    clock[0] = deadline + 0.1
+    study.advance(now_ts=deadline, active_provider="FINNHUB", price_loader=lambda _: None)
     assert len(messages) == 2
     assert messages[1]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
     assert "Cotație expirare: LIPSĂ" in messages[1]["text"]
