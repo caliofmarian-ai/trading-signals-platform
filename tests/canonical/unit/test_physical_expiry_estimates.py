@@ -224,9 +224,16 @@ def test_provider_switch_and_lookup_failure_leave_official_evidence_unchanged(st
                   bracket_loader=failed)
     settled = _row(study)
     assert settled["study_observation"] == original["study_observation"]
-    assert settled["expiry_price_estimate"]["estimated_outcome"] == "UNAVAILABLE"
+    # A loader exception leaves no estimate record; the exact UNKNOWN result
+    # is still released once the original bounded deadline is reached.
+    assert "expiry_price_estimate" not in settled
     assert settled["study_delivery"]["result"]["status"] == "API_ACCEPTED"
-    assert study.summary(now_ts=target + 75)["published_study_expiry_estimates"]["unavailable"] == 1
+    assert settled["study_delivery"]["result"]["attempted_ts"] == target + 75
+    report = study.summary(now_ts=target + 75)
+    assert report["published_study_results"]["unknown"] == 1
+    assert report["published_study_results"]["wins"] == 0
+    assert report["published_study_results"]["losses"] == 0
+    assert report["published_study_expiry_estimates"]["unavailable"] == 0
     assert len(study_setup[6]) == 2
 
 
