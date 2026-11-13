@@ -38,6 +38,7 @@ TARGET_WIN_RATE = 0.80
 MAX_UNKNOWN_FRACTION = 0.10
 VALIDATION_Z = NormalDist().inv_cdf(1 - 0.05 / 2)
 REPORT_SECONDS = 60
+CAPTURE_LOCK_ATTEMPTS = 2
 COHORT_REVISION = "V3_EXACT_DIRECTIONAL_ROOM_V1"
 COHORT_FILE = "exact_directional_room_v1_state.json"
 PRECISE_COHORT_REVISION = "V3_EXACT_PROVIDER_MILLISECONDS_V1"
@@ -1279,7 +1280,7 @@ def observe_accepted_chain(decision, handoff, params, *, now_ts, provider, buffe
     if market_evidence is not None:
         frozen["indicators"] = {key: getattr(market_evidence, key, None) for key in
             ("atr_m5", "activity_ratio", "activity_gate_ok", "ema_fast", "ema_slow", "rsi")}
-    capture([{
+    entry = {
         "policy": "PHYSICAL_ONLY_V3", "direction": decision.setup.direction,
         "opportunity_signal_id": decision.signal_id,
         "created_ts": now_ts, "open_ts": now_ts,
@@ -1296,7 +1297,26 @@ def observe_accepted_chain(decision, handoff, params, *, now_ts, provider, buffe
         "publish_study": (publish_study
             and row.get("physical_confirm_execution_status") == "UNAVAILABLE"
             and row.get("physical_confirm_execution") is None),
-    }], params=params, buffer_mode=buffer_mode, strategy_version=STRATEGY_VERSION,
-       canonical_spec=CANONICAL_SPEC, now_ts=now_ts, cohort_revision=cohort_revision)
+    }
+    # A short calibration-lock collision must not discard a genuine OPEN chain.
+    # capture() is idempotent by opportunity id, so retrying only TimeoutError is
+    # safe and remains bounded to one additional 0.2-second lock attempt.
+    for attempt in range(CAPTURE_LOCK_ATTEMPTS):
+        try:
+            capture([entry], params=params, buffer_mode=buffer_mode,
+                strategy_version=STRATEGY_VERSION, canonical_spec=CANONICAL_SPEC,
+                now_ts=now_ts, cohort_revision=cohort_revision)
+            break
+        except TimeoutError:
+            if attempt + 1 >= CAPTURE_LOCK_ATTEMPTS:
+                raise
+            print("TSP_PHYSICAL_V3_CALIBRATION_CAPTURE_RETRY " + json.dumps({
+                "attempt": attempt + 2,
+                "broker_executed": False,
+                "error_class": "TimeoutError",
+                "execution_authority": False,
+                "max_attempts": CAPTURE_LOCK_ATTEMPTS,
+                "publication_authority": False,
+            }, sort_keys=True), flush=True)
     row["physical_calibration_captured_signal_id"] = decision.signal_id
     return True

@@ -341,7 +341,7 @@ def test_calibration_crash_retry_cannot_duplicate_an_opportunity(physical_calibr
     assert len(module._read(module._path())["records"]) == 1
 
 
-def test_provider_eurusd_identity_admits_exactly_one_physical_chain(physical_calibration, physical):
+def _accepted_open_chain(physical_calibration, physical):
     _, module, params = physical_calibration
     _, m1, m5, _ = physical
     from core.strategy_v3 import decide, lifecycle_context
@@ -356,6 +356,11 @@ def test_provider_eurusd_identity_admits_exactly_one_physical_chain(physical_cal
         handoff = advance_persistent_fsm(state, result.decision, now_ts=stamp)
         state = handoff.next_state
     assert handoff.accepted_stage == "OPEN_NOW"
+    return module, params, result, handoff
+
+
+def test_provider_eurusd_identity_admits_exactly_one_physical_chain(physical_calibration, physical):
+    module, params, result, handoff = _accepted_open_chain(physical_calibration, physical)
     assert module.observe_accepted_chain(result.decision, handoff, params, now_ts=1031,
         provider="FINNHUB", buffer_mode="SMALL") is True
     module.observe_accepted_chain(result.decision, handoff, params, now_ts=1032,
@@ -363,6 +368,67 @@ def test_provider_eurusd_identity_admits_exactly_one_physical_chain(physical_cal
     captured = module._read(module._path())
     assert captured["scope"]["symbol"] == "EUR/USD"
     assert len(captured["records"]) == 1
+
+
+def test_open_capture_retries_one_transient_lock_timeout(
+        physical_calibration, physical, monkeypatch, capsys):
+    module, params, result, handoff = _accepted_open_chain(physical_calibration, physical)
+    actual_capture = module.capture
+    attempts = []
+
+    def transient_timeout(*args, **kwargs):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise TimeoutError("synthetic lock contention")
+        return actual_capture(*args, **kwargs)
+
+    monkeypatch.setattr(module, "capture", transient_timeout)
+    assert module.observe_accepted_chain(result.decision, handoff, params, now_ts=1031,
+        provider="FINNHUB", buffer_mode="SMALL") is True
+    assert len(attempts) == module.CAPTURE_LOCK_ATTEMPTS == 2
+    assert len(module._read(module._path())["records"]) == 1
+    marker = capsys.readouterr().out.strip().split(" ", 1)
+    assert marker[0] == "TSP_PHYSICAL_V3_CALIBRATION_CAPTURE_RETRY"
+    assert json.loads(marker[1]) == {
+        "attempt": 2,
+        "broker_executed": False,
+        "error_class": "TimeoutError",
+        "execution_authority": False,
+        "max_attempts": 2,
+        "publication_authority": False,
+    }
+
+
+def test_open_capture_does_not_retry_non_timeout_failures(physical_calibration, physical, monkeypatch):
+    module, params, result, handoff = _accepted_open_chain(physical_calibration, physical)
+    attempts = []
+
+    def invalid_capture(*args, **kwargs):
+        attempts.append(1)
+        raise ValueError("synthetic invalid capture")
+
+    monkeypatch.setattr(module, "capture", invalid_capture)
+    with pytest.raises(ValueError, match="synthetic invalid capture"):
+        module.observe_accepted_chain(result.decision, handoff, params, now_ts=1031,
+            provider="FINNHUB", buffer_mode="SMALL")
+    assert attempts == [1]
+
+
+def test_open_capture_timeout_retry_is_bounded(physical_calibration, physical, monkeypatch):
+    module, params, result, handoff = _accepted_open_chain(physical_calibration, physical)
+    attempts = []
+
+    def persistent_timeout(*args, **kwargs):
+        attempts.append(1)
+        raise TimeoutError("synthetic persistent lock contention")
+
+    monkeypatch.setattr(module, "capture", persistent_timeout)
+    with pytest.raises(TimeoutError, match="persistent lock contention"):
+        module.observe_accepted_chain(result.decision, handoff, params, now_ts=1031,
+            provider="FINNHUB", buffer_mode="SMALL")
+    assert len(attempts) == module.CAPTURE_LOCK_ATTEMPTS == 2
+    assert handoff.next_state["per_symbol"][result.decision.setup.symbol].get(
+        "physical_calibration_captured_signal_id") != result.decision.signal_id
 
 
 def test_physical_calibration_real_quote_contract_buffer_and_missingness(physical_calibration):
