@@ -58,7 +58,7 @@ def test_orphaned_reservation_becomes_audited_unknown_and_is_never_retried(study
 
 def test_transient_study_ledger_lock_contention_retries_once_without_duplicate(
         study_setup, monkeypatch):
-    _, study, delivery, _, _, _, messages, clock = _prepared_entry(study_setup)
+    identity, path, study, delivery, messages, clock = _prepared_entry(study_setup)
     original_commit = delivery._commit_receipt
     original_with_lock = delivery.storage.with_lock
 
