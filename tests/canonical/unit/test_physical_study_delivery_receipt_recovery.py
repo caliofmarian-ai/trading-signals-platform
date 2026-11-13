@@ -117,3 +117,38 @@ def test_api_accepted_receipt_is_recovered_after_ledger_commit_interruption_with
     clock[0] = BASE + 35
     delivery.dispatch(now_ts=BASE + 35, active_provider="FINNHUB")
     assert len(messages) == 1
+
+def test_reserved_entry_receipt_keeps_reconciliation_sender_scheduled(study_setup, monkeypatch):
+    identity, path, study, delivery, messages, _ = _prepared_entry(study_setup)
+    reserved = _reserve_entry(identity, path, study, delivery)
+    calls = []
+    monkeypatch.setattr(delivery, "dispatch_async", lambda **kwargs: calls.append(kwargs))
+
+    now = reserved["attempted_ts"] + 1
+    study.advance(now_ts=now, active_provider="FINNHUB",
+                  price_loader=lambda _: _sample(now, 1.1))
+
+    assert calls == [{"now_ts": now, "active_provider": "FINNHUB"}]
+    assert not messages
+    assert study._read(path)["records"][identity]["study_delivery"]["entry"]["status"] == "RESERVED"
+
+
+def test_reserved_receipt_in_either_phase_is_pending_for_reconciliation(study_setup):
+    _, _, study, _, _, _ = _prepared_entry(study_setup)
+    entry_reserved = {
+        "entry": {"observed_ts": BASE + 32},
+        "study_delivery": {
+            "entry": {"status": "RESERVED", "attempted_ts": BASE + 33},
+            "result": None,
+        },
+    }
+    result_reserved = {
+        "entry": {"observed_ts": BASE + 32},
+        "study_delivery": {
+            "entry": {"status": "API_ACCEPTED", "attempted_ts": BASE + 33},
+            "result": {"status": "RESERVED", "attempted_ts": BASE + 34},
+        },
+    }
+
+    assert study._pending_delivery(entry_reserved) is True
+    assert study._pending_delivery(result_reserved) is True
