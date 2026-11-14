@@ -1466,6 +1466,13 @@ def summary(*, now_ts=None):
     report = analyze(state, now_ts=time.time() if now_ts is None else now_ts)
     if cohort is not None:
         _report_cohort(report, cohort)
+        # A cohort marker can exist before its first OPEN creates a ledger.
+        # In that explicit empty-cohort state, both current delivery counts are
+        # genuinely zero; historical receipts remain in their separate totals.
+        if state is None:
+            report["study_open_now_api_accepted"] = 0
+            report["study_results_api_accepted"] = 0
+            report["study_delivery_statuses"] = {}
         historical_rows = [row for prior in historical if prior is not None for row in prior["records"].values()]
         for phase, key in (("entry", "study_open_now_api_accepted"), ("result", "study_results_api_accepted")):
             report.setdefault("historical_delivery_counts", {})[key] = sum(
