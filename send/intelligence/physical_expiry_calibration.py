@@ -975,6 +975,7 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
         report = analyze(state, now_ts=now)
         if cohort is not None:
             _report_cohort(report, cohort)
+        _report_empty_cohort_delivery_counts(report, cohort, state)
         if historical:
             if precise:
                 marker = "TSP_PHYSICAL_V3_HISTORICAL_PRECISE_EXPIRY_CALIBRATION"
@@ -1456,6 +1457,15 @@ def _report_cohort(report, cohort):
         _quote_recovery_policy(precise=precise)["policy"])
 
 
+def _report_empty_cohort_delivery_counts(report, cohort, state):
+    if cohort is not None and state is None:
+        # A cohort marker exists, but no accepted OPEN has created its ledger.
+        # Current receipts are therefore zero; historical receipts stay separate.
+        report["study_open_now_api_accepted"] = 0
+        report["study_results_api_accepted"] = 0
+        report["study_delivery_statuses"] = {}
+
+
 def summary(*, now_ts=None):
     path = _path()
     with storage.with_lock("physical_v3_expiry_calibration", timeout_sec=0.2):
@@ -1466,13 +1476,7 @@ def summary(*, now_ts=None):
     report = analyze(state, now_ts=time.time() if now_ts is None else now_ts)
     if cohort is not None:
         _report_cohort(report, cohort)
-        # A cohort marker can exist before its first OPEN creates a ledger.
-        # In that explicit empty-cohort state, both current delivery counts are
-        # genuinely zero; historical receipts remain in their separate totals.
-        if state is None:
-            report["study_open_now_api_accepted"] = 0
-            report["study_results_api_accepted"] = 0
-            report["study_delivery_statuses"] = {}
+        _report_empty_cohort_delivery_counts(report, cohort, state)
         historical_rows = [row for prior in historical if prior is not None for row in prior["records"].values()]
         for phase, key in (("entry", "study_open_now_api_accepted"), ("result", "study_results_api_accepted")):
             report.setdefault("historical_delivery_counts", {})[key] = sum(
