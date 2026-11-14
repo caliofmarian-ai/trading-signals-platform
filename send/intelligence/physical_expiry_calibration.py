@@ -320,8 +320,9 @@ def _validate_cohort(cohort, revision=None):
             if type(successor[key]) is not int or successor[key] < 0:
                 raise ValueError("INVALID_CALIBRATION_COHORT_SUCCESSOR")
         fraction = successor["prior_train_unknown_fraction"]
-        if (type(fraction) not in (int, float) or not math.isfinite(fraction)
-                or not 0 <= fraction <= 1):
+        if (fraction is not None and
+                (type(fraction) not in (int, float) or not math.isfinite(fraction)
+                 or not 0 <= fraction <= 1)):
             raise ValueError("INVALID_CALIBRATION_COHORT_SUCCESSOR")
     return cohort
 
