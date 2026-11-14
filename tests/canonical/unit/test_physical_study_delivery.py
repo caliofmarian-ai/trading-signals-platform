@@ -251,8 +251,7 @@ def test_open_market_duration_report_reconciles_frozen_confirm_plan_and_open_adj
         },
     ]
 
-    report = study._open_market_duration_report(rows)
-    reconciliation = report["duration_reconciliation"]
+    reconciliation = study._duration_reconciliation_report(rows)
     bucket = reconciliation["by_duration_policy"][policy]
 
     assert reconciliation["protocol"] == "CONFIRM_TO_OPEN_DURATION_RECONCILIATION_V1"
