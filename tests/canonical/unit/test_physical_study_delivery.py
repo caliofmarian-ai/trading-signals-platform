@@ -930,6 +930,30 @@ def test_report_evidence_bounds_unknown_source_and_reason_without_disclosing_raw
     assert "Rezultat: Cauza lipsei datelor este indisponibilă" in text and "UNKNOWN" not in text
 
 
+def test_empty_prospective_cohort_reports_zero_current_delivery_counts(study_setup):
+    _, study, _, _, _, _, _, _ = study_setup
+    path = study._path()
+
+    startup = study.advance(now_ts=BASE, active_provider="FINNHUB",
+                            price_loader=lambda _: None, start_prospective_cohort=True)
+    assert startup["unique_entry_experiments"] == 0
+    assert startup["study_open_now_api_accepted"] == 0
+    assert startup["study_results_api_accepted"] == 0
+    assert startup["study_delivery_statuses"] == {}
+    assert not study._study_paths(path)[0].exists()
+
+    report = study.summary(now_ts=BASE)
+    assert report["status"] == "WAITING_FIRST_COMPLETE_CHAIN"
+    assert report["unique_entry_experiments"] == 0
+    assert report["finalized_entry_experiments"] == 0
+    assert report["study_open_now_api_accepted"] == 0
+    assert report["study_results_api_accepted"] == 0
+    assert report["study_delivery_statuses"] == {}
+    assert report["historical_delivery_counts"] == {
+        "study_open_now_api_accepted": 0, "study_results_api_accepted": 0,
+    }
+
+
 def test_prospective_cutover_preserves_pending_history_and_excludes_old_pre(study_setup):
     _, study, _, _, _, params, messages, clock = study_setup
     original = _capture(study_setup)
