@@ -353,7 +353,9 @@ def _cohort_successor_metadata(path, now):
                         or prior_state["capacity_rejections"] > 0)
     if prior_policy["status"] == "TRAINING_DATA_QUALITY_FAILED":
         trigger = "TRAINING_DATA_QUALITY_FAILED"
-    elif capacity_reached and prior_policy["status"] != "READY_FOR_REVIEW":
+    elif capacity_reached and prior_policy["status"] in {
+            "COLLECTING_TRAINING", "COLLECTING_HOLDOUT", "HOLDOUT_SAMPLE_INADEQUATE",
+            "HOLDOUT_DATA_QUALITY_FAILED", "HOLDOUT_BUFFER_DATA_QUALITY_FAILED"}:
         trigger = "COHORT_CAPACITY_REACHED"
     else:
         return None  # Do not rotate a collecting or review-ready cohort.
