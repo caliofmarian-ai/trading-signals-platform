@@ -215,6 +215,68 @@ def test_confirmed_study_that_no_longer_fits_open_physics_is_not_published(study
     assert not messages
     saved = next(iter(study._read(study._path())["records"].values()))
     assert saved["study_delivery"]["entry"]["status"] == "SKIPPED_DURATION_INFEASIBLE"
+    assert saved["study_delivery"]["entry"]["resolution_reason"] == "OPEN_ADJUSTED_TIME_EXCEEDS_CONFIRMED_DURATION"
+
+
+
+def test_open_market_duration_report_reconciles_frozen_confirm_plan_and_open_adjusted_time():
+    from intelligence import physical_expiry_calibration as study
+
+    policy = study.second_duration.POLICY
+    rows = [
+        {
+            "adjusted_seconds": 150.0,
+            "study_observation": {
+                "duration_policy": policy, "horizon_seconds": 120,
+                "outcome": "INFEASIBLE",
+                "duration_plan": {"adjusted_minutes": 1.5},
+            },
+            "open_market_duration": {"horizon_seconds": 180, "outcome": "PENDING"},
+            "study_delivery": {"entry": {
+                "status": "SKIPPED_DURATION_INFEASIBLE", "attempted_ts": BASE + 32,
+            }},
+        },
+        {
+            "adjusted_seconds": 150.0,
+            "study_observation": {
+                "duration_policy": policy, "horizon_seconds": 180,
+                "outcome": "PENDING",
+                "duration_plan": {"adjusted_minutes": 2.0},
+            },
+            "open_market_duration": {"horizon_seconds": 180, "outcome": "PENDING"},
+            "study_delivery": {"entry": {
+                "status": "API_ACCEPTED", "attempted_ts": BASE + 32,
+                "message_id": 2, "api_accepted_ts": BASE + 32.1,
+            }},
+        },
+    ]
+
+    reconciliation = study._duration_reconciliation_report(rows)
+    bucket = reconciliation["by_duration_policy"][policy]
+
+    assert reconciliation["protocol"] == "CONFIRM_TO_OPEN_DURATION_RECONCILIATION_V1"
+    assert bucket["observations"] == 2
+    assert bucket["confirmed_duration_infeasible"] == 1
+    assert bucket["study_feasibility"] == {"INFEASIBLE": 1, "PENDING": 1}
+    assert bucket["entry_delivery_statuses"] == {
+        "API_ACCEPTED": 1, "SKIPPED_DURATION_INFEASIBLE": 1,
+    }
+    assert bucket["terminal_reason_counts"] == {
+        "OPEN_ADJUSTED_TIME_EXCEEDS_CONFIRMED_DURATION": 1,
+    }
+    assert bucket["confirm_plan_rows"] == 2
+    assert bucket["confirm_adjusted_time_seconds"]["sample"] == 2
+    assert bucket["open_adjusted_time_seconds"]["sample"] == 2
+    assert bucket["open_minus_confirm_adjusted_seconds"]["min"] == 30
+    assert bucket["open_minus_confirm_adjusted_seconds"]["max"] == 60
+    assert bucket["confirmed_duration_minus_open_adjusted_seconds"]["min"] == -30
+    assert bucket["confirmed_duration_minus_open_adjusted_seconds"]["max"] == 30
+    assert bucket["entry_receipt_attempts"] == 1
+    assert bucket["entry_api_acceptance_rate"] == 1.0
+    assert bucket["entry_api_accepted_per_observed_open"] == 0.5
+    assert reconciliation["no_strategy_change"] is True
+    assert reconciliation["automatic_parameter_change"] is False
+    assert reconciliation["broker_executed"] is False
 
 
 def test_confirmed_study_exact_fit_accepts_only_machine_precision_drift(study_setup):
@@ -287,6 +349,8 @@ def test_study_open_requires_the_same_duration_actually_delivered_at_confirm(stu
     assert not messages
     saved = next(iter(study._read(study._path())["records"].values()))
     assert saved["study_delivery"]["entry"]["status"] == "SKIPPED_STAGE_GUARD"
+    assert isinstance(saved["study_delivery"]["entry"]["resolution_reason"], str)
+    assert saved["study_delivery"]["entry"]["resolution_reason"]
 
 
 def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_result(study_setup, capsys):
@@ -327,6 +391,7 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     assert saved["decision_snapshot"]["decision_id"] == result.decision.decision_id
     assert saved["decision_snapshot"]["indicators"]["atr_m5"] == result.market.evidence.atr_m5
     assert saved["study_delivery"]["entry"]["format"] == "PHOTO"
+    assert "resolution_reason" not in saved["study_delivery"]["entry"]
     assert saved["study_delivery"]["result"]["format"] == "PHOTO"
     assert saved["study_delivery"]["entry"]["signal_label"] == label
     assert saved["study_delivery"]["result"]["signal_label"] == label
@@ -531,6 +596,7 @@ def test_ambiguous_transport_is_not_retried(study_setup, monkeypatch):
     saved=next(iter(study._read(study._path())["records"].values()))
     assert saved["study_delivery"]["entry"]["status"]=="UNKNOWN"
     assert saved["study_delivery"]["entry"]["format"]=="PHOTO"
+    assert saved["study_delivery"]["entry"]["resolution_reason"] == "AMBIGUOUS_TRANSPORT_ACCEPTANCE"
 
 
 def test_entry_render_crossing_original_window_skips_transport(study_setup, monkeypatch):
@@ -553,6 +619,7 @@ def test_entry_render_crossing_original_window_skips_transport(study_setup, monk
     assert not messages
     saved = next(iter(study._read(path)["records"].values()))
     assert saved["study_delivery"]["entry"]["status"] == "SKIPPED_STALE"
+    assert saved["study_delivery"]["entry"]["resolution_reason"] == "ENTRY_WINDOW_EXPIRED_DURING_RENDER"
     assert saved["study_delivery"]["result"] is None
     assert saved["entry"] == record["entry"]
 

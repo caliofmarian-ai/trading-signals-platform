@@ -89,7 +89,10 @@ def _quote_recovery_identity(row):
 
 def displayed_study_observation(row):
     """Use the prospectively confirmed horizon; retain old published baselines."""
-    return row.get("study_observation", row["candidates"][0])
+    observation = row.get("study_observation")
+    if observation is not None:
+        return observation
+    return row["candidates"][0]
 
 
 def _estimate_target(row):
@@ -1059,6 +1062,113 @@ def _duration_reserve_report(records):
     }
 
 
+def _duration_reconciliation_report(rows):
+    """Reconcile the immutable CONFIRM plan with the fresh OPEN adjusted time.
+
+    This is a reporting-only projection. It neither changes the confirmed study
+    horizon nor feeds the strategy, publication gate or calibration selector.
+    """
+    grouped = {}
+    reason_fallback = {
+        "SKIPPED_DURATION_INFEASIBLE": "OPEN_ADJUSTED_TIME_EXCEEDS_CONFIRMED_DURATION",
+        "SKIPPED_STALE": "ENTRY_WINDOW_EXPIRED",
+        "SKIPPED_STAGE_GUARD": "OWNER_STAGE_GUARD_REASON_NOT_RECORDED",
+        "SKIPPED_DESTINATION_CHANGED": "OWNER_DESTINATION_CHANGED",
+        "FAILED": "DELIVERY_FAILURE_REASON_NOT_RECORDED",
+        "UNKNOWN": "DELIVERY_ACCEPTANCE_AMBIGUOUS",
+    }
+    for row in rows:
+        observation = displayed_study_observation(row)
+        policy = second_duration.observation_policy(row)
+        bucket = grouped.setdefault(policy, {
+            "rows": 0,
+            "study_feasibility": Counter(),
+            "entry_delivery_statuses": Counter(),
+            "terminal_reason_counts": Counter(),
+            "terminal_reason_unavailable": 0,
+            "confirmed_duration_blocked_reasons": Counter(),
+            "confirm_adjusted_time_seconds": [],
+            "open_adjusted_time_seconds": [],
+            "open_minus_confirm_adjusted_seconds": [],
+            "confirmed_duration_minus_open_adjusted_seconds": [],
+            "confirm_plan_rows": 0,
+            "confirm_plan_missing_rows": 0,
+        })
+        bucket["rows"] += 1
+        outcome = observation.get("outcome") or "UNSPECIFIED"
+        bucket["study_feasibility"][outcome] += 1
+        open_adjusted = _number(row["adjusted_seconds"])
+        confirmed_duration = _number(observation["horizon_seconds"])
+        bucket["open_adjusted_time_seconds"].append(open_adjusted)
+        bucket["confirmed_duration_minus_open_adjusted_seconds"].append(
+            confirmed_duration - open_adjusted)
+        plan = observation.get("duration_plan")
+        if isinstance(plan, dict):
+            confirm_adjusted = _number(plan["adjusted_minutes"]) * 60
+            bucket["confirm_plan_rows"] += 1
+            bucket["confirm_adjusted_time_seconds"].append(confirm_adjusted)
+            bucket["open_minus_confirm_adjusted_seconds"].append(
+                open_adjusted - confirm_adjusted)
+        else:
+            bucket["confirm_plan_missing_rows"] += 1
+        if outcome == "INFEASIBLE":
+            bucket["confirmed_duration_blocked_reasons"][
+                "OPEN_ADJUSTED_TIME_EXCEEDS_CONFIRMED_DURATION"] += 1
+
+        receipt = ((row.get("study_delivery") or {}).get("entry"))
+        status = receipt.get("status") if isinstance(receipt, dict) else "NOT_ATTEMPTED"
+        status = status or "NOT_ATTEMPTED"
+        bucket["entry_delivery_statuses"][status] += 1
+        if status in reason_fallback:
+            reason = receipt.get("resolution_reason") if isinstance(receipt, dict) else None
+            reason = reason or reason_fallback[status]
+            if reason:
+                bucket["terminal_reason_counts"][reason] += 1
+            else:
+                bucket["terminal_reason_unavailable"] += 1
+
+    by_policy = {}
+    for policy, bucket in sorted(grouped.items()):
+        statuses = dict(bucket["entry_delivery_statuses"])
+        receipt_attempts = sum(statuses.get(status, 0) for status in ("API_ACCEPTED", "FAILED", "UNKNOWN"))
+        accepted = statuses.get("API_ACCEPTED", 0)
+        feasibility = dict(bucket["study_feasibility"])
+        by_policy[policy] = {
+            "observations": bucket["rows"],
+            "confirmed_duration_feasible": bucket["rows"] - feasibility.get("INFEASIBLE", 0),
+            "confirmed_duration_infeasible": feasibility.get("INFEASIBLE", 0),
+            "study_feasibility": feasibility,
+            "entry_delivery_statuses": statuses,
+            "terminal_reason_counts": dict(bucket["terminal_reason_counts"]),
+            "terminal_reason_unavailable": bucket["terminal_reason_unavailable"],
+            "confirmed_duration_blocked_reasons": dict(bucket["confirmed_duration_blocked_reasons"]),
+            "confirm_plan_rows": bucket["confirm_plan_rows"],
+            "confirm_plan_missing_rows": bucket["confirm_plan_missing_rows"],
+            "confirm_adjusted_time_seconds": _quantiles(bucket["confirm_adjusted_time_seconds"]),
+            "open_adjusted_time_seconds": _quantiles(bucket["open_adjusted_time_seconds"]),
+            "open_minus_confirm_adjusted_seconds": _quantiles(
+                bucket["open_minus_confirm_adjusted_seconds"]),
+            "confirmed_duration_minus_open_adjusted_seconds": _quantiles(
+                bucket["confirmed_duration_minus_open_adjusted_seconds"]),
+            "entry_receipt_attempts": receipt_attempts,
+            "entry_api_accepted": accepted,
+            "entry_api_acceptance_rate": accepted / receipt_attempts if receipt_attempts else None,
+            "entry_api_accepted_per_observed_open": accepted / bucket["rows"] if bucket["rows"] else None,
+        }
+    return {
+        "protocol": "CONFIRM_TO_OPEN_DURATION_RECONCILIATION_V1",
+        "source": "FROZEN_CONFIRM_PLAN_VS_OPEN_ADJUSTED_TIME",
+        "by_duration_policy": by_policy,
+        "no_state_mutation": True,
+        "no_strategy_change": True,
+        "automatic_parameter_change": False,
+        "execution_authority": False,
+        "publication_authority": False,
+        "calibration_authority": False,
+        "broker_executed": False,
+    }
+
+
 def _open_market_duration_report(records):
     rows = [row for row in records if "open_market_duration" in row]
     eligible = [row for row in rows if row["open_market_duration"]["outcome"] != "INFEASIBLE"]
@@ -1080,9 +1190,9 @@ def _open_market_duration_report(records):
         "paired_real_quote_count": len(paired),
         "confirmed_on_paired": _duration_diagnostic_counts(paired, "study_observation"),
         "market_on_paired": _duration_diagnostic_counts(paired, "open_market_duration"),
+        "duration_reconciliation": _duration_reconciliation_report(rows),
         "publication_authority": False, "calibration_authority": False,
     }
-
 
 def _buffer_first_hit_time_report(records):
     rows = [row for row in records if "buffer_first_hit_time" in row]
