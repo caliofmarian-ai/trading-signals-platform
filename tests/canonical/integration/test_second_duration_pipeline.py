@@ -326,7 +326,7 @@ def test_reserve_requires_original_confirm_receipt_in_prospective_cohort(seconds
 def test_directional_flow_cutover_isolates_new_chains_and_drains_precise_history(seconds_pipeline, monkeypatch):
     ctx = seconds_pipeline
     study = ctx["study"]
-    revision = study.DIRECTIONAL_FLOW_COHORT_REVISION
+    revision = study.DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION
     samples = {}
 
     def advance(now, **cutover):
@@ -455,3 +455,102 @@ def test_market_duration_uses_fresh_open_calculation_and_keeps_confirmed_plan(
     assert diagnostic["market_on_all_chains"]["buffer_met"] == int(not blocked)
     assert diagnostic["market_on_all_chains"]["win_buffer_not_met"] == int(blocked)
     assert not diagnostic["publication_authority"] and not diagnostic["calibration_authority"]
+
+
+def test_failed_training_cohort_starts_a_fresh_audited_successor(seconds_pipeline, capsys):
+    ctx = seconds_pipeline
+    study = ctx["study"]
+    path = study._path()
+    previous = study.DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION
+    successor = study.DIRECTIONAL_FLOW_COHORT_REVISION
+    study._activate_cohort(path, BASE - 100, previous)
+
+    entries = []
+    for index in range(study.TRAIN_ENTRIES + study.HOLDOUT_ENTRIES):
+        opened = BASE + index * 900
+        entries.append({
+            "policy": "PHYSICAL_ONLY_V3", "direction": "BUY",
+            "opportunity_signal_id": f"sig-v3-successor-seed-{index:03d}",
+            "created_ts": opened, "open_ts": opened, "pre_ts": opened - 32,
+            "confirm_ts": opened - 30, "confirm_model_seconds": 600,
+            "model_seconds": 600, "adjusted_seconds": 300, "buffer_distance": .0002,
+        })
+    study.capture(entries, params=ctx["params"], buffer_mode="SMALL",
+        strategy_version="3.0.0", canonical_spec="V3_SCORELESS_OWNER_AMENDMENT_v1.1.0",
+        now_ts=entries[-1]["created_ts"], cohort_revision=previous)
+    old_path = path.with_name(study.DIRECTIONAL_FLOW_PREVIOUS_COHORT_FILE)
+    assert old_path.exists()
+
+    # The successor cannot start while the predecessor's training lot is pending.
+    first_advance = entries[-1]["created_ts"] + 1
+    ctx["clock"][0] = first_advance + .1
+    study.advance(now_ts=first_advance, active_provider="FINNHUB", price_loader=lambda _: None,
+        precise_observation_loader=lambda *_: None, prospective_cohort_revision=successor)
+    assert study._cohort(path, successor) is None
+
+    # Finalize the predecessor's first 60 observations as missing genuine entry quotes.
+    finalization = entries[-1]["created_ts"] + study.quotes.MAX_ENTRY_DELAY_SECONDS + study.BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS + 1
+    ctx["clock"][0] = finalization + .1
+    study.advance(now_ts=finalization, active_provider="FINNHUB", price_loader=lambda _: None,
+        precise_observation_loader=lambda *_: None, prospective_cohort_revision=successor)
+    prior_state = study._read(old_path)
+    prior_report = study.analyze(prior_state, now_ts=finalization)
+    prior_policy = prior_report["policies"][0]
+    assert prior_policy["status"] == "TRAINING_DATA_QUALITY_FAILED"
+    assert prior_policy["train_entries"] == study.TRAIN_ENTRIES
+    assert prior_policy["holdout_entries"] == study.HOLDOUT_ENTRIES
+    assert prior_policy["untouched_holdout"] is None
+    assert prior_policy["train_candidates"][0]["unknown"] == study.TRAIN_ENTRIES
+
+    # The next bounded cycle observes the failed training gate and freezes a new boundary.
+    cutover = finalization + 1
+    ctx["clock"][0] = cutover + .1
+    study.advance(now_ts=cutover, active_provider="FINNHUB", price_loader=lambda _: None,
+        precise_observation_loader=lambda *_: None, prospective_cohort_revision=successor)
+    marker = study._cohort(path, successor)
+    assert marker["successor"]["from_revision"] == previous
+    assert marker["successor"]["trigger"] == "TRAINING_DATA_QUALITY_FAILED"
+    assert marker["successor"]["prior_unique_entries"] == study.TRAIN_ENTRIES + study.HOLDOUT_ENTRIES
+    assert marker["successor"]["prior_nonoverlapping_entries"] == study.TRAIN_ENTRIES + study.HOLDOUT_ENTRIES
+    assert marker["successor"]["prior_train_entries"] == study.TRAIN_ENTRIES
+    assert marker["successor"]["prior_train_unknown"] == study.TRAIN_ENTRIES
+    assert marker["successor"]["prior_train_unknown_fraction"] == 1.0
+    assert marker["successor"]["prior_holdout_entries"] == study.HOLDOUT_ENTRIES
+    assert marker["successor"]["prior_holdout_evaluated"] is False
+    assert marker["starts_at"] == pytest.approx(cutover)
+
+    prior_bytes = old_path.read_bytes()
+    opened = cutover + 33
+    new_entry = {
+        "policy": "PHYSICAL_ONLY_V3", "direction": "BUY",
+        "opportunity_signal_id": "sig-v3-successor-fresh-001",
+        "created_ts": opened, "open_ts": opened, "pre_ts": cutover + 1,
+        "confirm_ts": cutover + 3, "confirm_model_seconds": 600,
+        "model_seconds": 600, "adjusted_seconds": 300, "buffer_distance": .0002,
+    }
+    study.capture([new_entry], params=ctx["params"], buffer_mode="SMALL",
+        strategy_version="3.0.0", canonical_spec="V3_SCORELESS_OWNER_AMENDMENT_v1.1.0",
+        now_ts=opened, cohort_revision=successor)
+    active = study._study_paths(path)[0]
+    new_state = study._read(active)
+    assert active.name == study.DIRECTIONAL_FLOW_COHORT_FILE
+    assert len(new_state["records"]) == 1
+    assert new_state["scope"]["prospective_cohort"]["successor"] == marker["successor"]
+    assert new_state["scope"]["parameter_sha256"] == prior_state["scope"]["parameter_sha256"]
+    assert new_state["scope"]["history_policy"] == prior_state["scope"]["history_policy"]
+    assert old_path.read_bytes() == prior_bytes
+
+    report = study.summary(now_ts=opened)
+    assert report["prospective_cohort"]["revision"] == successor
+    assert report["unique_entry_experiments"] == 1
+    assert report["policies"][0]["train_entries"] == 1
+    assert report["policies"][0]["holdout_entries"] == 0
+    assert report["policies"][0]["status"] == "COLLECTING_TRAINING"
+    assert report["ready_policies"] == []
+    assert report["execution_calibration_proven"] is False
+    assert report["automatic_activation_allowed"] is False
+    assert report["broker_executed"] is False
+    output = capsys.readouterr().out
+    assert "TSP_PHYSICAL_V3_COHORT_SUCCESSOR" in output
+    assert '"automatic_parameter_change": false' in output
+    assert '"execution_authority": false' in output
