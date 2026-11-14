@@ -204,7 +204,7 @@ def test_confirmed_duration_survives_changed_open_model_restart_and_independent_
     assert report["published_study_results"]["decisive"] == 0
 
 
-def test_confirmed_study_that_no_longer_fits_open_physics_is_not_published(study_setup):
+def test_confirmed_study_that_no_longer_fits_open_physics_is_not_published(study_setup, capsys):
     _, study, _, result, _, _, messages, _ = study_setup
     _confirmed_duration(study_setup, result.decision.time.t_needed_adjusted * 30)
     row = _capture(study_setup)
@@ -214,7 +214,51 @@ def test_confirmed_study_that_no_longer_fits_open_physics_is_not_published(study
                   price_loader=lambda _: _sample(BASE + 32, 1.1))
     assert not messages
     saved = next(iter(study._read(study._path())["records"].values()))
-    assert saved["study_delivery"]["entry"]["status"] == "SKIPPED_DURATION_INFEASIBLE"
+    receipt = saved["study_delivery"]["entry"]
+    assert receipt["status"] == "SKIPPED_DURATION_INFEASIBLE"
+    assert receipt["terminal_reason"] == "CONFIRMED_DURATION_SHORTER_THAN_OPEN_ADJUSTED_MOVEMENT"
+    assert receipt["duration_feasible_at_open"] is False
+    assert receipt["open_minus_confirmed_seconds"] > 0
+
+    terminal = [json.loads(line.split(" ", 1)[1]) for line in capsys.readouterr().out.splitlines()
+                if line.startswith("TSP_PHYSICAL_STUDY_DELIVERY_TERMINAL ")]
+    assert len(terminal) == 1
+    assert terminal[0]["status"] == "SKIPPED_DURATION_INFEASIBLE"
+    assert terminal[0]["study_plan_id"] == receipt["study_plan_id"]
+    assert terminal[0]["duration_feasible_at_open"] is False
+    assert terminal[0]["open_minus_confirmed_seconds"] == pytest.approx(
+        receipt["open_minus_confirmed_seconds"])
+
+    report = study.summary(now_ts=BASE + 32)
+    policy = receipt["duration_policy"]
+    reconciliation = report["study_delivery_reconciliation_by_duration_policy"][policy]
+    assert reconciliation["study_chains"] == 1
+    assert reconciliation["entry_status_counts"]["SKIPPED_DURATION_INFEASIBLE"] == 1
+    assert reconciliation["entry_terminal_reason_counts"][
+        "Durata confirmată la CONFIRM este mai scurtă decât timpul de mișcare cerut la OPEN"] == 1
+    assert reconciliation["duration_reconciliation"]["infeasible_at_open"] == 1
+    assert reconciliation["entry_api_accepted_count"] == 0
+    assert reconciliation["entry_terminal_count"] == 1
+    assert reconciliation["entry_pending_count"] == 0
+
+
+def test_missing_entry_quote_is_reported_by_cause_without_delivery_failure(study_setup):
+    _, study, _, _, _, _, messages, _ = study_setup
+    _capture(study_setup)
+    study.advance(now_ts=BASE + 60, active_provider="FINNHUB",
+                  price_loader=lambda _: None, observation_loader=lambda *_: None)
+    assert not messages
+    report = study.summary(now_ts=BASE + 60)
+    _, reconciliation = next(iter(report["study_delivery_reconciliation_by_duration_policy"].items()))
+    assert reconciliation["study_chains"] == 1
+    assert reconciliation["entry_status_counts"]["Lipsește cotația la intrare"] == 1
+    assert reconciliation["entry_collection_reason_counts"] == {
+        "Lipsește cotația la intrare": 1,
+    }
+    assert reconciliation["entry_api_accepted_count"] == 0
+    assert reconciliation["entry_terminal_count"] == 1
+    assert reconciliation["entry_pending_count"] == 0
+    assert reconciliation["result_api_accepted_count"] == 0
 
 
 def test_confirmed_study_exact_fit_accepts_only_machine_precision_drift(study_setup):
@@ -322,6 +366,14 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     report = study.summary(now_ts=target)
     assert report["study_open_now_api_accepted"] == report["study_results_api_accepted"] == 1
     assert report["actual_telegram_publications"] == 0 and not report["execution_calibration_proven"]
+    policy = delivery.second_duration.observation_policy(saved)
+    reconciliation = report["study_delivery_reconciliation_by_duration_policy"][policy]
+    assert reconciliation["study_chains"] == 1
+    assert reconciliation["entry_api_accepted_count"] == 1
+    assert reconciliation["result_api_accepted_count"] == 1
+    assert reconciliation["entry_api_acceptance_rate"] == 1.0
+    assert reconciliation["result_api_acceptance_rate"] == 1.0
+    assert reconciliation["duration_reconciliation"]["feasible_at_open"] == 1
     assert report["decision_snapshot_entries"] == 1
     saved = next(iter(study._read(study._path())["records"].values()))
     assert saved["decision_snapshot"]["decision_id"] == result.decision.decision_id
@@ -340,6 +392,9 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     assert settled["entry_quote_source"] == settled["expiry_quote_source"] == "LIVE_STREAM_CURRENT_M1_CLOSE"
     assert settled["observation_reason"] == "OBSERVED_PAIRED_EXPIRY"
     assert settled["buffer_position"] == "INSIDE_BUFFER" and settled["buffer_full_margin_status"] == "NOT_MET"
+    assert all("open_adjusted_seconds" in event for event in evidence)
+    assert all("open_minus_confirmed_seconds" in event for event in evidence)
+    assert all(event["duration_feasible_at_open"] is True for event in evidence)
     assert not {"caption", "destination_id", "chat_id", "token"} & settled.keys()
     # A later buffer hit remains a diagnostic; the original label stays unchanged.
     later = target+60

@@ -169,6 +169,35 @@ def _confirmed_study_feasible(horizon_seconds, adjusted_seconds):
     )
 
 
+def delivery_duration_evidence(row):
+    """Reconcile the immutable CONFIRM duration with the fresh OPEN requirement."""
+    observation = displayed_study_observation(row)
+    plan = observation.get("duration_plan")
+    plan = plan if isinstance(plan, dict) else None
+
+    def finite(value):
+        return float(value) if type(value) in (int, float) and math.isfinite(value) else None
+
+    confirmed = finite(observation.get("horizon_seconds"))
+    confirm_adjusted = finite(plan.get("adjusted_minutes")) * 60 if plan else None
+    open_adjusted = finite(row.get("adjusted_seconds"))
+    delta = (open_adjusted - confirmed
+             if open_adjusted is not None and confirmed is not None else None)
+    feasible = (_confirmed_study_feasible(confirmed, open_adjusted)
+                if confirmed is not None and open_adjusted is not None else None)
+    plan_id = plan.get("plan_id") if plan else None
+    return {
+        "duration_policy": second_duration.observation_policy(row),
+        "confirmed_plan_present": isinstance(plan_id, str) and bool(plan_id),
+        "study_plan_id": plan_id,
+        "study_duration_seconds": confirmed,
+        "confirm_adjusted_seconds": confirm_adjusted,
+        "open_adjusted_seconds": open_adjusted,
+        "open_minus_confirmed_seconds": delta,
+        "duration_feasible_at_open": feasible,
+    }
+
+
 def _reserve_study_horizon(row):
     plan = row["study_observation"]["duration_plan"]
     horizon = plan["duration_seconds"] + CONFIRM_RESERVE_SECONDS
@@ -1011,6 +1040,197 @@ def _compact(report):
     return {**report, "policies": policies}
 
 
+def _study_delivery_reconciliation_by_duration_policy(records):
+    """Bounded delivery pass-rate and terminal-cause accounting; never a decision input."""
+    from intelligence.observation_issue_presentation import collection_issue_label
+
+    reason_labels = {
+        "CONFIRMED_DURATION_SHORTER_THAN_OPEN_ADJUSTED_MOVEMENT":
+            "Durata confirmată la CONFIRM este mai scurtă decât timpul de mișcare cerut la OPEN",
+        "ENTRY_QUOTE_WINDOW_EXPIRED_BEFORE_PRIVATE_STUDY_DELIVERY":
+            "Fereastra inițială pentru cotația de intrare a expirat înainte de livrare",
+        "ORIGINAL_PRIVATE_OPEN_STAGE_GUARD_FAILED":
+            "Verificarea originală a etapei OPEN pentru studiul privat nu a fost satisfăcută",
+        "OWNER_PRIVATE_DESTINATION_CHANGED_BEFORE_RESULT":
+            "Destinația privată s-a schimbat înainte de rezultat",
+        "AMBIGUOUS_API_RECEIPT_NO_RETRY":
+            "Recepția API a rămas ambiguă; nu s-a reîncercat",
+        "PRIVATE_API_REJECTED": "API-ul privat a respins livrarea",
+    }
+    groups = {}
+
+    def phase_status(row, phase, observation):
+        delivery = row.get("study_delivery") or {}
+        receipt = delivery.get(phase)
+        if isinstance(receipt, dict):
+            status = receipt.get("status")
+            if status == "UNKNOWN":
+                return "AMBIGUOUS_API_RECEIPT_NO_RETRY", True, receipt
+            if status == "FAILED":
+                return "API_REJECTED", True, receipt
+            if status == "RESERVED":
+                return "API_RECEIPT_PENDING", False, receipt
+            return status, True, receipt
+        if phase == "entry":
+            if row.get("entry") is None:
+                reason = observation.get("reason")
+                if reason not in {"ENTRY_OBSERVATION_MISSING", "PROVIDER_CHANGED"}:
+                    reason = next((candidate.get("reason") for candidate in row.get("candidates", [])
+                                   if candidate.get("reason") in {
+                                       "ENTRY_OBSERVATION_MISSING", "PROVIDER_CHANGED"}), None)
+                if reason is not None:
+                    return collection_issue_label(reason), True, None
+                if row.get("state") == "FINAL":
+                    return collection_issue_label(None), True, None
+                return "WAITING_FOR_ENTRY_QUOTE", False, None
+            if observation.get("outcome") == "INFEASIBLE":
+                return "DURATION_INFEASIBLE_AWAITING_TERMINAL_RECORD", False, None
+            return "WAITING_FOR_ENTRY_API_ACCEPTANCE", False, None
+        entry = delivery.get("entry")
+        if not isinstance(entry, dict) or entry.get("status") != "API_ACCEPTED":
+            return "NOT_ELIGIBLE_ENTRY_NOT_ACCEPTED", False, None
+        if observation.get("outcome") == "PENDING":
+            return "WAITING_FOR_EXPIRY_QUOTE", False, None
+        if observation.get("outcome") == "INFEASIBLE":
+            return "NOT_ELIGIBLE_DURATION_INFEASIBLE", False, None
+        return "WAITING_FOR_RESULT_API_ACCEPTANCE", False, None
+
+    def terminal_reason(status, receipt):
+        code = receipt.get("terminal_reason") if isinstance(receipt, dict) else None
+        if code:
+            return reason_labels.get(code, code)
+        if status == "API_ACCEPTED":
+            return "API acceptat; afișarea pe telefon nu este confirmată"
+        if status == "API_REJECTED":
+            return reason_labels["PRIVATE_API_REJECTED"]
+        if status == "AMBIGUOUS_API_RECEIPT_NO_RETRY":
+            return reason_labels["AMBIGUOUS_API_RECEIPT_NO_RETRY"]
+        return status
+
+    for row in records:
+        if not isinstance(row.get("study_delivery"), dict):
+            continue
+        policy = second_duration.observation_policy(row)
+        group = groups.setdefault(policy, {
+            "study_chains": 0,
+            "_entry_status_counts": Counter(),
+            "_result_status_counts": Counter(),
+            "_entry_terminal_reason_counts": Counter(),
+            "_result_terminal_reason_counts": Counter(),
+            "_entry_collection_reason_counts": Counter(),
+            "_result_collection_reason_counts": Counter(),
+            "_entry_api_accepted": 0,
+            "_result_api_accepted": 0,
+            "_entry_terminal": 0,
+            "_result_terminal": 0,
+            "_result_ready": 0,
+            "_confirmed_plan_present": 0,
+            "_confirmed_plan_missing": 0,
+            "_duration_feasible": 0,
+            "_duration_infeasible": 0,
+            "_duration_unavailable": 0,
+            "_confirmed_duration_seconds": [],
+            "_confirm_adjusted_seconds": [],
+            "_open_adjusted_seconds": [],
+            "_open_minus_confirmed_seconds": [],
+        })
+        group["study_chains"] += 1
+        observation = displayed_study_observation(row)
+        duration = delivery_duration_evidence(row)
+        if duration["confirmed_plan_present"]:
+            group["_confirmed_plan_present"] += 1
+        else:
+            group["_confirmed_plan_missing"] += 1
+        if duration["duration_feasible_at_open"] is True:
+            group["_duration_feasible"] += 1
+        elif duration["duration_feasible_at_open"] is False:
+            group["_duration_infeasible"] += 1
+        else:
+            group["_duration_unavailable"] += 1
+        for key, value in (
+            ("_confirmed_duration_seconds", duration["study_duration_seconds"]),
+            ("_confirm_adjusted_seconds", duration["confirm_adjusted_seconds"]),
+            ("_open_adjusted_seconds", duration["open_adjusted_seconds"]),
+            ("_open_minus_confirmed_seconds", duration["open_minus_confirmed_seconds"]),
+        ):
+            if value is not None:
+                group[key].append(value)
+
+        entry_status, entry_terminal, entry_receipt = phase_status(row, "entry", observation)
+        result_status, result_terminal, result_receipt = phase_status(row, "result", observation)
+        group["_entry_status_counts"][entry_status] += 1
+        group["_result_status_counts"][result_status] += 1
+        group["_entry_api_accepted"] += int(
+            isinstance(entry_receipt, dict) and entry_receipt.get("status") == "API_ACCEPTED")
+        group["_result_api_accepted"] += int(
+            isinstance(result_receipt, dict) and result_receipt.get("status") == "API_ACCEPTED")
+        group["_entry_terminal"] += int(entry_terminal)
+        group["_result_terminal"] += int(result_terminal)
+        if entry_terminal:
+            group["_entry_terminal_reason_counts"][terminal_reason(entry_status, entry_receipt)] += 1
+        if result_terminal:
+            group["_result_terminal_reason_counts"][terminal_reason(result_status, result_receipt)] += 1
+
+        if row.get("entry") is None:
+            entry_reason = observation.get("reason")
+            if entry_reason not in {"ENTRY_OBSERVATION_MISSING", "PROVIDER_CHANGED"}:
+                entry_reason = next((candidate.get("reason") for candidate in row.get("candidates", [])
+                                     if candidate.get("reason") in {
+                                         "ENTRY_OBSERVATION_MISSING", "PROVIDER_CHANGED"}), None)
+            if entry_reason is not None or row.get("state") == "FINAL":
+                group["_entry_collection_reason_counts"][collection_issue_label(entry_reason)] += 1
+        elif observation.get("outcome") == "UNKNOWN":
+            group["_result_collection_reason_counts"][
+                collection_issue_label(observation.get("reason"))] += 1
+
+        entry_receipt = (row.get("study_delivery") or {}).get("entry")
+        result_ready = (isinstance(entry_receipt, dict)
+                        and entry_receipt.get("status") == "API_ACCEPTED"
+                        and observation.get("outcome") not in {"PENDING", "INFEASIBLE"})
+        group["_result_ready"] += int(result_ready)
+
+    result = {}
+    for policy, group in sorted(groups.items()):
+        chains = group["study_chains"]
+        entry_accepted = group["_entry_api_accepted"]
+        result_accepted = group["_result_api_accepted"]
+        entry_terminal = group["_entry_terminal"]
+        result_terminal = group["_result_terminal"]
+        result_ready = group["_result_ready"]
+        result[policy] = {
+            "study_chains": chains,
+            "entry_status_counts": dict(sorted(group["_entry_status_counts"].items())),
+            "result_status_counts": dict(sorted(group["_result_status_counts"].items())),
+            "entry_terminal_reason_counts": dict(sorted(group["_entry_terminal_reason_counts"].items())),
+            "result_terminal_reason_counts": dict(sorted(group["_result_terminal_reason_counts"].items())),
+            "entry_collection_reason_counts": dict(sorted(group["_entry_collection_reason_counts"].items())),
+            "result_collection_reason_counts": dict(sorted(group["_result_collection_reason_counts"].items())),
+            "entry_api_accepted_count": entry_accepted,
+            "entry_terminal_count": entry_terminal,
+            "entry_pending_count": max(0, chains - entry_terminal),
+            "entry_api_acceptance_rate": entry_accepted / chains if chains else None,
+            "entry_terminal_acceptance_rate": entry_accepted / entry_terminal if entry_terminal else None,
+            "result_api_accepted_count": result_accepted,
+            "result_ready_count": result_ready,
+            "result_terminal_count": result_terminal,
+            "result_pending_count": max(0, result_ready - result_terminal),
+            "result_api_acceptance_rate": result_accepted / result_ready if result_ready else None,
+            "result_terminal_acceptance_rate": result_accepted / result_terminal if result_terminal else None,
+            "duration_reconciliation": {
+                "confirmed_plan_present": group["_confirmed_plan_present"],
+                "confirmed_plan_missing": group["_confirmed_plan_missing"],
+                "feasible_at_open": group["_duration_feasible"],
+                "infeasible_at_open": group["_duration_infeasible"],
+                "unavailable": group["_duration_unavailable"],
+                "confirmed_duration_seconds": _quantiles(group["_confirmed_duration_seconds"]),
+                "confirm_adjusted_seconds": _quantiles(group["_confirm_adjusted_seconds"]),
+                "open_adjusted_seconds": _quantiles(group["_open_adjusted_seconds"]),
+                "open_minus_confirmed_seconds": _quantiles(group["_open_minus_confirmed_seconds"]),
+            },
+        }
+    return result
+
+
 def _training_blockers(counts, training_complete):
     if not training_complete:
         return ["TRAINING_LOT_INCOMPLETE"]
@@ -1173,7 +1393,8 @@ def analyze(state, *, now_ts):
               "published_study_results_scope": "ALL_HISTORICAL_DURATION_POLICIES",
               "published_study_results_by_duration_policy": {},
               "published_study_results_by_quote_recovery_policy": {},
-              "published_study_expiry_estimates": _published_estimate_counts([])}
+              "published_study_expiry_estimates": _published_estimate_counts([]),
+              "study_delivery_reconciliation_by_duration_policy": {}}
     if state is None:
         from intelligence.same_symbol_sequences import summarize
         report["same_symbol_10min_sequences"] = summarize([])
@@ -1230,6 +1451,8 @@ def analyze(state, *, now_ts):
     report["study_delivery_statuses"] = dict(Counter(
         f"{phase}:{receipt['status']}" for r in records
         for phase, receipt in (r.get("study_delivery") or {}).items() if receipt))
+    report["study_delivery_reconciliation_by_duration_policy"] = (
+        _study_delivery_reconciliation_by_duration_policy(records))
     report["post_model_diagnostics"] = [{"offset_seconds": offset, **_counts([
         {**r, "candidates": r["post_model_observations"]} for r in records
         if "post_model_observations" in r], index)} for index, offset in enumerate(POST_MODEL_OFFSETS)]

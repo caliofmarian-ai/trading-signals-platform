@@ -53,6 +53,28 @@ def validate_delivery(row):
             raise ValueError("INVALID_STUDY_RECEIPT")
         if "format" in receipt and receipt["format"] not in {"TEXT", "PHOTO"}:
             raise ValueError("INVALID_STUDY_RECEIPT_FORMAT")
+        if "terminal_reason" in receipt and (
+            not isinstance(receipt["terminal_reason"], str)
+            or not receipt["terminal_reason"].strip() or len(receipt["terminal_reason"]) > 128):
+            raise ValueError("INVALID_STUDY_RECEIPT_TERMINAL_REASON")
+        if "reason_code" in receipt and (
+            not isinstance(receipt["reason_code"], str)
+            or not receipt["reason_code"].strip() or len(receipt["reason_code"]) > 128):
+            raise ValueError("INVALID_STUDY_RECEIPT_REASON_CODE")
+        if "duration_policy" in receipt and (
+            not isinstance(receipt["duration_policy"], str)
+            or not receipt["duration_policy"].strip() or len(receipt["duration_policy"]) > 128):
+            raise ValueError("INVALID_STUDY_RECEIPT_DURATION_POLICY")
+        if "study_plan_id" in receipt and receipt["study_plan_id"] is not None and (
+            not isinstance(receipt["study_plan_id"], str) or len(receipt["study_plan_id"]) != 64
+            or any(char not in "0123456789abcdef" for char in receipt["study_plan_id"])):
+            raise ValueError("INVALID_STUDY_RECEIPT_PLAN_ID")
+        for key in ("study_duration_seconds", "confirm_adjusted_seconds", "open_adjusted_seconds",
+                    "open_minus_confirmed_seconds"):
+            if key in receipt and receipt[key] is not None:
+                study._number(receipt[key])
+        if "duration_feasible_at_open" in receipt and receipt["duration_feasible_at_open"] not in (None, True, False):
+            raise ValueError("INVALID_STUDY_RECEIPT_DURATION_FEASIBILITY")
         if "signal_label" in receipt and (not isinstance(receipt["signal_label"], str)
                 or not receipt["signal_label"].strip() or len(receipt["signal_label"]) > 128):
             raise ValueError("INVALID_STUDY_RECEIPT_SIGNAL_LABEL")
@@ -489,7 +511,37 @@ def _commit_receipt(path, identity, phase, receipt):
     return False
 
 
+def _terminal_reason(status, phase):
+    if status == "SKIPPED_DURATION_INFEASIBLE":
+        return "CONFIRMED_DURATION_SHORTER_THAN_OPEN_ADJUSTED_MOVEMENT"
+    if status == "SKIPPED_STALE":
+        return "ENTRY_QUOTE_WINDOW_EXPIRED_BEFORE_PRIVATE_STUDY_DELIVERY"
+    if status == "SKIPPED_STAGE_GUARD":
+        return "ORIGINAL_PRIVATE_OPEN_STAGE_GUARD_FAILED"
+    if status == "SKIPPED_DESTINATION_CHANGED":
+        return "OWNER_PRIVATE_DESTINATION_CHANGED_BEFORE_RESULT"
+    return "STUDY_DELIVERY_TERMINATED"
+
+
+def _terminal_event(identity, row, phase, status, now, reason_code=None):
+    return {
+        "protocol": "PHYSICAL_STUDY_DELIVERY_TERMINAL_V1",
+        "study_ref": identity[:12],
+        "phase": phase,
+        "status": status,
+        "terminal_reason": _terminal_reason(status, phase),
+        "reason_code": reason_code,
+        **study.delivery_duration_evidence(row),
+        "observed_at": now,
+        "truth_domain": "HYPOTHETICAL_RESEARCH",
+        "execution_authority": False,
+        "broker_executed": False,
+    }
+
+
 def _reserve(path, phase, now, destination):
+    terminal_events = []
+    reserved = None
     with storage.with_lock("physical_v3_expiry_calibration", timeout_sec=.2):
         state = study._read(path)
         if state is None:
@@ -501,6 +553,7 @@ def _reserve(path, phase, now, destination):
                 or row["entry"] is None or now < row["created_ts"]):
                 continue
             status = "RESERVED"
+            stage_guard_reason = None
             if phase == "entry":
                 if now - row["created_ts"] > study.quotes.MAX_ENTRY_DELAY_SECONDS:
                     status = "SKIPPED_STALE"
@@ -512,8 +565,8 @@ def _reserve(path, phase, now, destination):
                     if "study_observation" in row:
                         event.update({key: value for key, value in _entry_event(row).items()
                                       if key.startswith("study_")})
-                    reason = owner.stage_block_reason(event, now_ts=row["created_ts"])
-                    if reason is not None:
+                    stage_guard_reason = owner.stage_block_reason(event, now_ts=row["created_ts"])
+                    if stage_guard_reason is not None:
                         status = "SKIPPED_STAGE_GUARD"
             elif ((delivery.get("entry") or {}).get("status") != "API_ACCEPTED"
                   or study.displayed_study_observation(row)["outcome"] in {"PENDING", "INFEASIBLE"}):
@@ -534,16 +587,27 @@ def _reserve(path, phase, now, destination):
                         # (also inconclusive) or the original bounded deadline.
                         # This never postpones exact settlement or other results.
                         continue
-            delivery[phase] = {"status": status, "attempted_ts": now}
             if status == "RESERVED":
-                delivery[phase]["destination_id"] = destination
+                delivery[phase] = {"status": status, "attempted_ts": now,
+                                   "destination_id": destination}
+                changed = True
+                reserved = (identity, deepcopy(row))
+                break
+            terminal_reason = _terminal_reason(status, phase)
+            duration = study.delivery_duration_evidence(row)
+            receipt = {"status": status, "attempted_ts": now, "terminal_reason": terminal_reason,
+                       **duration}
+            if stage_guard_reason is not None:
+                receipt["reason_code"] = str(stage_guard_reason)[:128]
+            delivery[phase] = receipt
             changed = True
-            if status == "RESERVED":
-                study._save(path, state)  # reserve before transport; ambiguous delivery is never retried
-                return identity, deepcopy(row)
+            terminal_events.append(_terminal_event(
+                identity, row, phase, status, now, reason_code=stage_guard_reason))
         if changed:
             study._save(path, state)
-    return None
+    for event in terminal_events:
+        print("TSP_PHYSICAL_STUDY_DELIVERY_TERMINAL " + json.dumps(event, sort_keys=True), flush=True)
+    return reserved
 
 
 def dispatch(*, now_ts, active_provider):
@@ -646,6 +710,7 @@ def dispatch(*, now_ts, active_provider):
                 }, sort_keys=True), flush=True)
         observation = study.displayed_study_observation(row)
         expiry_quote = observation.get("quote") or {}
+        duration_evidence = study.delivery_duration_evidence(row)
         print("TSP_PHYSICAL_STUDY_DELIVERY " + json.dumps({
             "phase": phase, "status": receipt["status"], "study_id": identity,
             "format": receipt["format"], "signal_label": signal_label,
@@ -654,7 +719,12 @@ def dispatch(*, now_ts, active_provider):
             "study_duration_source": study.displayed_study_observation(row).get("duration_source", "LEGACY_OPEN_MODEL_TIME"),
             "study_confirmed_ts": study.displayed_study_observation(row).get("confirmed_ts"),
             "study_duration_policy": second_duration.observation_policy(row),
-            "study_plan_id": (observation.get("duration_plan") or {}).get("plan_id"),
+            "study_plan_id": duration_evidence["study_plan_id"],
+            "confirmed_plan_present": duration_evidence["confirmed_plan_present"],
+            "confirm_adjusted_seconds": duration_evidence["confirm_adjusted_seconds"],
+            "open_adjusted_seconds": duration_evidence["open_adjusted_seconds"],
+            "open_minus_confirmed_seconds": duration_evidence["open_minus_confirmed_seconds"],
+            "duration_feasible_at_open": duration_evidence["duration_feasible_at_open"],
             "study_outcome": observation["outcome"] if phase == "result" else None,
             "expiry_quote_ts": expiry_quote.get("observed_ts") if phase == "result" else None,
             "expiry_price": expiry_quote.get("price") if phase == "result" else None,
