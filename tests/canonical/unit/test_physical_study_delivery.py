@@ -937,6 +937,9 @@ def test_empty_prospective_cohort_reports_zero_current_delivery_counts(study_set
     startup = study.advance(now_ts=BASE, active_provider="FINNHUB",
                             price_loader=lambda _: None, start_prospective_cohort=True)
     assert startup["unique_entry_experiments"] == 0
+    assert startup["study_open_now_api_accepted"] == 0
+    assert startup["study_results_api_accepted"] == 0
+    assert startup["study_delivery_statuses"] == {}
     assert not study._study_paths(path)[0].exists()
 
     report = study.summary(now_ts=BASE)
