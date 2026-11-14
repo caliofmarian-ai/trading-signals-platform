@@ -89,7 +89,10 @@ def _quote_recovery_identity(row):
 
 def displayed_study_observation(row):
     """Use the prospectively confirmed horizon; retain old published baselines."""
-    return row.get("study_observation", row["candidates"][0])
+    observation = row.get("study_observation")
+    if observation is not None:
+        return observation
+    return row["candidates"][0]
 
 
 def _estimate_target(row):
