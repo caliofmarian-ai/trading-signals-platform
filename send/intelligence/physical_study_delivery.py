@@ -58,6 +58,9 @@ def validate_delivery(row):
             raise ValueError("INVALID_STUDY_RECEIPT_SIGNAL_LABEL")
         if "destination_id" in receipt and (type(receipt["destination_id"]) is not int or receipt["destination_id"] <= 0):
             raise ValueError("INVALID_STUDY_RECEIPT_DESTINATION")
+        if "resolution_reason" in receipt and (not isinstance(receipt["resolution_reason"], str)
+                or not receipt["resolution_reason"].strip() or len(receipt["resolution_reason"]) > 160):
+            raise ValueError("INVALID_STUDY_RECEIPT_RESOLUTION_REASON")
         study._number(receipt["attempted_ts"])
         if receipt["status"] == "API_ACCEPTED":
             if (type(receipt.get("message_id")) is not int or receipt["message_id"] <= 0
@@ -501,11 +504,14 @@ def _reserve(path, phase, now, destination):
                 or row["entry"] is None or now < row["created_ts"]):
                 continue
             status = "RESERVED"
+            resolution_reason = None
             if phase == "entry":
                 if now - row["created_ts"] > study.quotes.MAX_ENTRY_DELAY_SECONDS:
                     status = "SKIPPED_STALE"
+                    resolution_reason = "ENTRY_WINDOW_EXPIRED_BEFORE_DELIVERY"
                 elif study.displayed_study_observation(row)["outcome"] == "INFEASIBLE":
                     status = "SKIPPED_DURATION_INFEASIBLE"
+                    resolution_reason = "OPEN_ADJUSTED_TIME_EXCEEDS_CONFIRMED_DURATION"
                 else:
                     context = row["policies"]["PHYSICAL_ONLY_V3"]
                     event = {"stage": "OPEN_NOW", "signal_id": context["opportunity_signal_id"]}
@@ -515,11 +521,13 @@ def _reserve(path, phase, now, destination):
                     reason = owner.stage_block_reason(event, now_ts=row["created_ts"])
                     if reason is not None:
                         status = "SKIPPED_STAGE_GUARD"
+                        resolution_reason = str(reason).strip()[:160] or "OWNER_STAGE_GUARD_REASON_UNAVAILABLE"
             elif ((delivery.get("entry") or {}).get("status") != "API_ACCEPTED"
                   or study.displayed_study_observation(row)["outcome"] in {"PENDING", "INFEASIBLE"}):
                 continue
             elif delivery["entry"].get("destination_id", destination) != destination:
                 status = "SKIPPED_DESTINATION_CHANGED"
+                resolution_reason = "OWNER_DESTINATION_CHANGED"
             elif phase == "result":
                 target = study._estimate_target(row)
                 if target is not None:
@@ -535,16 +543,16 @@ def _reserve(path, phase, now, destination):
                         # This never postpones exact settlement or other results.
                         continue
             delivery[phase] = {"status": status, "attempted_ts": now}
+            if resolution_reason is not None:
+                delivery[phase]["resolution_reason"] = resolution_reason
             if status == "RESERVED":
                 delivery[phase]["destination_id"] = destination
-            changed = True
-            if status == "RESERVED":
                 study._save(path, state)  # reserve before transport; ambiguous delivery is never retried
                 return identity, deepcopy(row)
+            changed = True
         if changed:
             study._save(path, state)
     return None
-
 
 def dispatch(*, now_ts, active_provider):
     destination = owner.destination()
@@ -565,6 +573,7 @@ def dispatch(*, now_ts, active_provider):
         signal_id = row["policies"]["PHYSICAL_ONLY_V3"]["opportunity_signal_id"]
         receipt = {"status": "UNKNOWN", "attempted_ts": now_ts, "format": "TEXT", "destination_id": destination}
         signal_label = None
+        transport_started = False
         try:
             photo = None
             if phase == "entry":
@@ -577,7 +586,7 @@ def dispatch(*, now_ts, active_provider):
                         "study_id": identity, "error_class": type(exc).__name__}), flush=True)
                     from core.signal_card import render_signal_text
                     text = render_signal_text(_entry_event(row), signal_label, study=True)
-                    text += "\nImagine indisponibilă pentru această observație."
+                    text += "\\nImagine indisponibilă pentru această observație."
             else:
                 signal_label = (row["study_delivery"]["entry"].get("signal_label")
                                 or owner_signal_number.lookup(signal_id, study=True)
@@ -588,7 +597,7 @@ def dispatch(*, now_ts, active_provider):
                 except Exception as exc:
                     print("TSP_PHYSICAL_STUDY_CHART_UNAVAILABLE " + json.dumps({
                         "study_id": identity, "error_class": type(exc).__name__}), flush=True)
-                    text += "\nGrafic indisponibil pentru această observație."
+                    text += "\\nGrafic indisponibil pentru această observație."
             if signal_label is not None:
                 receipt["signal_label"] = signal_label
             entry_receipt = row["study_delivery"]["entry"] if phase == "result" else {}
@@ -598,7 +607,9 @@ def dispatch(*, now_ts, active_provider):
             # Reservation precedes rendering, which can outlast the entry window.
             if phase == "entry" and time.time() - row["created_ts"] > study.quotes.MAX_ENTRY_DELAY_SECONDS:
                 receipt["status"] = "SKIPPED_STALE"
+                receipt["resolution_reason"] = "ENTRY_WINDOW_EXPIRED_DURING_RENDER"
             else:
+                transport_started = True
                 if photo is not None:
                     receipt["format"] = "PHOTO"
                     response = telegram_publisher.send_photo(chat_id=destination, photo=photo, caption=text,
@@ -609,16 +620,25 @@ def dispatch(*, now_ts, active_provider):
                     response = telegram_publisher.send_message(chat_id=destination, text=text)
                 message_id = (response.get("result") or {}).get("message_id")
                 accepted_ts = time.time()
-                if (response.get("ok") is True and type(message_id) is int and message_id > 0
-                    and accepted_ts >= now_ts):
-                    receipt.update(status="API_ACCEPTED", message_id=message_id,
-                                   api_accepted_ts=accepted_ts)
+                if response.get("ok") is True:
+                    if type(message_id) is int and message_id > 0:
+                        if accepted_ts >= now_ts:
+                            receipt.update(status="API_ACCEPTED", message_id=message_id,
+                                           api_accepted_ts=accepted_ts)
+                        else:
+                            receipt["resolution_reason"] = "API_ACCEPTANCE_TIMESTAMP_INVALID"
+                    else:
+                        receipt["resolution_reason"] = "API_ACCEPTANCE_RESPONSE_MISSING_MESSAGE_ID"
                 elif response.get("ok") is False:
-                    receipt["status"] = "FAILED"
+                    receipt.update(status="FAILED", resolution_reason="TELEGRAM_API_REJECTED")
+                else:
+                    receipt["resolution_reason"] = "AMBIGUOUS_TRANSPORT_ACCEPTANCE"
         except telegram_publisher.TelegramAPIError:
-            receipt["status"] = "FAILED"
+            receipt.update(status="FAILED", resolution_reason="TELEGRAM_API_ERROR")
         except Exception:
-            pass  # ambiguous network acceptance: retain UNKNOWN and do not retry an OPEN
+            receipt["resolution_reason"] = (
+                "AMBIGUOUS_TRANSPORT_ACCEPTANCE" if transport_started
+                else "STUDY_RENDER_OR_PIPELINE_EXCEPTION")
         journal_persisted = False
         try:
             journal_persisted = _write_receipt_journal(path, identity, phase, receipt)
@@ -647,8 +667,8 @@ def dispatch(*, now_ts, active_provider):
         observation = study.displayed_study_observation(row)
         expiry_quote = observation.get("quote") or {}
         print("TSP_PHYSICAL_STUDY_DELIVERY " + json.dumps({
-            "phase": phase, "status": receipt["status"], "study_id": identity,
-            "format": receipt["format"], "signal_label": signal_label,
+            "phase": phase, "status": receipt["status"], "resolution_reason": receipt.get("resolution_reason"),
+            "study_id": identity, "format": receipt["format"], "signal_label": signal_label,
             "observed_at": now_ts, "truth_domain": "HYPOTHETICAL_RESEARCH",
             "study_duration_seconds": study.displayed_study_observation(row)["horizon_seconds"],
             "study_duration_source": study.displayed_study_observation(row).get("duration_source", "LEGACY_OPEN_MODEL_TIME"),
