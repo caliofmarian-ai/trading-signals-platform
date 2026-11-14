@@ -391,7 +391,7 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     assert saved["decision_snapshot"]["decision_id"] == result.decision.decision_id
     assert saved["decision_snapshot"]["indicators"]["atr_m5"] == result.market.evidence.atr_m5
     assert saved["study_delivery"]["entry"]["format"] == "PHOTO"
-    assert saved["study_delivery"]["entry"]["resolution_reason"] == "AMBIGUOUS_TRANSPORT_ACCEPTANCE"
+    assert "resolution_reason" not in saved["study_delivery"]["entry"]
     assert saved["study_delivery"]["result"]["format"] == "PHOTO"
     assert saved["study_delivery"]["entry"]["signal_label"] == label
     assert saved["study_delivery"]["result"]["signal_label"] == label
@@ -596,6 +596,7 @@ def test_ambiguous_transport_is_not_retried(study_setup, monkeypatch):
     saved=next(iter(study._read(study._path())["records"].values()))
     assert saved["study_delivery"]["entry"]["status"]=="UNKNOWN"
     assert saved["study_delivery"]["entry"]["format"]=="PHOTO"
+    assert saved["study_delivery"]["entry"]["resolution_reason"] == "AMBIGUOUS_TRANSPORT_ACCEPTANCE"
 
 
 def test_entry_render_crossing_original_window_skips_transport(study_setup, monkeypatch):
