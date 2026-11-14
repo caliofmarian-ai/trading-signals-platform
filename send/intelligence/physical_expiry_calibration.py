@@ -391,8 +391,16 @@ def _activate_cohort_locked(path, now, revision):
     if _cohort(path, revision) is not None:
         return False
     payload = {"revision": revision, "starts_at": now}
-    successor = (_cohort_successor_metadata(path, now)
-                 if revision == DIRECTIONAL_FLOW_COHORT_REVISION else None)
+    successor = None
+    if revision == DIRECTIONAL_FLOW_COHORT_REVISION:
+        predecessor = _cohort(path, DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION)
+        if predecessor is not None:
+            successor = _cohort_successor_metadata(path, now)
+            # Do not freeze an empty successor boundary while the predecessor
+            # is still collecting. The next bounded cycle must be able to
+            # observe its terminal training-quality/capacity trigger.
+            if successor is None:
+                return False
     if successor is not None:
         payload["successor"] = successor
     _validate_cohort(payload, revision=revision)
