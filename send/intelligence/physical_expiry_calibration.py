@@ -43,14 +43,20 @@ COHORT_REVISION = "V3_EXACT_DIRECTIONAL_ROOM_V1"
 COHORT_FILE = "exact_directional_room_v1_state.json"
 PRECISE_COHORT_REVISION = "V3_EXACT_PROVIDER_MILLISECONDS_V1"
 PRECISE_COHORT_FILE = "exact_provider_milliseconds_v1_state.json"
-DIRECTIONAL_FLOW_COHORT_REVISION = "V3_DIRECTIONAL_FLOW_GATE_V1"
-DIRECTIONAL_FLOW_COHORT_FILE = "directional_flow_gate_v1_state.json"
+DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION = "V3_DIRECTIONAL_FLOW_GATE_V1"
+DIRECTIONAL_FLOW_PREVIOUS_COHORT_FILE = "directional_flow_gate_v1_state.json"
+DIRECTIONAL_FLOW_COHORT_REVISION = "V3_DIRECTIONAL_FLOW_GATE_V2"
+DIRECTIONAL_FLOW_COHORT_FILE = "directional_flow_gate_v2_state.json"
 _COHORT_PATHS = {
-    DIRECTIONAL_FLOW_COHORT_REVISION: (DIRECTIONAL_FLOW_COHORT_FILE, "directional_flow_gate_v1_cutover.json"),
+    DIRECTIONAL_FLOW_COHORT_REVISION: (DIRECTIONAL_FLOW_COHORT_FILE, "directional_flow_gate_v2_cutover.json"),
+    DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION: (DIRECTIONAL_FLOW_PREVIOUS_COHORT_FILE, "directional_flow_gate_v1_cutover.json"),
     PRECISE_COHORT_REVISION: (PRECISE_COHORT_FILE, "exact_provider_milliseconds_v1_cutover.json"),
     COHORT_REVISION: (COHORT_FILE, "exact_directional_room_v1_cutover.json"),
 }
-_PRECISE_COHORTS = {DIRECTIONAL_FLOW_COHORT_REVISION, PRECISE_COHORT_REVISION}
+_PRECISE_COHORTS = {
+    DIRECTIONAL_FLOW_COHORT_REVISION, DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION,
+    PRECISE_COHORT_REVISION,
+}
 # Allow a delayed retained tick to arrive without extending its source-time window.
 # Post-isolation production evidence includes receive delays of 7.366 seconds.
 # This prospectively frozen allowance addresses receipt latency, not source gaps.
@@ -285,17 +291,89 @@ def _cohort_marker(path, revision):
     return marker
 
 
+def _validate_cohort(cohort, revision=None):
+    allowed_keys = ({"revision", "starts_at"}, {"revision", "starts_at", "successor"})
+    if (not isinstance(cohort, dict) or set(cohort) not in allowed_keys
+            or cohort.get("revision") not in _COHORT_PATHS
+            or (revision is not None and cohort.get("revision") != revision)):
+        raise ValueError("INVALID_CALIBRATION_COHORT")
+    _number(cohort["starts_at"])
+    successor = cohort.get("successor")
+    if successor is not None:
+        required = {"from_revision", "trigger", "prior_status", "prior_unique_entries",
+                    "prior_nonoverlapping_entries", "prior_train_entries", "prior_train_unknown",
+                    "prior_train_unknown_fraction", "prior_holdout_entries", "prior_holdout_evaluated",
+                    "prior_parameter_sha256", "prior_history_policy"}
+        if (cohort["revision"] != DIRECTIONAL_FLOW_COHORT_REVISION
+                or not isinstance(successor, dict) or set(successor) != required
+                or successor["from_revision"] != DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION
+                or successor["trigger"] not in {"TRAINING_DATA_QUALITY_FAILED", "COHORT_CAPACITY_REACHED"}
+                or not isinstance(successor["prior_status"], str) or not successor["prior_status"]
+                or type(successor["prior_holdout_evaluated"]) is not bool
+                or successor["prior_history_policy"] != HISTORY_POLICY
+                or not isinstance(successor["prior_parameter_sha256"], str)
+                or len(successor["prior_parameter_sha256"]) != 64
+                or any(ch not in "0123456789abcdef" for ch in successor["prior_parameter_sha256"])):
+            raise ValueError("INVALID_CALIBRATION_COHORT_SUCCESSOR")
+        for key in ("prior_unique_entries", "prior_nonoverlapping_entries", "prior_train_entries",
+                    "prior_train_unknown", "prior_holdout_entries"):
+            if type(successor[key]) is not int or successor[key] < 0:
+                raise ValueError("INVALID_CALIBRATION_COHORT_SUCCESSOR")
+        fraction = successor["prior_train_unknown_fraction"]
+        if (type(fraction) not in (int, float) or not math.isfinite(fraction)
+                or not 0 <= fraction <= 1):
+            raise ValueError("INVALID_CALIBRATION_COHORT_SUCCESSOR")
+    return cohort
+
+
 def _cohort(path, revision):
     marker = _cohort_marker(path, revision)
     if not marker.exists():
         return None
     with marker.open("rb") as stream:
-        payload = json.loads(stream.read(512))
-    if (not isinstance(payload, dict) or set(payload) != {"revision", "starts_at"}
-        or payload["revision"] != revision):
-        raise ValueError("INVALID_CALIBRATION_COHORT")
-    _number(payload["starts_at"])
-    return payload
+        payload = json.loads(stream.read(2048))
+    return _validate_cohort(payload, revision=revision)
+
+
+def _cohort_successor_metadata(path, now):
+    previous = _cohort(path, DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION)
+    if previous is None:
+        return None  # First installation of the current cohort needs no predecessor.
+    prior_path = path.with_name(DIRECTIONAL_FLOW_PREVIOUS_COHORT_FILE)
+    prior_state = _read(prior_path)
+    if prior_state is None or prior_state["scope"].get("prospective_cohort") != previous:
+        raise ValueError("SUCCESSOR_PREDECESSOR_STATE_UNAVAILABLE")
+    prior_report = analyze(prior_state, now_ts=now)
+    prior_policy = next((row for row in prior_report["policies"]
+                         if row.get("policy") == "PHYSICAL_ONLY_V3"), None)
+    if prior_policy is None:
+        raise ValueError("SUCCESSOR_PREDECESSOR_ANALYSIS_UNAVAILABLE")
+    capacity_reached = (len(prior_state["records"]) >= MAX_RECORDS
+                        or prior_state["capacity_rejections"] > 0)
+    if prior_policy["status"] == "TRAINING_DATA_QUALITY_FAILED":
+        trigger = "TRAINING_DATA_QUALITY_FAILED"
+    elif capacity_reached and prior_policy["status"] != "READY_FOR_REVIEW":
+        trigger = "COHORT_CAPACITY_REACHED"
+    else:
+        return None  # Do not rotate a collecting or review-ready cohort.
+    baseline = next((row for row in prior_policy["train_candidates"]
+                     if row.get("pressure_bias") == 0.0), None)
+    if baseline is None:
+        raise ValueError("SUCCESSOR_TRAINING_EVIDENCE_UNAVAILABLE")
+    return {
+        "from_revision": DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION,
+        "trigger": trigger,
+        "prior_status": prior_policy["status"],
+        "prior_unique_entries": prior_report["unique_entry_experiments"],
+        "prior_nonoverlapping_entries": prior_policy["nonoverlapping_entries"],
+        "prior_train_entries": prior_policy["train_entries"],
+        "prior_train_unknown": baseline["unknown"],
+        "prior_train_unknown_fraction": baseline["unknown_fraction"],
+        "prior_holdout_entries": prior_policy["holdout_entries"],
+        "prior_holdout_evaluated": prior_policy["untouched_holdout"] is not None,
+        "prior_parameter_sha256": prior_state["scope"]["parameter_sha256"],
+        "prior_history_policy": prior_state["scope"]["history_policy"],
+    }
 
 
 def _activate_cohort(path, now, revision=COHORT_REVISION):
@@ -307,9 +385,23 @@ def _activate_cohort(path, now, revision=COHORT_REVISION):
 
 
 def _activate_cohort_locked(path, now, revision):
-    if _cohort(path, revision) is None:
-        storage.save_json_atomic(str(_cohort_marker(path, revision)),
-                                 {"revision": revision, "starts_at": now})
+    if _cohort(path, revision) is not None:
+        return False
+    payload = {"revision": revision, "starts_at": now}
+    successor = (_cohort_successor_metadata(path, now)
+                 if revision == DIRECTIONAL_FLOW_COHORT_REVISION else None)
+    if successor is not None:
+        payload["successor"] = successor
+    _validate_cohort(payload, revision=revision)
+    storage.save_json_atomic(str(_cohort_marker(path, revision)), payload)
+    if successor is not None:
+        print("TSP_PHYSICAL_V3_COHORT_SUCCESSOR " + json.dumps({
+            "protocol": "V3_CALIBRATION_COHORT_SUCCESSOR_V1",
+            "to_revision": revision, "starts_at": now, **successor,
+            "no_historical_backfill": True, "automatic_parameter_change": False,
+            "execution_authority": False, "broker_executed": False,
+        }, sort_keys=True), flush=True)
+    return True
 
 
 def _cohort_uses_precise_quotes(cohort):
@@ -419,10 +511,7 @@ def validate(state):
         raise ValueError("INVALID_CALIBRATION_SCOPE")
     cohort = scope.get("prospective_cohort")
     if cohort is not None:
-        if (not isinstance(cohort, dict) or set(cohort) != {"revision", "starts_at"}
-            or cohort["revision"] not in _COHORT_PATHS):
-            raise ValueError("INVALID_CALIBRATION_COHORT")
-        _number(cohort["starts_at"])
+        _validate_cohort(cohort)
     precise = _cohort_uses_precise_quotes(cohort)
     seen_opportunities = set()
     for identity, row in state["records"].items():
