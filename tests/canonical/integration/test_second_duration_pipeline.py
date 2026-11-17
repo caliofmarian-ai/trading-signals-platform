@@ -470,7 +470,7 @@ def test_failed_training_cohort_starts_a_fresh_audited_successor(seconds_pipelin
         opened = BASE + index * 900
         entries.append({
             "policy": "PHYSICAL_ONLY_V3", "direction": "BUY",
-            "opportunity_signal_id": f"sig-v3-successor-seed-{index:03d}",
+            "opportunity_signal_id": f"sig-v4-successor-seed-{index:03d}",
             "created_ts": opened, "open_ts": opened, "pre_ts": opened - 32,
             "confirm_ts": opened - 30, "confirm_model_seconds": 600,
             "model_seconds": 600, "adjusted_seconds": 300, "buffer_distance": .0002,
@@ -523,7 +523,7 @@ def test_failed_training_cohort_starts_a_fresh_audited_successor(seconds_pipelin
     opened = cutover + 33
     new_entry = {
         "policy": "PHYSICAL_ONLY_V3", "direction": "BUY",
-        "opportunity_signal_id": "sig-v3-successor-fresh-001",
+        "opportunity_signal_id": "sig-v4-successor-fresh-001",
         "created_ts": opened, "open_ts": opened, "pre_ts": cutover + 1,
         "confirm_ts": cutover + 3, "confirm_model_seconds": 600,
         "model_seconds": 600, "adjusted_seconds": 300, "buffer_distance": .0002,
@@ -565,11 +565,13 @@ def test_directional_flow_cohort_registry_validates_each_successor_link(seconds_
         "V3_DIRECTIONAL_FLOW_GATE_V1",
         "V3_DIRECTIONAL_FLOW_GATE_V2",
         "V3_DIRECTIONAL_FLOW_GATE_V3",
+        "V3_DIRECTIONAL_FLOW_GATE_V4",
     )
-    assert tuple(study._COHORT_PATHS)[:3] == tuple(reversed(revisions))
+    assert tuple(study._COHORT_PATHS)[:4] == tuple(reversed(revisions))
     assert study._cohort_predecessor_revision(revisions[0]) is None
     assert study._cohort_predecessor_revision(revisions[1]) == revisions[0]
     assert study._cohort_predecessor_revision(revisions[2]) == revisions[1]
+    assert study._cohort_predecessor_revision(revisions[3]) == revisions[2]
 
     common = {
         "trigger": "TRAINING_DATA_QUALITY_FAILED",
@@ -586,19 +588,30 @@ def test_directional_flow_cohort_registry_validates_each_successor_link(seconds_
     }
     legacy_v2 = {
         "revision": revisions[1],
-        "starts_at": BASE - 20,
+        "starts_at": BASE - 30,
         "successor": {**common, "from_revision": revisions[0]},
     }
-    current_v3 = {
+    historical_v3 = {
         "revision": revisions[2],
-        "starts_at": BASE - 10,
+        "starts_at": BASE - 20,
         "successor": {**common, "from_revision": revisions[1]},
+    }
+    current_v4 = {
+        "revision": revisions[3],
+        "starts_at": BASE - 10,
+        "successor": {**common, "from_revision": revisions[2]},
     }
 
     assert study._validate_cohort(legacy_v2, revision=revisions[1]) == legacy_v2
-    assert study._validate_cohort(current_v3, revision=revisions[2]) == current_v3
+    assert study._validate_cohort(historical_v3, revision=revisions[2]) == historical_v3
+    assert study._validate_cohort(current_v4, revision=revisions[3]) == current_v4
 
-    invalid = deepcopy(current_v3)
-    invalid["successor"]["from_revision"] = revisions[0]
+    invalid_v3 = deepcopy(historical_v3)
+    invalid_v3["successor"]["from_revision"] = revisions[0]
     with pytest.raises(ValueError, match="INVALID_CALIBRATION_COHORT_SUCCESSOR"):
-        study._validate_cohort(invalid, revision=revisions[2])
+        study._validate_cohort(invalid_v3, revision=revisions[2])
+
+    invalid_v4 = deepcopy(current_v4)
+    invalid_v4["successor"]["from_revision"] = revisions[1]
+    with pytest.raises(ValueError, match="INVALID_CALIBRATION_COHORT_SUCCESSOR"):
+        study._validate_cohort(invalid_v4, revision=revisions[3])
