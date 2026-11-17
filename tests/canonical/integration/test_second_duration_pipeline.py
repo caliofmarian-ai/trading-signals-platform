@@ -470,7 +470,7 @@ def test_failed_training_cohort_starts_a_fresh_audited_successor(seconds_pipelin
         opened = BASE + index * 900
         entries.append({
             "policy": "PHYSICAL_ONLY_V3", "direction": "BUY",
-            "opportunity_signal_id": f"sig-v4-successor-seed-{index:03d}",
+            "opportunity_signal_id": f"sig-v3-successor-seed-{index:03d}",
             "created_ts": opened, "open_ts": opened, "pre_ts": opened - 32,
             "confirm_ts": opened - 30, "confirm_model_seconds": 600,
             "model_seconds": 600, "adjusted_seconds": 300, "buffer_distance": .0002,
@@ -523,7 +523,7 @@ def test_failed_training_cohort_starts_a_fresh_audited_successor(seconds_pipelin
     opened = cutover + 33
     new_entry = {
         "policy": "PHYSICAL_ONLY_V3", "direction": "BUY",
-        "opportunity_signal_id": "sig-v4-successor-fresh-001",
+        "opportunity_signal_id": "sig-v3-successor-fresh-001",
         "created_ts": opened, "open_ts": opened, "pre_ts": cutover + 1,
         "confirm_ts": cutover + 3, "confirm_model_seconds": 600,
         "model_seconds": 600, "adjusted_seconds": 300, "buffer_distance": .0002,
