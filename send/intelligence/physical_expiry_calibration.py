@@ -43,20 +43,28 @@ COHORT_REVISION = "V3_EXACT_DIRECTIONAL_ROOM_V1"
 COHORT_FILE = "exact_directional_room_v1_state.json"
 PRECISE_COHORT_REVISION = "V3_EXACT_PROVIDER_MILLISECONDS_V1"
 PRECISE_COHORT_FILE = "exact_provider_milliseconds_v1_state.json"
-DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION = "V3_DIRECTIONAL_FLOW_GATE_V1"
-DIRECTIONAL_FLOW_PREVIOUS_COHORT_FILE = "directional_flow_gate_v1_state.json"
-DIRECTIONAL_FLOW_COHORT_REVISION = "V3_DIRECTIONAL_FLOW_GATE_V2"
-DIRECTIONAL_FLOW_COHORT_FILE = "directional_flow_gate_v2_state.json"
+# Append-only cohort registry: the final revision is active, the preceding
+# revision is its only successor source, and every older ledger stays readable
+# for historical draining. Add a new tuple rather than rewriting prior markers.
+_DIRECTIONAL_FLOW_COHORTS = (
+    ("V3_DIRECTIONAL_FLOW_GATE_V1", "directional_flow_gate_v1_state.json", "directional_flow_gate_v1_cutover.json"),
+    ("V3_DIRECTIONAL_FLOW_GATE_V2", "directional_flow_gate_v2_state.json", "directional_flow_gate_v2_cutover.json"),
+    ("V3_DIRECTIONAL_FLOW_GATE_V3", "directional_flow_gate_v3_state.json", "directional_flow_gate_v3_cutover.json"),
+)
+_DIRECTIONAL_FLOW_REVISIONS = tuple(item[0] for item in _DIRECTIONAL_FLOW_COHORTS)
+DIRECTIONAL_FLOW_COHORT_REVISION = _DIRECTIONAL_FLOW_COHORTS[-1][0]
+DIRECTIONAL_FLOW_COHORT_FILE = _DIRECTIONAL_FLOW_COHORTS[-1][1]
+DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION = _DIRECTIONAL_FLOW_COHORTS[-2][0]
+DIRECTIONAL_FLOW_PREVIOUS_COHORT_FILE = _DIRECTIONAL_FLOW_COHORTS[-2][1]
 _COHORT_PATHS = {
-    DIRECTIONAL_FLOW_COHORT_REVISION: (DIRECTIONAL_FLOW_COHORT_FILE, "directional_flow_gate_v2_cutover.json"),
-    DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION: (DIRECTIONAL_FLOW_PREVIOUS_COHORT_FILE, "directional_flow_gate_v1_cutover.json"),
+    revision: (filename, marker)
+    for revision, filename, marker in reversed(_DIRECTIONAL_FLOW_COHORTS)
+}
+_COHORT_PATHS.update({
     PRECISE_COHORT_REVISION: (PRECISE_COHORT_FILE, "exact_provider_milliseconds_v1_cutover.json"),
     COHORT_REVISION: (COHORT_FILE, "exact_directional_room_v1_cutover.json"),
-}
-_PRECISE_COHORTS = {
-    DIRECTIONAL_FLOW_COHORT_REVISION, DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION,
-    PRECISE_COHORT_REVISION,
-}
+})
+_PRECISE_COHORTS = set(_DIRECTIONAL_FLOW_REVISIONS) | {PRECISE_COHORT_REVISION}
 # Allow a delayed retained tick to arrive without extending its source-time window.
 # Post-isolation production evidence includes receive delays of 7.366 seconds.
 # This prospectively frozen allowance addresses receipt latency, not source gaps.
@@ -294,6 +302,15 @@ def _cohort_marker(path, revision):
     return marker
 
 
+def _cohort_predecessor_revision(revision):
+    """Return the immediate predecessor in the append-only cohort registry."""
+    try:
+        index = _DIRECTIONAL_FLOW_REVISIONS.index(revision)
+    except ValueError:
+        return None
+    return _DIRECTIONAL_FLOW_REVISIONS[index - 1] if index else None
+
+
 def _validate_cohort(cohort, revision=None):
     allowed_keys = ({"revision", "starts_at"}, {"revision", "starts_at", "successor"})
     if (not isinstance(cohort, dict) or set(cohort) not in allowed_keys
@@ -307,9 +324,10 @@ def _validate_cohort(cohort, revision=None):
                     "prior_nonoverlapping_entries", "prior_train_entries", "prior_train_unknown",
                     "prior_train_unknown_fraction", "prior_holdout_entries", "prior_holdout_evaluated",
                     "prior_parameter_sha256", "prior_history_policy"}
-        if (cohort["revision"] != DIRECTIONAL_FLOW_COHORT_REVISION
+        predecessor_revision = _cohort_predecessor_revision(cohort["revision"])
+        if (predecessor_revision is None
                 or not isinstance(successor, dict) or set(successor) != required
-                or successor["from_revision"] != DIRECTIONAL_FLOW_PREVIOUS_COHORT_REVISION
+                or successor["from_revision"] != predecessor_revision
                 or successor["trigger"] not in {"TRAINING_DATA_QUALITY_FAILED", "COHORT_CAPACITY_REACHED"}
                 or not isinstance(successor["prior_status"], str) or not successor["prior_status"]
                 or type(successor["prior_holdout_evaluated"]) is not bool

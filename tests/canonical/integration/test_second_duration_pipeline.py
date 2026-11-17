@@ -554,3 +554,51 @@ def test_failed_training_cohort_starts_a_fresh_audited_successor(seconds_pipelin
     assert "TSP_PHYSICAL_V3_COHORT_SUCCESSOR" in output
     assert '"automatic_parameter_change": false' in output
     assert '"execution_authority": false' in output
+
+
+
+def test_directional_flow_cohort_registry_validates_each_successor_link(seconds_pipeline):
+    study = seconds_pipeline["study"]
+    revisions = tuple(item[0] for item in study._DIRECTIONAL_FLOW_COHORTS)
+
+    assert revisions == (
+        "V3_DIRECTIONAL_FLOW_GATE_V1",
+        "V3_DIRECTIONAL_FLOW_GATE_V2",
+        "V3_DIRECTIONAL_FLOW_GATE_V3",
+    )
+    assert tuple(study._COHORT_PATHS)[:3] == tuple(reversed(revisions))
+    assert study._cohort_predecessor_revision(revisions[0]) is None
+    assert study._cohort_predecessor_revision(revisions[1]) == revisions[0]
+    assert study._cohort_predecessor_revision(revisions[2]) == revisions[1]
+
+    common = {
+        "trigger": "TRAINING_DATA_QUALITY_FAILED",
+        "prior_status": "TRAINING_DATA_QUALITY_FAILED",
+        "prior_unique_entries": 120,
+        "prior_nonoverlapping_entries": 120,
+        "prior_train_entries": 60,
+        "prior_train_unknown": 60,
+        "prior_train_unknown_fraction": 1.0,
+        "prior_holdout_entries": 60,
+        "prior_holdout_evaluated": False,
+        "prior_parameter_sha256": "a" * 64,
+        "prior_history_policy": study.HISTORY_POLICY,
+    }
+    legacy_v2 = {
+        "revision": revisions[1],
+        "starts_at": BASE - 20,
+        "successor": {**common, "from_revision": revisions[0]},
+    }
+    current_v3 = {
+        "revision": revisions[2],
+        "starts_at": BASE - 10,
+        "successor": {**common, "from_revision": revisions[1]},
+    }
+
+    assert study._validate_cohort(legacy_v2, revision=revisions[1]) == legacy_v2
+    assert study._validate_cohort(current_v3, revision=revisions[2]) == current_v3
+
+    invalid = deepcopy(current_v3)
+    invalid["successor"]["from_revision"] = revisions[0]
+    with pytest.raises(ValueError, match="INVALID_CALIBRATION_COHORT_SUCCESSOR"):
+        study._validate_cohort(invalid, revision=revisions[2])
