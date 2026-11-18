@@ -51,6 +51,7 @@ _DIRECTIONAL_FLOW_COHORTS = (
     ("V3_DIRECTIONAL_FLOW_GATE_V2", "directional_flow_gate_v2_state.json", "directional_flow_gate_v2_cutover.json"),
     ("V3_DIRECTIONAL_FLOW_GATE_V3", "directional_flow_gate_v3_state.json", "directional_flow_gate_v3_cutover.json"),
     ("V3_DIRECTIONAL_FLOW_GATE_V4", "directional_flow_gate_v4_state.json", "directional_flow_gate_v4_cutover.json"),
+    ("V3_DIRECTIONAL_FLOW_GATE_V5", "directional_flow_gate_v5_state.json", "directional_flow_gate_v5_cutover.json"),
 )
 _DIRECTIONAL_FLOW_REVISIONS = tuple(item[0] for item in _DIRECTIONAL_FLOW_COHORTS)
 DIRECTIONAL_FLOW_COHORT_REVISION = _DIRECTIONAL_FLOW_COHORTS[-1][0]
