@@ -188,7 +188,7 @@ class AppService:
                 image = base64.b64decode(encoded_image, validate=True)
             except (ValueError, binascii.Error) as exc:
                 raise ValueError("The study image is not valid base64.") from exc
-            if not image or len(image) > 384 * 1024 or not image.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+            if not image or len(image) > 384 * 1024 or not image.startswith(b"\x89PNG\r\n\x1a\n"):
                 raise ValueError("A bounded PNG study image is required.")
         payload = {
             "protocol": "PRIVATE_V3_STUDY_RECEIPT_V1", "phase": phase,
@@ -198,7 +198,7 @@ class AppService:
             "format": fmt,
         }
         encoded = json.dumps(payload, sort_keys=True, allow_nan=False)
-        digest = hashlib.sha256(encoded.encode() + b"\\0" + (image or b"")).hexdigest()
+        digest = hashlib.sha256(encoded.encode() + b"\0" + (image or b"")).hexdigest()
         receipt_id = "app-study-" + hashlib.sha256((study_id + ":" + phase).encode()).hexdigest()[:24]
         with self.store.db() as db:
             db.execute("BEGIN IMMEDIATE")
