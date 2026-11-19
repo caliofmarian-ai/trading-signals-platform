@@ -5,6 +5,7 @@ strategy changes, or broker/Telegram actions are made by this module.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import threading
@@ -12,6 +13,71 @@ import time
 from urllib.parse import urlsplit
 
 import requests
+
+
+class AppStudyRejected(Exception):
+    """The app definitively rejected a private study receipt (HTTP 4xx)."""
+
+
+class AppStudyTransportError(Exception):
+    """App receipt acceptance could not be established; never retry this attempt."""
+
+
+def _publisher_config():
+    if os.getenv("APP_SOURCE_BRIDGE_ENABLED", "0").strip().lower() not in {"1", "true", "on"}:
+        return None
+    origin = os.getenv("APP_SOURCE_BRIDGE_ORIGIN", "").rstrip("/")
+    token = os.getenv("APP_SOURCE_BRIDGE_TOKEN", "")
+    parsed = urlsplit(origin)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+            or parsed.path or parsed.query or parsed.fragment or len(token) < 32):
+        return None
+    return origin, token
+
+
+def private_study_publisher_ready():
+    return _publisher_config() is not None
+
+
+def publish_private_study(payload, *, image_bytes=None):
+    """Use the existing authenticated app ingest route; no Telegram fallback or retry."""
+    config = _publisher_config()
+    if config is None:
+        raise AppStudyTransportError("APP_PUBLISHER_UNAVAILABLE")
+    if not isinstance(payload, dict):
+        raise AppStudyRejected("INVALID_PRIVATE_STUDY_PAYLOAD")
+    item = dict(payload)
+    if image_bytes is None:
+        item["image_base64"] = None
+    else:
+        if (not isinstance(image_bytes, (bytes, bytearray)) or not image_bytes
+                or len(image_bytes) > 384 * 1024
+                or not bytes(image_bytes).startswith(b"\\x89PNG\\r\\n\\x1a\\n")):
+            raise AppStudyRejected("INVALID_PRIVATE_STUDY_IMAGE")
+        item["image_base64"] = base64.b64encode(bytes(image_bytes)).decode("ascii")
+    origin, token = config
+    try:
+        response = requests.post(origin + "/api/internal/signals",
+            json={"private_study": item},
+            headers={"Authorization": "Bearer " + token},
+            timeout=3, allow_redirects=False)
+    except requests.exceptions.RequestException as exc:
+        raise AppStudyTransportError(type(exc).__name__) from None
+    if 300 <= response.status_code < 400:
+        raise AppStudyTransportError("APP_REDIRECT_NOT_FOLLOWED")
+    if 400 <= response.status_code < 500:
+        raise AppStudyRejected("APP_PRIVATE_STUDY_REJECTED")
+    if response.status_code != 200:
+        raise AppStudyTransportError("APP_PRIVATE_STUDY_RESPONSE_UNAVAILABLE")
+    try:
+        result = response.json()
+    except Exception:
+        raise AppStudyTransportError("APP_PRIVATE_STUDY_RESPONSE_INVALID") from None
+    receipt_id = result.get("receipt_id") if isinstance(result, dict) else None
+    if (not isinstance(result, dict) or result.get("status") != "API_ACCEPTED"
+            or not isinstance(receipt_id, str) or not receipt_id.startswith("app-study-")):
+        raise AppStudyTransportError("APP_PRIVATE_STUDY_ACCEPTANCE_UNCONFIRMED")
+    return result
 
 
 def status_payload(raw, *, now=None, pid=None, execution_available=False):
