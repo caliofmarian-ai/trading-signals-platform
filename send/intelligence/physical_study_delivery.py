@@ -595,11 +595,13 @@ def dispatch(*, now_ts, active_provider):
     destination = "APP:OWNER_PRIVATE"
     for phase in ("entry", "result"):
         reserved = None
+        reserved_path = None
         for ledger_path in paths:
             reserved = _reserve(ledger_path, phase, now_ts, destination)
             if reserved is not None:
+                reserved_path = ledger_path
                 break
-        if reserved is None:
+        if reserved is None or reserved_path is None:
             continue
         identity, row = reserved
         signal_id = row["policies"]["PHYSICAL_ONLY_V3"]["opportunity_signal_id"]
@@ -675,7 +677,7 @@ def dispatch(*, now_ts, active_provider):
                 else "STUDY_RENDER_OR_PIPELINE_EXCEPTION")
         journal_persisted = False
         try:
-            journal_persisted = _write_receipt_journal(path, identity, phase, receipt)
+            journal_persisted = _write_receipt_journal(reserved_path, identity, phase, receipt)
         except Exception as exc:
             print("TSP_PHYSICAL_STUDY_DELIVERY_RECEIPT_JOURNAL_UNAVAILABLE " + json.dumps({
                 "error_class": type(exc).__name__, "broker_executed": False,
@@ -683,7 +685,7 @@ def dispatch(*, now_ts, active_provider):
             }, sort_keys=True), flush=True)
         receipt_commit_persisted = False
         try:
-            receipt_commit_persisted = _commit_receipt(path, identity, phase, receipt)
+            receipt_commit_persisted = _commit_receipt(reserved_path, identity, phase, receipt)
         except Exception as exc:
             print("TSP_PHYSICAL_STUDY_DELIVERY_RECEIPT_COMMIT_UNAVAILABLE " + json.dumps({
                 "error_class": type(exc).__name__, "broker_executed": False,
@@ -692,7 +694,7 @@ def dispatch(*, now_ts, active_provider):
             }, sort_keys=True), flush=True)
         if receipt_commit_persisted:
             try:
-                _forget_receipt_journal(path, identity, phase, receipt["attempted_ts"])
+                _forget_receipt_journal(reserved_path, identity, phase, receipt["attempted_ts"])
             except Exception as exc:
                 print("TSP_PHYSICAL_STUDY_DELIVERY_RECEIPT_JOURNAL_CLEANUP_UNAVAILABLE " + json.dumps({
                     "error_class": type(exc).__name__, "broker_executed": False,
