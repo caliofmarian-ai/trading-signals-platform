@@ -113,7 +113,7 @@ def test_confirm_photo_open_result_chart_and_summary_use_one_primary_seconds_pla
     assert len(ctx["photos"]) == 2  # PRE and CONFIRM remain canonical signal cards.
     assert len(ctx["app_studies"]) == 1
     assert ctx["app_studies"][0]["payload"]["phase"] == "entry"
-    assert "#0" in ctx["app_studies"][0]["payload"]["signal_label"]
+    assert ctx["app_studies"][0]["payload"]["signal_label"] == label
     assert all("#0" in call["caption"] for call in ctx["photos"])
     assert all(call["photo"].startswith(b"\x89PNG") for call in ctx["photos"])
     from core.signal_card import build_card_fields
@@ -264,17 +264,20 @@ def test_prospective_reserve_is_separate_from_actual_open_and_baseline(seconds_p
     entry = BASE + 36
     _advance(ctx, entry, 1.1)
     sent_at_open = len(ctx["photos"])
-    assert sent_at_open == (2 if rescued else 3)
+    assert sent_at_open == 2  # Canonical PRE/CONFIRM remain the only Telegram cards.
+    assert len(ctx["app_studies"]) == (0 if rescued else 1)
     saved = _advance(ctx, entry + 516, 1.1)
     assert saved["study_observation"]["outcome"] == ("INFEASIBLE" if rescued else "DRAW")
     assert saved["confirm_duration_reserve"]["outcome"] == "PENDING"
     sent_at_control_expiry = len(ctx["photos"])
-    assert sent_at_control_expiry == (2 if rescued else 4)
+    assert sent_at_control_expiry == 2
+    assert len(ctx["app_studies"]) == (0 if rescued else 2)
 
     saved = _advance(ctx, entry + 519, 1.105)
     assert saved["confirm_duration_reserve"]["outcome"] == "WIN"
     assert saved["candidates"][0]["outcome"] == "PENDING"
     assert len(ctx["photos"]) == sent_at_control_expiry
+    assert len(ctx["app_studies"]) == (0 if rescued else 2)
     evidence = study.summary(now_ts=entry + 519)["confirm_duration_reserve_diagnostic"]
     assert evidence["duration_gate_rescues"] == int(rescued)
     assert evidence["paired_real_quote_count"] == int(not rescued)
