@@ -59,7 +59,7 @@ def test_private_study_publisher_reuses_existing_authenticated_app_route(monkeyp
                "text": "OPEN_NOW · STUDIU V3", "provider": "FINNHUB",
                "symbol": "EUR/USD", "strategy_version": "3.0.0",
                "decision_policy": "PHYSICAL_ONLY_V3", "format": "PHOTO"}
-    png = b"\\x89PNG\\r\\n\\x1a\\nfixture"
+    png = b"\x89PNG\r\n\x1a\nfixture"
     assert app_source_bridge.private_study_publisher_ready()
     result = app_source_bridge.publish_private_study(payload, image_bytes=png)
     assert result["status"] == "API_ACCEPTED" and result["phone_receipt_proven"] is False
