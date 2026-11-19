@@ -166,4 +166,4 @@ def test_other_unknown_reason_does_not_wait_for_missing_expiry_estimate(study_se
     state = {"records": {"other": row}}
     monkeypatch.setattr(study, "_read", lambda _: state)
     monkeypatch.setattr(study, "_save", lambda *args: None)
-    assert delivery._reserve("synthetic", "result", target + 19, 123456789)[0] == "other"
+    assert delivery._reserve("synthetic", "result", target + 19, "APP:OWNER_PRIVATE")[0] == "other"
