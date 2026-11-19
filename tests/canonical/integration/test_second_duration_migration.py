@@ -14,7 +14,7 @@ def test_upgrade_backs_up_exact_old_bytes_and_finishes_old_expiry(seconds_pipeli
     ctx = seconds_pipeline
     _step(ctx, "PRE", 0, new_policy=False)
     _step(ctx, "CONFIRM", 3, new_policy=False)
-    _capture(ctx)
+    _capture(ctx, publish_study=False)  # Historical rows must not acquire a new app route.
     _advance(ctx, BASE + 36, 1.1)
     path = ctx["study"]._path()
     old = ctx["study"]._read(path)
@@ -34,9 +34,12 @@ def test_upgrade_backs_up_exact_old_bytes_and_finishes_old_expiry(seconds_pipeli
     saved = _advance(ctx, expiry, 1.1025)
     assert saved["study_observation"]["horizon_seconds"] == 600
     assert saved["study_observation"]["outcome"] == "WIN"
-    assert "10 MIN 00 S" in ctx["photos"][-1]["caption"]
+    assert not ctx["app_studies"]
+    assert saved.get("study_delivery") is None
+    assert "study_delivery_transport" not in saved
     assert len(list((path.parent / "protocol_backups").glob("*.json"))) == 1
     report = ctx["study"].summary(now_ts=expiry)
-    assert ctx["plans"].POLICY not in report["published_study_results_by_duration_policy"]
-    assert report["published_study_results_by_duration_policy"][ctx["plans"].LEGACY_POLICY]["wins"] == 1
+    assert report["study_open_now_api_accepted"] == 0
+    assert report["study_results_api_accepted"] == 0
+    assert report["actual_telegram_publications"] == 0
 
