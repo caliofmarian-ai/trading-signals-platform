@@ -12,13 +12,14 @@ def _prepared_entry(setup):
     path = study._path()
     state = study._read(path)
     identity, row = next(iter(state["records"].items()))
+    row["study_delivery_transport"] = "APP_OWNER_PRIVATE"
     row["study_delivery"] = {"entry": None, "result": None}
     study._save(path, state)
     return identity, path, study, delivery, messages, clock
 
 
 def _reserve_entry(identity, path, study, delivery):
-    reserved = delivery._reserve(path, "entry", BASE + 33, 123456789)
+    reserved = delivery._reserve(path, "entry", BASE + 33, "APP:OWNER_PRIVATE")
     assert reserved is not None and reserved[0] == identity
     saved = study._read(path)["records"][identity]["study_delivery"]["entry"]
     assert saved["status"] == "RESERVED"
