@@ -56,6 +56,18 @@ class Store:
                     quota_day TEXT NOT NULL,
                     UNIQUE(channel,signal_id,stage));
                 CREATE INDEX IF NOT EXISTS signal_feed ON signals(channel,seq);
+                CREATE TABLE IF NOT EXISTS private_studies (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    study_id TEXT NOT NULL,
+                    phase TEXT NOT NULL CHECK(phase IN ('entry','result')),
+                    receipt_id TEXT NOT NULL UNIQUE,
+                    payload TEXT NOT NULL,
+                    image BLOB,
+                    digest TEXT NOT NULL,
+                    created REAL NOT NULL,
+                    received INTEGER NOT NULL,
+                    UNIQUE(study_id,phase));
+                CREATE INDEX IF NOT EXISTS private_study_feed ON private_studies(seq);
                 CREATE TABLE IF NOT EXISTS feedback (
                     user_id TEXT NOT NULL, signal_id TEXT NOT NULL, result TEXT NOT NULL,
                     created INTEGER NOT NULL, PRIMARY KEY(user_id,signal_id));
