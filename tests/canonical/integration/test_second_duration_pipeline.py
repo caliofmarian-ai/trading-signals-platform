@@ -21,17 +21,23 @@ def seconds_pipeline(canonical_runtime_root, monkeypatch):
     from state_store import state_store as state_store
 
     params = migrate_physical_params(json.loads((canonical_runtime_root / "config" / "algo_params.json").read_text()))
-    clock, photos = [BASE + .1], []
+    clock, photos, app_studies = [BASE + .1], [], []
     monkeypatch.setattr(owner.time, "time", lambda: clock[0])
     def photo(**kwargs):
         photos.append(kwargs)
         return {"ok": True, "result": {"message_id": len(photos)}}
     monkeypatch.setattr(telegram_publisher, "send_photo", photo)
     monkeypatch.setattr(telegram_publisher, "send_message", lambda **_: pytest.fail("expected photo transport"))
+    monkeypatch.setattr(delivery.app_source_bridge, "private_study_publisher_ready", lambda: True)
+    def app_study(payload, *, image_bytes=None):
+        app_studies.append({"payload": payload, "image_bytes": image_bytes})
+        return {"status": "API_ACCEPTED", "receipt_id": f"app-study-{len(app_studies)}"}
+    monkeypatch.setattr(delivery.app_source_bridge, "publish_private_study", app_study)
     monkeypatch.setattr(delivery, "dispatch_async", lambda **kw: delivery.dispatch(**kw))
     return dict(root=canonical_runtime_root, params=params, clock=clock, photos=photos,
-                plans=plans, owner=owner, router=router, study=study, delivery=delivery,
-                store=state_store, state=state_store.default_fsm_state())
+                app_studies=app_studies, plans=plans, owner=owner, router=router,
+                study=study, delivery=delivery, store=state_store,
+                state=state_store.default_fsm_state())
 
 
 def _step(ctx, stage, offset, *, needed=8.6, new_policy=True, publish=True):
@@ -62,11 +68,11 @@ def _step(ctx, stage, offset, *, needed=8.6, new_policy=True, publish=True):
     return decision, handoff, execution
 
 
-def _capture(ctx, *, needed=8.6):
+def _capture(ctx, *, needed=8.6, publish_study=True):
     decision, handoff, execution = _step(ctx, "OPEN_NOW", 35, needed=needed)
     assert not execution.available  # this experiment cannot activate execution
     assert ctx["study"].observe_accepted_chain(decision, handoff, ctx["params"],
-        now_ts=BASE + 35, provider="FINNHUB", buffer_mode="SMALL", publish_study=True)
+        now_ts=BASE + 35, provider="FINNHUB", buffer_mode="SMALL", publish_study=publish_study)
     return next(iter(ctx["study"]._read(ctx["study"]._study_paths(ctx["study"]._path())[0])["records"].values()))
 
 
