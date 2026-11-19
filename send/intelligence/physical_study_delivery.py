@@ -569,7 +569,7 @@ def _reserve(path, phase, now, destination):
                         continue
             delivery[phase] = {
                 "status": status, "attempted_ts": now, "transport": "APP",
-                "phone_receipt_proven": False,
+                "destination_id": destination, "phone_receipt_proven": False,
             }
             if resolution_reason is not None:
                 delivery[phase]["resolution_reason"] = resolution_reason
@@ -636,6 +636,7 @@ def dispatch(*, now_ts, active_provider):
                     text += "\\nGrafic indisponibil pentru această observație."
             if not isinstance(signal_label, str) or not signal_label.strip():
                 raise ValueError("STUDY_SIGNAL_LABEL_UNAVAILABLE")
+            receipt["signal_label"] = signal_label
             if photo is not None and len(photo) > 384 * 1024:
                 photo = None
             if phase == "entry" and time.time() - row["created_ts"] > study.quotes.MAX_ENTRY_DELAY_SECONDS:
