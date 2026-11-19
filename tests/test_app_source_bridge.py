@@ -104,7 +104,7 @@ def test_private_study_publisher_refuses_redirects_and_oversized_images(monkeypa
     monkeypatch.setenv("APP_SOURCE_BRIDGE_TOKEN", "x"*48)
     payload = {"protocol": "PRIVATE_V3_STUDY_RECEIPT_V1"}
     with pytest.raises(app_source_bridge.AppStudyRejected):
-        app_source_bridge.publish_private_study(payload, image_bytes=b"\\x89PNG\\r\\n\\x1a\\n" + b"x"*(384*1024))
+        app_source_bridge.publish_private_study(payload, image_bytes=b"\x89PNG\r\n\x1a\n" + b"x"*(384*1024))
     class Response:
         status_code = 302
     monkeypatch.setattr(app_source_bridge.requests, "post", lambda *a, **k: Response())
