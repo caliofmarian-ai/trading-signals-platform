@@ -119,3 +119,8 @@ No subscription, payment or automatic upgrade is created. The dashboard shows
 the quota, reset time and unverified account-plan status.
 
 Approved provider assignment: the existing FINNHUB owner-calibration stream retains **EUR/USD**. The separate Twelve Data application worker uses **GBP/USD only**. The app-local 700-request daily cap and its persistent request ledger are retained; changing symbols does not reset the ledger or change any provider subscription. Existing records retain their original symbols and timestamps.
+
+
+## Owner-only V3 study receipts
+
+The existing authenticated `POST /api/internal/signals` source route also accepts a `private_study` payload using the existing `SIGNALS_APP_INGEST_TOKEN` reference. It does not create a new endpoint, token, channel or destination. These records are stored in the separate app-local `private_studies` table and appear only in the authenticated OWNER Overview; they do not enter FREE/BASIC/PRO/ELITE feeds, subscription quotas, billing, canonical OPEN records or member notifications. Entry and result are idempotent by study/phase, and a result is rejected unless its entry was already accepted by the app. The inbox is bounded to 512 receipts and PNG images up to 384 KiB. An app API receipt proves server acceptance only, never independent phone display. No Telegram or broker action is performed by this app intake.

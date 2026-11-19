@@ -145,7 +145,23 @@ async function loadAnalysis() {
     $('stage-bars').innerHTML = ['PRE','CONFIRM','OPEN_NOW'].map(stage => `<div class="bar-row"><span>${stage.replace('_',' ')}</span><progress class="stage-progress" max="${max}" value="${m.stages[stage] || 0}" aria-label="${stage}"></progress><b>${m.stages[stage] || 0}</b></div>`).join('');
     $('canonical-info').innerHTML = `<dt>Canonical source files</dt><dd>${data.canonical.canonical_files}</dd><dt>Strategy source</dt><dd>Existing Binary Strategy V2 engine</dd><dt>Canonical fingerprint</dt><dd class="canonical-hash">${safe(data.canonical.canonical_sha256)}</dd><dt>Telegram command connection</dt><dd>Not connected</dd>`;
     renderStatus(data.status);
+    renderPrivateStudies(data.private_studies || []);
   } catch (error) { notice(error.message,true); }
+}
+function renderPrivateStudies(items) {
+  const target = $('private-study-list');
+  if (!target) return;
+  if (!Array.isArray(items) || !items.length) {
+    target.innerHTML = '<p class="small muted">No private V3 study receipts yet.</p>';
+    return;
+  }
+  target.innerHTML = items.map(item => {
+    const phase = item.phase === 'entry' ? 'OPEN_NOW · STUDIU V3' : 'REZULTAT STUDIU V3';
+    const image = item.image_base64
+      ? `<img class="private-study-image" src="data:image/png;base64,${safe(item.image_base64)}" alt="${safe(phase)}">`
+      : '';
+    return `<article class="private-study-item"><div class="private-study-meta"><strong>${safe(phase)}</strong><span>${safe(item.signal_label || '')}</span></div><pre>${safe(item.text || '')}</pre>${image}<small>Accepted by the app API · ${safe(dateTime(item.received_ts || item.created_ts))} · Phone display not verified</small></article>`;
+  }).join('');
 }
 function renderSource(source, prefix = 'source') {
   if (!source) return;

@@ -276,7 +276,8 @@ def create_app(directory: Path | None = None, *, public_url: str | None = None,
         from .source import snapshot
         from .paired_sources import sources
         return {"metrics":service.metrics(),"status":service.status(),"canonical":canonical.manifest(),
-                "source":snapshot(store),"sources":sources(store)}
+                "source":snapshot(store),"sources":sources(store),
+                "private_studies":service.private_studies(limit=8)}
 
     @app.post("/api/internal/source-status")
     async def source_status(request: Request):
@@ -310,6 +311,10 @@ def create_app(directory: Path | None = None, *, public_url: str | None = None,
     async def ingest(request: Request):
         source(request)
         data = await body(request)
+        if "private_study" in data:
+            if "candidate" in data or not isinstance(data.get("private_study"), dict):
+                raise ValueError("Provide exactly one valid source payload.")
+            return service.record_private_study(data["private_study"])
         if not isinstance(data.get("candidate"),dict):
             raise ValueError("An existing-engine SignalEvent is required.")
         result = service.publish(data["candidate"],provider=data.get("provider"))
