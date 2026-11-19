@@ -52,7 +52,7 @@ def publish_private_study(payload, *, image_bytes=None):
     else:
         if (not isinstance(image_bytes, (bytes, bytearray)) or not image_bytes
                 or len(image_bytes) > 384 * 1024
-                or not bytes(image_bytes).startswith(b"\\x89PNG\\r\\n\\x1a\\n")):
+                or not bytes(image_bytes).startswith(b"\x89PNG\r\n\x1a\n")):
             raise AppStudyRejected("INVALID_PRIVATE_STUDY_IMAGE")
         item["image_base64"] = base64.b64encode(bytes(image_bytes)).decode("ascii")
     origin, token = config
