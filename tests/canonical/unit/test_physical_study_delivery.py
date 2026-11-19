@@ -42,13 +42,15 @@ def study_setup(canonical_runtime_root, monkeypatch):
     messages = []
     clock = [BASE+32.1]
     monkeypatch.setattr(delivery.time, "time", lambda: clock[0])
-    def transport(**kwargs):
-        messages.append(kwargs)
-        return {"ok":True, "result":{"message_id":len(messages)}}
-    def photo_transport(*, chat_id, photo, caption, reply_to_message_id):
-        return transport(chat_id=chat_id, photo=photo, text=caption, reply_to_message_id=reply_to_message_id)
-    monkeypatch.setattr(delivery.telegram_publisher, "send_message", transport)
-    monkeypatch.setattr(delivery.telegram_publisher, "send_photo", photo_transport)
+    monkeypatch.setattr(delivery.app_source_bridge, "private_study_publisher_ready", lambda: True)
+    def transport(payload, *, image_bytes=None):
+        item = {"study_id": payload["study_id"], "phase": payload["phase"],
+                "text": payload["text"], "destination_id": "APP:OWNER_PRIVATE"}
+        if image_bytes is not None:
+            item["photo"] = image_bytes
+        messages.append(item)
+        return {"status":"API_ACCEPTED", "receipt_id":f"app-study-{len(messages)}"}
+    monkeypatch.setattr(delivery.app_source_bridge, "publish_private_study", transport)
     monkeypatch.setattr(delivery, "dispatch_async", lambda **kwargs: delivery.dispatch(**kwargs))
     return canonical_runtime_root, study, delivery, result, handoff, params, messages, clock
 
@@ -358,7 +360,7 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     row = _capture(study_setup)
     study.advance(now_ts=BASE+32, active_provider="FINNHUB", price_loader=lambda _: _sample(BASE+32,1.1))
     assert len(messages) == 1
-    assert messages[0]["chat_id"] == 123456789
+    assert messages[0]["destination_id"] == "APP:OWNER_PRIVATE"
     assert "OPEN NOW" in messages[0]["text"] and "STUDIU · SIMULARE" in messages[0]["text"]
     assert messages[0]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
     assert len(messages[0]["text"].splitlines()) <= 2
@@ -382,12 +384,13 @@ def test_complete_physical_chain_publishes_explicit_study_and_distinct_buffer_re
     assert "Marjă completă la expirare: NU" in messages[1]["text"]
     assert label in messages[1]["text"]
     assert messages[1]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
-    assert messages[1]["reply_to_message_id"] == 1
+    assert messages[1]["study_id"] == messages[0]["study_id"] and messages[1]["phase"] == "result"
     report = study.summary(now_ts=target)
     assert report["study_open_now_api_accepted"] == report["study_results_api_accepted"] == 1
     assert report["actual_telegram_publications"] == 0 and not report["execution_calibration_proven"]
     assert report["decision_snapshot_entries"] == 1
     saved = next(iter(study._read(study._path())["records"].values()))
+    assert saved["study_delivery_transport"] == "APP_OWNER_PRIVATE"
     assert saved["decision_snapshot"]["decision_id"] == result.decision.decision_id
     assert saved["decision_snapshot"]["indicators"]["atr_m5"] == result.market.evidence.atr_m5
     assert saved["study_delivery"]["entry"]["format"] == "PHOTO"
@@ -430,7 +433,7 @@ def test_study_result_render_failure_falls_back_but_ambiguous_upload_does_not(st
     if render_fails:
         monkeypatch.setattr(delivery, "_render_chart", unavailable)
     else:
-        monkeypatch.setattr(delivery.telegram_publisher, "send_photo", unavailable)
+        monkeypatch.setattr(delivery.app_source_bridge, "publish_private_study", unavailable)
     target = BASE + 32 + row["model_seconds"]
     clock[0] = target + 0.1
     study.advance(now_ts=target, active_provider="FINNHUB", price_loader=lambda _: _sample(target, 1.1))
@@ -584,10 +587,10 @@ def test_ambiguous_transport_is_not_retried(study_setup, monkeypatch):
     _, study, delivery, _, _, _, messages, clock = study_setup
     _capture(study_setup)
     calls=[]
-    def uncertain(**kwargs):
-        calls.append(kwargs)
+    def uncertain(payload, *, image_bytes=None):
+        calls.append({"payload": payload, "image_bytes": image_bytes})
         raise TimeoutError("synthetic transport ambiguity")
-    monkeypatch.setattr(delivery.telegram_publisher,"send_photo",uncertain)
+    monkeypatch.setattr(delivery.app_source_bridge,"publish_private_study",uncertain)
     study.advance(now_ts=BASE+32,active_provider="FINNHUB",price_loader=lambda _: _sample(BASE+32,1.1))
     clock[0]=BASE+33
     delivery.dispatch(now_ts=BASE+33,active_provider="FINNHUB")
@@ -689,6 +692,7 @@ def test_legacy_entry_receipts_keep_their_original_study_number(study_setup, leg
     row = next(iter(state["records"].values()))
     row.pop("study_observation")  # persisted pre-upgrade record keeps its original OPEN horizon
     row.pop("buffer_first_hit_time")  # the prospective diagnostic did not exist either
+    row.pop("study_delivery_transport")  # historical receipt: never backfill it to the app
     row.update(entry=_sample(BASE + 32, 1.1), state="OBSERVING")
     receipt = {"status": "API_ACCEPTED", "attempted_ts": BASE + 32,
                "api_accepted_ts": BASE + 32.1, "message_id": 73, "destination_id": 123456789}
