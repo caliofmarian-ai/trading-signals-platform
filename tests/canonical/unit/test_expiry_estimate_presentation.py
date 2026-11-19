@@ -199,4 +199,4 @@ def test_long_app_study_text_preserves_photo_and_complete_evidence(study_setup, 
     saved = next(iter(study._read(study._path())["records"].values()))
     assert saved["study_delivery"]["result"]["format"] == "PHOTO"
     assert saved["study_delivery"]["result"]["status"] == "API_ACCEPTED"
-    assert messages[-1]["text"] == rendered[-1] and messages[-1]["photo"].startswith(b"\\x89PNG")
+    assert messages[-1]["text"] == rendered[-1] and messages[-1]["photo"].startswith(b"\x89PNG")
