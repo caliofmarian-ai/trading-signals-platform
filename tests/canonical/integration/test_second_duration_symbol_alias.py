@@ -29,14 +29,17 @@ def test_eurusd_alias_keeps_same_seconds_plan_through_real_pipeline(seconds_pipe
     assert projected["symbol"] == "EUR/USD"
     assert projected["study_duration_seconds"] == event["study_duration_seconds"]
     assert projected["study_plan_id"] == event["study_plan_id"]
-    assert len(ctx["photos"]) == 3
+    assert len(ctx["photos"]) == 2
+    assert len(ctx["app_studies"]) == 1
     expiry = BASE + 36 + 516
     saved = _advance(ctx, expiry, 1.1025)
     assert saved["study_observation"]["outcome"] == "WIN"
     assert saved["study_observation"]["duration_plan"] == plan
-    assert len(ctx["photos"]) == 4
+    assert len(ctx["photos"]) == 2
+    assert len(ctx["app_studies"]) == 2
     assert all("#0" in call["caption"] or "nr. 0" in call["caption"] for call in ctx["photos"])
-    assert "8 MIN 36 S" in ctx["photos"][-1]["caption"]
+    assert "8 MIN 36 S" in ctx["app_studies"][-1]["payload"]["text"]
+    assert "Rezultat: WIN" in ctx["app_studies"][-1]["payload"]["text"]
     report = ctx["study"].summary(now_ts=expiry)
     assert report["published_study_results_by_duration_policy"][ctx["plans"].POLICY]["wins"] == 1
     assert not report["execution_calibration_proven"] and not report["broker_executed"]
