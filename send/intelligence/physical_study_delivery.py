@@ -656,6 +656,7 @@ def dispatch(*, now_ts, active_provider):
                     "decision_policy": "PHYSICAL_ONLY_V3",
                     "format": "PHOTO" if photo is not None else "TEXT",
                 }
+                receipt["format"] = payload["format"]
                 transport_started = True
                 response = app_source_bridge.publish_private_study(payload, image_bytes=photo)
                 accepted_ts = time.time()
