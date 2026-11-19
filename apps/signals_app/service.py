@@ -161,8 +161,12 @@ class AppService:
         if phase not in {"entry", "result"}:
             raise ValueError("A valid study receipt phase is required.")
         created = item.get("created_ts")
+        try:
+            created_ts = float(created)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("A valid prospective creation timestamp is required.")
         if (isinstance(created, bool) or not isinstance(created, (int, float))
-                or not math.isfinite(float(created)) or created <= 0 or created > now + 5):
+                or not math.isfinite(created_ts) or created_ts <= 0 or created_ts > now + 5):
             raise ValueError("A valid prospective creation timestamp is required.")
         if (item.get("provider") != "FINNHUB" or item.get("symbol") != "EUR/USD"
                 or item.get("strategy_version") != "3.0.0"
@@ -192,7 +196,7 @@ class AppService:
                 raise ValueError("A bounded PNG study image is required.")
         payload = {
             "protocol": "PRIVATE_V3_STUDY_RECEIPT_V1", "phase": phase,
-            "created_ts": float(created), "signal_label": label, "text": text,
+            "created_ts": created_ts, "signal_label": label, "text": text,
             "provider": "FINNHUB", "symbol": "EUR/USD",
             "strategy_version": "3.0.0", "decision_policy": "PHYSICAL_ONLY_V3",
             "format": fmt,
@@ -223,7 +227,7 @@ class AppService:
             db.execute(
                 """INSERT INTO private_studies(study_id,phase,receipt_id,payload,image,digest,created,received)
                    VALUES (?,?,?,?,?,?,?,?)""",
-                (study_id, phase, receipt_id, encoded, image, digest, float(created), now),
+                (study_id, phase, receipt_id, encoded, image, digest, created_ts, now),
             )
         self.store.audit("PRIVATE_V3_STUDY_ACCEPTED", "SOURCE", phase)
         return {"status": "API_ACCEPTED", "receipt_id": receipt_id,
