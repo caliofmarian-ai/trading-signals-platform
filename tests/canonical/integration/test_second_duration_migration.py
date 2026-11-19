@@ -10,13 +10,19 @@ from tests.canonical.integration.test_second_duration_pipeline import (
 
 
 @pytest.mark.parametrize("protocol", ["PROSPECTIVE_PHYSICAL_V3_EXPIRY_V2", "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V3", "PROSPECTIVE_PHYSICAL_V3_EXPIRY_V4"])
-def test_upgrade_backs_up_exact_old_bytes_and_finishes_old_expiry(seconds_pipeline, protocol):
+def test_upgrade_backs_up_exact_old_bytes_and_finishes_old_expiry(seconds_pipeline, protocol, monkeypatch):
     ctx = seconds_pipeline
     _step(ctx, "PRE", 0, new_policy=False)
     _step(ctx, "CONFIRM", 3, new_policy=False)
-    _capture(ctx, publish_study=False)  # Historical rows must not acquire a new app route.
-    _advance(ctx, BASE + 36, 1.1)
+    monkeypatch.setattr(ctx["delivery"].app_source_bridge, "private_study_publisher_ready", lambda: False)
+    _capture(ctx)  # Capture the old observation without attempting a transport.
     path = ctx["study"]._path()
+    old = ctx["study"]._read(path)
+    for row in old["records"].values():
+        row.pop("study_delivery_transport", None)
+        row.pop("study_delivery", None)
+    ctx["study"]._save(path, old)  # Model a row created before the app-only cutover.
+    _advance(ctx, BASE + 36, 1.1)
     old = ctx["study"]._read(path)
     old["protocol"] = protocol
     assert "duration_policy" not in next(iter(old["records"].values()))["study_observation"]
