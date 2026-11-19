@@ -110,7 +110,10 @@ def test_confirm_photo_open_result_chart_and_summary_use_one_primary_seconds_pla
     assert projected["study_duration_seconds"] == 516
     assert projected["expiry_ts"] == BASE + 36 + 516
     assert projected["study_plan_id"] == frozen["plan_id"]
-    assert len(ctx["photos"]) == 3
+    assert len(ctx["photos"]) == 2  # PRE and CONFIRM remain canonical signal cards.
+    assert len(ctx["app_studies"]) == 1
+    assert ctx["app_studies"][0]["payload"]["phase"] == "entry"
+    assert "#0" in ctx["app_studies"][0]["payload"]["signal_label"]
     assert all("#0" in call["caption"] for call in ctx["photos"])
     assert all(call["photo"].startswith(b"\x89PNG") for call in ctx["photos"])
     from core.signal_card import build_card_fields
@@ -124,10 +127,13 @@ def test_confirm_photo_open_result_chart_and_summary_use_one_primary_seconds_pla
     saved = _advance(ctx, expiry, 1.1025)
     assert saved["study_observation"]["outcome"] == "WIN"
     assert saved["candidates"][0]["outcome"] == "PENDING"  # research grid is still independent
-    assert len(ctx["photos"]) == 4
-    assert ctx["photos"][-1]["reply_to_message_id"] == 3
-    assert "8 MIN 36 S" in ctx["photos"][-1]["caption"]
-    assert "Rezultat: WIN" in ctx["photos"][-1]["caption"]
+    assert len(ctx["photos"]) == 2
+    assert len(ctx["app_studies"]) == 2
+    assert ctx["app_studies"][-1]["payload"]["phase"] == "result"
+    assert ctx["app_studies"][-1]["payload"]["study_id"] == ctx["app_studies"][0]["payload"]["study_id"]
+    assert "8 MIN 36 S" in ctx["app_studies"][-1]["payload"]["text"]
+    assert "Rezultat: WIN" in ctx["app_studies"][-1]["payload"]["text"]
+    assert ctx["app_studies"][-1]["image_bytes"].startswith(b"\x89PNG")
     assert chart_calls[0]["expiry_ts"] == expiry and chart_calls[0]["outcome"] == "WIN"
     assert saved["study_observation"]["duration_plan"] == frozen
     report = ctx["study"].summary(now_ts=expiry)
@@ -147,7 +153,8 @@ def test_new_second_plan_never_replaces_a_preexisting_minute_chain(seconds_pipel
     assert "duration_policy" not in captured["study_observation"]
     saved = _advance(ctx, BASE + 36, 1.1)
     assert ctx["delivery"]._entry_event(saved)["expiry_ts"] == BASE + 36 + 600
-    assert len(ctx["photos"]) == 3
+    assert len(ctx["photos"]) == 2
+    assert len(ctx["app_studies"]) == 1
 
 
 def test_new_seconds_plan_invalidated_by_fresh_physics_does_not_open(seconds_pipeline):
@@ -158,6 +165,7 @@ def test_new_seconds_plan_invalidated_by_fresh_physics_does_not_open(seconds_pip
     assert captured["study_observation"]["outcome"] == "INFEASIBLE"
     saved = _advance(ctx, BASE + 36, 1.1)
     assert len(ctx["photos"]) == 2
+    assert not ctx["app_studies"]
     assert saved["study_delivery"]["entry"]["status"] == "SKIPPED_DURATION_INFEASIBLE"
     assert saved["study_observation"]["duration_seconds"] == 516
 
@@ -175,6 +183,7 @@ def test_second_plan_requires_the_exact_actual_confirm_receipt(seconds_pipeline,
     _capture(ctx)
     saved = _advance(ctx, BASE + 36, 1.1)
     assert len(ctx["photos"]) == 2
+    assert not ctx["app_studies"]
     assert saved["study_delivery"]["entry"]["status"] == "SKIPPED_STAGE_GUARD"
 
 
@@ -435,7 +444,8 @@ def test_market_duration_uses_fresh_open_calculation_and_keeps_confirmed_plan(
     entry = BASE + 35.2
     samples[BASE + 35] = quote(entry, 1.1)
     advance(entry + .1)
-    assert len(ctx["photos"]) == (2 if blocked else 3)
+    assert len(ctx["photos"]) == 2
+    assert len(ctx["app_studies"]) == (0 if blocked else 1)
     target = entry + seconds
     samples[target] = quote(target + 2.001, 1.105)
     row = next(iter(advance(target + 3)["records"].values()))
@@ -453,7 +463,8 @@ def test_market_duration_uses_fresh_open_calculation_and_keeps_confirmed_plan(
     assert row["study_observation"]["outcome"] == (
         "INFEASIBLE" if blocked else "WIN" if seconds == 516 else "PENDING")
     assert row["candidates"][0]["outcome"] == "PENDING"
-    assert len(ctx["photos"]) == (2 if blocked else 4 if seconds == 516 else 3)
+    assert len(ctx["photos"]) == 2
+    assert len(ctx["app_studies"]) == (0 if blocked else 2 if seconds == 516 else 1)
     diagnostic = study.summary(now_ts=target + 4)["open_market_duration_diagnostic"]
     assert diagnostic["observed_open_chains"] == diagnostic["market_duration_feasible"] == 1
     assert diagnostic["confirmed_duration_blocked"] == int(blocked)
