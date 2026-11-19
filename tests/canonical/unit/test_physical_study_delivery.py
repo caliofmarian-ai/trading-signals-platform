@@ -705,10 +705,10 @@ def test_legacy_entry_receipts_keep_their_original_study_number(study_setup, leg
     clock[0] = target + 0.1
     study.advance(now_ts=target, active_provider="FINNHUB", price_loader=lambda _: _sample(target, 1.1))
 
-    assert len(messages) == 1 and "REZULTAT STUDIU" in messages[0]["text"]
-    assert original_label in messages[0]["text"] and canonical_label not in messages[0]["text"]
-    assert messages[0]["reply_to_message_id"] == 73
-    assert messages[0]["photo"].startswith(b"\x89PNG\r\n\x1a\n")
+    assert not messages  # A historical Telegram entry is never continued through the app.
+    saved = next(iter(study._read(path)["records"].values()))
+    assert saved["study_delivery"]["entry"]["message_id"] == 73
+    assert saved["study_delivery"]["result"] is None
 
 
 def test_frozen_decision_and_declared_diagnostics_cannot_be_rewritten(study_setup):
