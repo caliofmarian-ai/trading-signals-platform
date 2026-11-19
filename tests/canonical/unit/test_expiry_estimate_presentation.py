@@ -174,7 +174,7 @@ def test_first_report_waits_for_bounded_neighbor_context_without_moving_expiry(s
     assert len(messages) == 2
 
 
-def test_oversized_caption_preserves_complete_evidence_with_text_fallback(study_setup, monkeypatch):
+def test_long_app_study_text_preserves_photo_and_complete_evidence(study_setup, monkeypatch):
     _, study, delivery, _, _, _, messages, clock = study_setup
     _capture(study_setup)
     entry_ts = BASE + 32
@@ -197,6 +197,6 @@ def test_oversized_caption_preserves_complete_evidence_with_text_fallback(study_
                   observation_loader=lambda *args: None,
                   bracket_loader=lambda *args, **kwargs: bracket)
     saved = next(iter(study._read(study._path())["records"].values()))
-    assert saved["study_delivery"]["result"]["format"] == "TEXT"
+    assert saved["study_delivery"]["result"]["format"] == "PHOTO"
     assert saved["study_delivery"]["result"]["status"] == "API_ACCEPTED"
-    assert messages[-1]["text"] == rendered[-1] and "photo" not in messages[-1]
+    assert messages[-1]["text"] == rendered[-1] and messages[-1]["photo"].startswith(b"\x89PNG")

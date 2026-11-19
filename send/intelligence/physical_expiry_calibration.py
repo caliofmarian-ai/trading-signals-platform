@@ -802,6 +802,7 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
                         second_duration.validate_plan(plan)
                     confirmed_seconds = (plan["duration_seconds"] if plan is not None
                                          else _number(item["confirm_model_seconds"]))
+                    row["study_delivery_transport"] = "APP_OWNER_PRIVATE"
                     row["study_delivery"] = {"entry": None, "result": None}
                     row["study_observation"] = {
                         "duration_source": STUDY_DURATION_SOURCE,

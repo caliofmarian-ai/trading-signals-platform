@@ -1,7 +1,7 @@
 """Private prospective study notifications, outside canonical trade publication.
 
-These are explicitly uncalibrated Model Time observations. They never build a
-SignalEvent, approve an expiry artifact, count a canonical OPEN, or call a broker.
+These are explicitly uncalibrated Model Time observations. They are stored in the
+owner-private app inbox, never build a SignalEvent, count a canonical OPEN, or call a broker.
 """
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -10,7 +10,8 @@ import json
 import time
 import threading
 
-from core import owner_signal_delivery as owner, owner_signal_number, storage, telegram_publisher
+from core import owner_signal_delivery as owner, owner_signal_number, storage
+from scripts import app_source_bridge
 from core.buffer_zone import BUFFER_POSITION_LABELS, classify_buffer_position
 from intelligence import buffer_expiry_evidence
 from intelligence import physical_expiry_calibration as study
@@ -32,7 +33,12 @@ _DELIVERY_IN_FLIGHT = threading.Lock()
 
 
 def validate_delivery(row):
+    transport = row.get("study_delivery_transport")
+    if transport is not None and transport != "APP_OWNER_PRIVATE":
+        raise ValueError("INVALID_STUDY_DELIVERY_TRANSPORT")
     delivery = row.get("study_delivery")
+    if transport is not None and delivery is None:
+        raise ValueError("STUDY_DELIVERY_TRANSPORT_WITHOUT_LEDGER")
     if delivery is None:
         return
     if not isinstance(delivery, dict) or set(delivery) != {"entry", "result"}:
@@ -56,15 +62,32 @@ def validate_delivery(row):
         if "signal_label" in receipt and (not isinstance(receipt["signal_label"], str)
                 or not receipt["signal_label"].strip() or len(receipt["signal_label"]) > 128):
             raise ValueError("INVALID_STUDY_RECEIPT_SIGNAL_LABEL")
-        if "destination_id" in receipt and (type(receipt["destination_id"]) is not int or receipt["destination_id"] <= 0):
-            raise ValueError("INVALID_STUDY_RECEIPT_DESTINATION")
+        receipt_transport = receipt.get("transport")
+        if receipt_transport not in {None, "APP"}:
+            raise ValueError("INVALID_STUDY_RECEIPT_TRANSPORT")
+        destination = receipt.get("destination_id")
+        if destination is not None and destination != "APP:OWNER_PRIVATE":
+            if type(destination) is not int or destination <= 0:
+                raise ValueError("INVALID_STUDY_RECEIPT_DESTINATION")
+        if receipt_transport == "APP":
+            if (transport != "APP_OWNER_PRIVATE" or destination != "APP:OWNER_PRIVATE"
+                    or receipt.get("phone_receipt_proven") is not False):
+                raise ValueError("INVALID_APP_STUDY_RECEIPT_DESTINATION")
+        elif destination == "APP:OWNER_PRIVATE":
+            raise ValueError("APP_STUDY_RECEIPT_TRANSPORT_MISSING")
         if "resolution_reason" in receipt and (not isinstance(receipt["resolution_reason"], str)
                 or not receipt["resolution_reason"].strip() or len(receipt["resolution_reason"]) > 160):
             raise ValueError("INVALID_STUDY_RECEIPT_RESOLUTION_REASON")
         study._number(receipt["attempted_ts"])
         if receipt["status"] == "API_ACCEPTED":
-            if (type(receipt.get("message_id")) is not int or receipt["message_id"] <= 0
-                or study._number(receipt.get("api_accepted_ts")) < receipt["attempted_ts"]):
+            if receipt_transport == "APP":
+                app_receipt_id = receipt.get("app_receipt_id")
+                if (not isinstance(app_receipt_id, str) or not app_receipt_id.startswith("app-study-")
+                        or len(app_receipt_id) > 128
+                        or study._number(receipt.get("api_accepted_ts")) < receipt["attempted_ts"]):
+                    raise ValueError("INVALID_APP_STUDY_API_ACCEPTANCE")
+            elif (type(receipt.get("message_id")) is not int or receipt["message_id"] <= 0
+                  or study._number(receipt.get("api_accepted_ts")) < receipt["attempted_ts"]):
                 raise ValueError("INVALID_STUDY_API_ACCEPTANCE")
             if study.displayed_study_observation(row)["outcome"] == "INFEASIBLE":
                 raise ValueError("INFEASIBLE_CONFIRMED_STUDY_PUBLICATION")
@@ -493,12 +516,18 @@ def _commit_receipt(path, identity, phase, receipt):
 
 
 def _reserve(path, phase, now, destination):
+    if destination != "APP:OWNER_PRIVATE":
+        return None
     with storage.with_lock("physical_v3_expiry_calibration", timeout_sec=.2):
         state = study._read(path)
         if state is None:
             return None
         changed = False
         for identity, row in sorted(state["records"].items(), key=lambda pair: pair[1]["created_ts"]):
+            # Rows created before the app cutover have no route marker. They are
+            # intentionally left untouched: no Telegram-to-app backfill.
+            if row.get("study_delivery_transport") != "APP_OWNER_PRIVATE":
+                continue
             delivery = row.get("study_delivery")
             if (not isinstance(delivery, dict) or delivery.get(phase) is not None
                 or row["entry"] is None or now < row["created_ts"]):
@@ -522,13 +551,13 @@ def _reserve(path, phase, now, destination):
                     if reason is not None:
                         status = "SKIPPED_STAGE_GUARD"
                         resolution_reason = str(reason).strip()[:160] or "OWNER_STAGE_GUARD_REASON_UNAVAILABLE"
-            elif ((delivery.get("entry") or {}).get("status") != "API_ACCEPTED"
-                  or study.displayed_study_observation(row)["outcome"] in {"PENDING", "INFEASIBLE"}):
-                continue
-            elif delivery["entry"].get("destination_id", destination) != destination:
-                status = "SKIPPED_DESTINATION_CHANGED"
-                resolution_reason = "OWNER_DESTINATION_CHANGED"
-            elif phase == "result":
+            else:
+                entry_receipt = delivery.get("entry") or {}
+                if (entry_receipt.get("status") != "API_ACCEPTED"
+                        or entry_receipt.get("transport") != "APP"
+                        or entry_receipt.get("destination_id") != destination
+                        or study.displayed_study_observation(row)["outcome"] in {"PENDING", "INFEASIBLE"}):
+                    continue
                 target = study._estimate_target(row)
                 if target is not None:
                     estimate = _expiry_estimate(row)
@@ -536,13 +565,12 @@ def _reserve(path, phase, now, destination):
                     deadline = target + MAX_SIDE_SECONDS + study.EXPIRY_ESTIMATE_ARRIVAL_GRACE_SECONDS
                     if now < deadline and (estimate is None or estimate["estimated_outcome"] == "UNAVAILABLE"):
                         # No metadata may mean a failed/deferred lookup, not an
-                        # observed absence of neighbors. Reconstruct the wait
-                        # from the frozen expiry, including after restart.
-                        # Do not reserve a message until a valid complete pair
-                        # (also inconclusive) or the original bounded deadline.
-                        # This never postpones exact settlement or other results.
+                        # observed absence of neighbors. Preserve the original wait.
                         continue
-            delivery[phase] = {"status": status, "attempted_ts": now}
+            delivery[phase] = {
+                "status": status, "attempted_ts": now, "transport": "APP",
+                "destination_id": destination, "phone_receipt_proven": False,
+            }
             if resolution_reason is not None:
                 delivery[phase]["resolution_reason"] = resolution_reason
             if status == "RESERVED":
@@ -554,24 +582,34 @@ def _reserve(path, phase, now, destination):
             study._save(path, state)
     return None
 
+
 def dispatch(*, now_ts, active_provider):
-    destination = owner.destination()
     path = study._path()
-    if destination is None or path is None or active_provider != "FINNHUB":
+    if path is None or active_provider != "FINNHUB":
         return
     paths = study._delivery_paths(path)
     for ledger_path in paths:
         _reconcile_receipts(ledger_path, now_ts)
+    if not app_source_bridge.private_study_publisher_ready():
+        return
+    destination = "APP:OWNER_PRIVATE"
     for phase in ("entry", "result"):
-        for path in paths:
-            reserved = _reserve(path, phase, now_ts, destination)
+        reserved = None
+        reserved_path = None
+        for ledger_path in paths:
+            reserved = _reserve(ledger_path, phase, now_ts, destination)
             if reserved is not None:
+                reserved_path = ledger_path
                 break
-        if reserved is None:
+        if reserved is None or reserved_path is None:
             continue
         identity, row = reserved
         signal_id = row["policies"]["PHYSICAL_ONLY_V3"]["opportunity_signal_id"]
-        receipt = {"status": "UNKNOWN", "attempted_ts": now_ts, "format": "TEXT", "destination_id": destination}
+        receipt = {
+            "status": "UNKNOWN", "attempted_ts": now_ts, "format": "TEXT",
+            "transport": "APP", "destination_id": destination,
+            "phone_receipt_proven": False,
+        }
         signal_label = None
         transport_started = False
         try:
@@ -586,7 +624,7 @@ def dispatch(*, now_ts, active_provider):
                         "study_id": identity, "error_class": type(exc).__name__}), flush=True)
                     from core.signal_card import render_signal_text
                     text = render_signal_text(_entry_event(row), signal_label, study=True)
-                    text += "\nImagine indisponibilă pentru această observație."
+                    text += "\\nImagine indisponibilă pentru această observație."
             else:
                 signal_label = (row["study_delivery"]["entry"].get("signal_label")
                                 or owner_signal_number.lookup(signal_id, study=True)
@@ -597,51 +635,49 @@ def dispatch(*, now_ts, active_provider):
                 except Exception as exc:
                     print("TSP_PHYSICAL_STUDY_CHART_UNAVAILABLE " + json.dumps({
                         "study_id": identity, "error_class": type(exc).__name__}), flush=True)
-                    text += "\nGrafic indisponibil pentru această observație."
-            if signal_label is not None:
-                receipt["signal_label"] = signal_label
-            entry_receipt = row["study_delivery"]["entry"] if phase == "result" else {}
-            reply_id = entry_receipt["message_id"] if entry_receipt.get("destination_id") == destination else None
-            if photo is not None and len(text.encode("utf-16-le")) // 2 > 1024:
-                photo = None  # Full evidence remains available in the text result.
-            # Reservation precedes rendering, which can outlast the entry window.
+                    text += "\\nGrafic indisponibil pentru această observație."
+            if not isinstance(signal_label, str) or not signal_label.strip():
+                raise ValueError("STUDY_SIGNAL_LABEL_UNAVAILABLE")
+            receipt["signal_label"] = signal_label
+            if photo is not None and len(photo) > 384 * 1024:
+                photo = None
             if phase == "entry" and time.time() - row["created_ts"] > study.quotes.MAX_ENTRY_DELAY_SECONDS:
                 receipt["status"] = "SKIPPED_STALE"
                 receipt["resolution_reason"] = "ENTRY_WINDOW_EXPIRED_DURING_RENDER"
             else:
+                payload = {
+                    "protocol": "PRIVATE_V3_STUDY_RECEIPT_V1",
+                    "study_id": identity,
+                    "phase": phase,
+                    "created_ts": row["created_ts"],
+                    "signal_label": signal_label,
+                    "text": text,
+                    "provider": "FINNHUB",
+                    "symbol": "EUR/USD",
+                    "strategy_version": "3.0.0",
+                    "decision_policy": "PHYSICAL_ONLY_V3",
+                    "format": "PHOTO" if photo is not None else "TEXT",
+                }
+                receipt["format"] = payload["format"]
                 transport_started = True
-                if photo is not None:
-                    receipt["format"] = "PHOTO"
-                    response = telegram_publisher.send_photo(chat_id=destination, photo=photo, caption=text,
-                        reply_to_message_id=reply_id)
-                elif reply_id is not None:
-                    response = telegram_publisher.send_message(chat_id=destination, text=text, reply_to_message_id=reply_id)
-                else:
-                    response = telegram_publisher.send_message(chat_id=destination, text=text)
-                message_id = (response.get("result") or {}).get("message_id")
+                response = app_source_bridge.publish_private_study(payload, image_bytes=photo)
                 accepted_ts = time.time()
-                if response.get("ok") is True:
-                    if type(message_id) is int and message_id > 0:
-                        if accepted_ts >= now_ts:
-                            receipt.update(status="API_ACCEPTED", message_id=message_id,
-                                           api_accepted_ts=accepted_ts)
-                        else:
-                            receipt["resolution_reason"] = "API_ACCEPTANCE_TIMESTAMP_INVALID"
-                    else:
-                        receipt["resolution_reason"] = "API_ACCEPTANCE_RESPONSE_MISSING_MESSAGE_ID"
-                elif response.get("ok") is False:
-                    receipt.update(status="FAILED", resolution_reason="TELEGRAM_API_REJECTED")
+                if accepted_ts >= now_ts:
+                    receipt.update(status="API_ACCEPTED", app_receipt_id=response["receipt_id"],
+                                   api_accepted_ts=accepted_ts, format=payload["format"])
                 else:
-                    receipt["resolution_reason"] = "AMBIGUOUS_TRANSPORT_ACCEPTANCE"
-        except telegram_publisher.TelegramAPIError:
-            receipt.update(status="FAILED", resolution_reason="TELEGRAM_API_ERROR")
+                    receipt["resolution_reason"] = "API_ACCEPTANCE_TIMESTAMP_INVALID"
+        except app_source_bridge.AppStudyRejected:
+            receipt.update(status="FAILED", resolution_reason="APP_PRIVATE_STUDY_REJECTED")
+        except app_source_bridge.AppStudyTransportError:
+            receipt["resolution_reason"] = "AMBIGUOUS_TRANSPORT_ACCEPTANCE"
         except Exception:
             receipt["resolution_reason"] = (
                 "AMBIGUOUS_TRANSPORT_ACCEPTANCE" if transport_started
                 else "STUDY_RENDER_OR_PIPELINE_EXCEPTION")
         journal_persisted = False
         try:
-            journal_persisted = _write_receipt_journal(path, identity, phase, receipt)
+            journal_persisted = _write_receipt_journal(reserved_path, identity, phase, receipt)
         except Exception as exc:
             print("TSP_PHYSICAL_STUDY_DELIVERY_RECEIPT_JOURNAL_UNAVAILABLE " + json.dumps({
                 "error_class": type(exc).__name__, "broker_executed": False,
@@ -649,7 +685,7 @@ def dispatch(*, now_ts, active_provider):
             }, sort_keys=True), flush=True)
         receipt_commit_persisted = False
         try:
-            receipt_commit_persisted = _commit_receipt(path, identity, phase, receipt)
+            receipt_commit_persisted = _commit_receipt(reserved_path, identity, phase, receipt)
         except Exception as exc:
             print("TSP_PHYSICAL_STUDY_DELIVERY_RECEIPT_COMMIT_UNAVAILABLE " + json.dumps({
                 "error_class": type(exc).__name__, "broker_executed": False,
@@ -658,7 +694,7 @@ def dispatch(*, now_ts, active_provider):
             }, sort_keys=True), flush=True)
         if receipt_commit_persisted:
             try:
-                _forget_receipt_journal(path, identity, phase, receipt["attempted_ts"])
+                _forget_receipt_journal(reserved_path, identity, phase, receipt["attempted_ts"])
             except Exception as exc:
                 print("TSP_PHYSICAL_STUDY_DELIVERY_RECEIPT_JOURNAL_CLEANUP_UNAVAILABLE " + json.dumps({
                     "error_class": type(exc).__name__, "broker_executed": False,
@@ -667,20 +703,22 @@ def dispatch(*, now_ts, active_provider):
         observation = study.displayed_study_observation(row)
         expiry_quote = observation.get("quote") or {}
         print("TSP_PHYSICAL_STUDY_DELIVERY " + json.dumps({
-            "phase": phase, "status": receipt["status"], "resolution_reason": receipt.get("resolution_reason"),
+            "phase": phase, "status": receipt["status"], "transport": "APP",
+            "resolution_reason": receipt.get("resolution_reason"),
             "study_id": identity, "format": receipt["format"], "signal_label": signal_label,
             "observed_at": now_ts, "truth_domain": "HYPOTHETICAL_RESEARCH",
-            "study_duration_seconds": study.displayed_study_observation(row)["horizon_seconds"],
-            "study_duration_source": study.displayed_study_observation(row).get("duration_source", "LEGACY_OPEN_MODEL_TIME"),
-            "study_confirmed_ts": study.displayed_study_observation(row).get("confirmed_ts"),
+            "study_duration_seconds": observation["horizon_seconds"],
+            "study_duration_source": observation.get("duration_source", "LEGACY_OPEN_MODEL_TIME"),
+            "study_confirmed_ts": observation.get("confirmed_ts"),
             "study_duration_policy": second_duration.observation_policy(row),
             "study_plan_id": (observation.get("duration_plan") or {}).get("plan_id"),
             "study_outcome": observation["outcome"] if phase == "result" else None,
             "expiry_quote_ts": expiry_quote.get("observed_ts") if phase == "result" else None,
             "expiry_price": expiry_quote.get("price") if phase == "result" else None,
             "entry_observed_ts": row["entry"]["observed_ts"],
-            "expiry_ts": row["entry"]["observed_ts"] + study.displayed_study_observation(row)["horizon_seconds"],
+            "expiry_ts": row["entry"]["observed_ts"] + observation["horizon_seconds"],
             "execution_calibration_proven": False, "broker_executed": False,
+            "phone_receipt_proven": False,
             "receipt_journal_persisted": journal_persisted,
             "receipt_commit_persisted": receipt_commit_persisted,
             **(_result_evidence(row) if phase == "result" else {}),

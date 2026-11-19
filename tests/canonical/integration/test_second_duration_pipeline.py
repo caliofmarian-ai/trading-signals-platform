@@ -21,17 +21,23 @@ def seconds_pipeline(canonical_runtime_root, monkeypatch):
     from state_store import state_store as state_store
 
     params = migrate_physical_params(json.loads((canonical_runtime_root / "config" / "algo_params.json").read_text()))
-    clock, photos = [BASE + .1], []
+    clock, photos, app_studies = [BASE + .1], [], []
     monkeypatch.setattr(owner.time, "time", lambda: clock[0])
     def photo(**kwargs):
         photos.append(kwargs)
         return {"ok": True, "result": {"message_id": len(photos)}}
     monkeypatch.setattr(telegram_publisher, "send_photo", photo)
     monkeypatch.setattr(telegram_publisher, "send_message", lambda **_: pytest.fail("expected photo transport"))
+    monkeypatch.setattr(delivery.app_source_bridge, "private_study_publisher_ready", lambda: True)
+    def app_study(payload, *, image_bytes=None):
+        app_studies.append({"payload": payload, "image_bytes": image_bytes})
+        return {"status": "API_ACCEPTED", "receipt_id": f"app-study-{len(app_studies)}"}
+    monkeypatch.setattr(delivery.app_source_bridge, "publish_private_study", app_study)
     monkeypatch.setattr(delivery, "dispatch_async", lambda **kw: delivery.dispatch(**kw))
     return dict(root=canonical_runtime_root, params=params, clock=clock, photos=photos,
-                plans=plans, owner=owner, router=router, study=study, delivery=delivery,
-                store=state_store, state=state_store.default_fsm_state())
+                app_studies=app_studies, plans=plans, owner=owner, router=router,
+                study=study, delivery=delivery, store=state_store,
+                state=state_store.default_fsm_state())
 
 
 def _step(ctx, stage, offset, *, needed=8.6, new_policy=True, publish=True):
@@ -62,11 +68,11 @@ def _step(ctx, stage, offset, *, needed=8.6, new_policy=True, publish=True):
     return decision, handoff, execution
 
 
-def _capture(ctx, *, needed=8.6):
+def _capture(ctx, *, needed=8.6, publish_study=True):
     decision, handoff, execution = _step(ctx, "OPEN_NOW", 35, needed=needed)
     assert not execution.available  # this experiment cannot activate execution
     assert ctx["study"].observe_accepted_chain(decision, handoff, ctx["params"],
-        now_ts=BASE + 35, provider="FINNHUB", buffer_mode="SMALL", publish_study=True)
+        now_ts=BASE + 35, provider="FINNHUB", buffer_mode="SMALL", publish_study=publish_study)
     return next(iter(ctx["study"]._read(ctx["study"]._study_paths(ctx["study"]._path())[0])["records"].values()))
 
 
@@ -104,7 +110,10 @@ def test_confirm_photo_open_result_chart_and_summary_use_one_primary_seconds_pla
     assert projected["study_duration_seconds"] == 516
     assert projected["expiry_ts"] == BASE + 36 + 516
     assert projected["study_plan_id"] == frozen["plan_id"]
-    assert len(ctx["photos"]) == 3
+    assert len(ctx["photos"]) == 2  # PRE and CONFIRM remain canonical signal cards.
+    assert len(ctx["app_studies"]) == 1
+    assert ctx["app_studies"][0]["payload"]["phase"] == "entry"
+    assert ctx["app_studies"][0]["payload"]["signal_label"] == label
     assert all("#0" in call["caption"] for call in ctx["photos"])
     assert all(call["photo"].startswith(b"\x89PNG") for call in ctx["photos"])
     from core.signal_card import build_card_fields
@@ -118,10 +127,13 @@ def test_confirm_photo_open_result_chart_and_summary_use_one_primary_seconds_pla
     saved = _advance(ctx, expiry, 1.1025)
     assert saved["study_observation"]["outcome"] == "WIN"
     assert saved["candidates"][0]["outcome"] == "PENDING"  # research grid is still independent
-    assert len(ctx["photos"]) == 4
-    assert ctx["photos"][-1]["reply_to_message_id"] == 3
-    assert "8 MIN 36 S" in ctx["photos"][-1]["caption"]
-    assert "Rezultat: WIN" in ctx["photos"][-1]["caption"]
+    assert len(ctx["photos"]) == 2
+    assert len(ctx["app_studies"]) == 2
+    assert ctx["app_studies"][-1]["payload"]["phase"] == "result"
+    assert ctx["app_studies"][-1]["payload"]["study_id"] == ctx["app_studies"][0]["payload"]["study_id"]
+    assert "8 MIN 36 S" in ctx["app_studies"][-1]["payload"]["text"]
+    assert "Rezultat: WIN" in ctx["app_studies"][-1]["payload"]["text"]
+    assert ctx["app_studies"][-1]["image_bytes"].startswith(b"\x89PNG")
     assert chart_calls[0]["expiry_ts"] == expiry and chart_calls[0]["outcome"] == "WIN"
     assert saved["study_observation"]["duration_plan"] == frozen
     report = ctx["study"].summary(now_ts=expiry)
@@ -141,7 +153,8 @@ def test_new_second_plan_never_replaces_a_preexisting_minute_chain(seconds_pipel
     assert "duration_policy" not in captured["study_observation"]
     saved = _advance(ctx, BASE + 36, 1.1)
     assert ctx["delivery"]._entry_event(saved)["expiry_ts"] == BASE + 36 + 600
-    assert len(ctx["photos"]) == 3
+    assert len(ctx["photos"]) == 2
+    assert len(ctx["app_studies"]) == 1
 
 
 def test_new_seconds_plan_invalidated_by_fresh_physics_does_not_open(seconds_pipeline):
@@ -152,6 +165,7 @@ def test_new_seconds_plan_invalidated_by_fresh_physics_does_not_open(seconds_pip
     assert captured["study_observation"]["outcome"] == "INFEASIBLE"
     saved = _advance(ctx, BASE + 36, 1.1)
     assert len(ctx["photos"]) == 2
+    assert not ctx["app_studies"]
     assert saved["study_delivery"]["entry"]["status"] == "SKIPPED_DURATION_INFEASIBLE"
     assert saved["study_observation"]["duration_seconds"] == 516
 
@@ -169,6 +183,7 @@ def test_second_plan_requires_the_exact_actual_confirm_receipt(seconds_pipeline,
     _capture(ctx)
     saved = _advance(ctx, BASE + 36, 1.1)
     assert len(ctx["photos"]) == 2
+    assert not ctx["app_studies"]
     assert saved["study_delivery"]["entry"]["status"] == "SKIPPED_STAGE_GUARD"
 
 
@@ -249,17 +264,20 @@ def test_prospective_reserve_is_separate_from_actual_open_and_baseline(seconds_p
     entry = BASE + 36
     _advance(ctx, entry, 1.1)
     sent_at_open = len(ctx["photos"])
-    assert sent_at_open == (2 if rescued else 3)
+    assert sent_at_open == 2  # Canonical PRE/CONFIRM remain the only Telegram cards.
+    assert len(ctx["app_studies"]) == (0 if rescued else 1)
     saved = _advance(ctx, entry + 516, 1.1)
     assert saved["study_observation"]["outcome"] == ("INFEASIBLE" if rescued else "DRAW")
     assert saved["confirm_duration_reserve"]["outcome"] == "PENDING"
     sent_at_control_expiry = len(ctx["photos"])
-    assert sent_at_control_expiry == (2 if rescued else 4)
+    assert sent_at_control_expiry == 2
+    assert len(ctx["app_studies"]) == (0 if rescued else 2)
 
     saved = _advance(ctx, entry + 519, 1.105)
     assert saved["confirm_duration_reserve"]["outcome"] == "WIN"
     assert saved["candidates"][0]["outcome"] == "PENDING"
     assert len(ctx["photos"]) == sent_at_control_expiry
+    assert len(ctx["app_studies"]) == (0 if rescued else 2)
     evidence = study.summary(now_ts=entry + 519)["confirm_duration_reserve_diagnostic"]
     assert evidence["duration_gate_rescues"] == int(rescued)
     assert evidence["paired_real_quote_count"] == int(not rescued)
@@ -429,7 +447,8 @@ def test_market_duration_uses_fresh_open_calculation_and_keeps_confirmed_plan(
     entry = BASE + 35.2
     samples[BASE + 35] = quote(entry, 1.1)
     advance(entry + .1)
-    assert len(ctx["photos"]) == (2 if blocked else 3)
+    assert len(ctx["photos"]) == 2
+    assert len(ctx["app_studies"]) == (0 if blocked else 1)
     target = entry + seconds
     samples[target] = quote(target + 2.001, 1.105)
     row = next(iter(advance(target + 3)["records"].values()))
@@ -447,7 +466,8 @@ def test_market_duration_uses_fresh_open_calculation_and_keeps_confirmed_plan(
     assert row["study_observation"]["outcome"] == (
         "INFEASIBLE" if blocked else "WIN" if seconds == 516 else "PENDING")
     assert row["candidates"][0]["outcome"] == "PENDING"
-    assert len(ctx["photos"]) == (2 if blocked else 4 if seconds == 516 else 3)
+    assert len(ctx["photos"]) == 2
+    assert len(ctx["app_studies"]) == (0 if blocked else 2 if seconds == 516 else 1)
     diagnostic = study.summary(now_ts=target + 4)["open_market_duration_diagnostic"]
     assert diagnostic["observed_open_chains"] == diagnostic["market_duration_feasible"] == 1
     assert diagnostic["confirmed_duration_blocked"] == int(blocked)
