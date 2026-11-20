@@ -624,7 +624,7 @@ def dispatch(*, now_ts, active_provider):
                         "study_id": identity, "error_class": type(exc).__name__}), flush=True)
                     from core.signal_card import render_signal_text
                     text = render_signal_text(_entry_event(row), signal_label, study=True)
-                    text += "\\nImagine indisponibilă pentru această observație."
+                    text += "\nImagine indisponibilă pentru această observație."
             else:
                 signal_label = (row["study_delivery"]["entry"].get("signal_label")
                                 or owner_signal_number.lookup(signal_id, study=True)
@@ -635,7 +635,7 @@ def dispatch(*, now_ts, active_provider):
                 except Exception as exc:
                     print("TSP_PHYSICAL_STUDY_CHART_UNAVAILABLE " + json.dumps({
                         "study_id": identity, "error_class": type(exc).__name__}), flush=True)
-                    text += "\\nGrafic indisponibil pentru această observație."
+                    text += "\nGrafic indisponibil pentru această observație."
             if not isinstance(signal_label, str) or not signal_label.strip():
                 raise ValueError("STUDY_SIGNAL_LABEL_UNAVAILABLE")
             receipt["signal_label"] = signal_label

@@ -443,6 +443,7 @@ def test_study_result_render_failure_falls_back_but_ambiguous_upload_does_not(st
     assert len(attempts) == 1
     if render_fails:
         assert len(messages) == 2 and "Grafic indisponibil" in messages[1]["text"]
+        assert "\nGrafic indisponibil pentru această observație." in messages[1]["text"]
         assert (receipt["status"], receipt["format"]) == ("API_ACCEPTED", "TEXT")
     else:
         assert len(messages) == 1
@@ -670,6 +671,7 @@ def test_study_entry_render_failure_uses_same_id_text_once(study_setup, monkeypa
     assert len(messages) == 1 and "photo" not in messages[0]
     assert "#0" in messages[0]["text"] and "STUDIU · SIMULARE" in messages[0]["text"]
     assert "Imagine indisponibilă" in messages[0]["text"]
+    assert "\nImagine indisponibilă pentru această observație." in messages[0]["text"]
     assert "1.1000000" in messages[0]["text"] and "MIN" in messages[0]["text"]
     receipt = next(iter(study._read(study._path())["records"].values()))["study_delivery"]["entry"]
     assert (receipt["status"], receipt["format"]) == ("API_ACCEPTED", "TEXT")
