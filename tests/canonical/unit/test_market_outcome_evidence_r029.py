@@ -241,6 +241,7 @@ def test_lag_is_descriptive_quality_not_automatic_label_mutation(tmp_path: Path)
 
 
 def test_ranking_interface_replaces_placeholder_and_never_invents_provider_data(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("time.time", lambda: NOW)
     from core import analytics_engine
 
     source = _write(tmp_path / "active-telemetry.jsonl", [_trade("REAL")])
@@ -252,6 +253,7 @@ def test_ranking_interface_replaces_placeholder_and_never_invents_provider_data(
 
 
 def test_research_shows_read_only_market_evidence_for_authorized_owner(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("time.time", lambda: NOW)
     import core
     from core import admin_permissions, bot_service, publication_evidence
     from core import lifecycle_funnel_evidence
