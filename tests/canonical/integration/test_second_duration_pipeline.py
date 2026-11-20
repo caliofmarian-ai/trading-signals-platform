@@ -588,14 +588,16 @@ def test_directional_flow_cohort_registry_validates_each_successor_link(seconds_
         "V3_DIRECTIONAL_FLOW_GATE_V4",
         "V3_DIRECTIONAL_FLOW_GATE_V5",
         "V3_DIRECTIONAL_FLOW_GATE_V6",
+        "V3_DIRECTIONAL_FLOW_GATE_V7",
     )
-    assert tuple(study._COHORT_PATHS)[:6] == tuple(reversed(revisions))
+    assert tuple(study._COHORT_PATHS)[:7] == tuple(reversed(revisions))
     assert study._cohort_predecessor_revision(revisions[0]) is None
     assert study._cohort_predecessor_revision(revisions[1]) == revisions[0]
     assert study._cohort_predecessor_revision(revisions[2]) == revisions[1]
     assert study._cohort_predecessor_revision(revisions[3]) == revisions[2]
     assert study._cohort_predecessor_revision(revisions[4]) == revisions[3]
     assert study._cohort_predecessor_revision(revisions[5]) == revisions[4]
+    assert study._cohort_predecessor_revision(revisions[6]) == revisions[5]
 
     common = {
         "trigger": "TRAINING_DATA_QUALITY_FAILED",
@@ -630,17 +632,23 @@ def test_directional_flow_cohort_registry_validates_each_successor_link(seconds_
         "starts_at": BASE - 5,
         "successor": {**common, "from_revision": revisions[3]},
     }
-    current_v6 = {
+    historical_v6 = {
         "revision": revisions[5],
-        "starts_at": BASE - 1,
+        "starts_at": BASE - 2,
         "successor": {**common, "from_revision": revisions[4]},
+    }
+    current_v7 = {
+        "revision": revisions[6],
+        "starts_at": BASE - 1,
+        "successor": {**common, "from_revision": revisions[5]},
     }
 
     assert study._validate_cohort(legacy_v2, revision=revisions[1]) == legacy_v2
     assert study._validate_cohort(historical_v3, revision=revisions[2]) == historical_v3
     assert study._validate_cohort(historical_v4, revision=revisions[3]) == historical_v4
     assert study._validate_cohort(historical_v5, revision=revisions[4]) == historical_v5
-    assert study._validate_cohort(current_v6, revision=revisions[5]) == current_v6
+    assert study._validate_cohort(historical_v6, revision=revisions[5]) == historical_v6
+    assert study._validate_cohort(current_v7, revision=revisions[6]) == current_v7
 
     invalid_v3 = deepcopy(historical_v3)
     invalid_v3["successor"]["from_revision"] = revisions[0]
@@ -657,7 +665,12 @@ def test_directional_flow_cohort_registry_validates_each_successor_link(seconds_
     with pytest.raises(ValueError, match="INVALID_CALIBRATION_COHORT_SUCCESSOR"):
         study._validate_cohort(invalid_v5, revision=revisions[4])
 
-    invalid_v6 = deepcopy(current_v6)
+    invalid_v6 = deepcopy(historical_v6)
     invalid_v6["successor"]["from_revision"] = revisions[3]
     with pytest.raises(ValueError, match="INVALID_CALIBRATION_COHORT_SUCCESSOR"):
         study._validate_cohort(invalid_v6, revision=revisions[5])
+
+    invalid_v7 = deepcopy(current_v7)
+    invalid_v7["successor"]["from_revision"] = revisions[4]
+    with pytest.raises(ValueError, match="INVALID_CALIBRATION_COHORT_SUCCESSOR"):
+        study._validate_cohort(invalid_v7, revision=revisions[6])
