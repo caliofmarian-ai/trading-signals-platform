@@ -84,8 +84,19 @@ started under a preceding data policy cannot inherit a new-policy confirmation.
 Execution expiry remains separately governed. Changing the parameter hash
 invalidates an old-scope calibration; no artifact is manufactured by migration.
 
-Prospective expiry research uses protocol `PROSPECTIVE_PHYSICAL_V3_EXPIRY_V2`,
-with the history policy in its scope and separate `recent_history_state.json`.
-Prior scored and prior scoreless cohorts remain preserved. Owner timing uses
-a separate history-policy ledger. Status reports saved context and recent
-contiguous windows separately. This change does not claim calibrated efficacy.
+Prospective expiry research currently uses study protocol
+`PROSPECTIVE_PHYSICAL_V3_EXPIRY_V5`, scoped to the declared history policy and
+stored separately in `recent_history_state.json`. This study-protocol version
+is distinct from the persistence/storage protocol (currently V5) and from the
+prospective cohort revision (currently `V3_DIRECTIONAL_FLOW_GATE_V7`); these
+version numbers describe independent contracts. Storage protocol V5 preserves
+the earlier V2/V3/V4 records and their original labels. The V7 cohort is a fresh,
+chronological, non-copying successor to V6; V6 remains preserved as terminal
+`TRAINING_DATA_QUALITY_FAILED`, and its pending observations settle only in its
+own ledger. Prior scored and prior scoreless cohorts are not merged. Owner timing
+uses a separate history-policy ledger. Calibration still requires 60 chronological
+non-overlapping training entries followed by 60 untouched holdout entries, at
+least 30 decisive observations with known B in each lot, no more than 10% missing
+outcomes, and the existing confidence/readiness gates. No study result auto-approves
+or activates parameters. Status reports saved context and recent contiguous
+windows separately. This change does not claim calibrated efficacy.
