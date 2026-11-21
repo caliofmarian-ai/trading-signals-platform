@@ -219,3 +219,48 @@ Trace timestamps preserve evaluation time separately from collector time. Logs
 contain derived measurements and hashed opportunities, without quotes or private
 destination IDs. This diagnostic does not change expiry-study observations or
 establish strategy efficacy.
+
+## Current study protocol, storage protocol and cohort lineage — 2026-11-21
+
+The active expiry-research study protocol is
+`PROSPECTIVE_PHYSICAL_V3_EXPIRY_V5`. It defines the prospective research report
+and its scope; it is not the durable-file schema version and is not the cohort
+revision. The persistent calibration storage protocol is independently V5: it
+preserves the pre-upgrade bytes before migration, reads earlier V2/V3/V4 records
+without relabelling them, and keeps prior cohort records and outcomes intact.
+The matching numeral does not make these two V5 contracts interchangeable.
+
+The active prospective cohort is `V3_DIRECTIONAL_FLOW_GATE_V7`. V6 is preserved
+as terminal `TRAINING_DATA_QUALITY_FAILED`; V7 is its fresh chronological,
+non-copying successor with a new 60/60 boundary. No V6 rows, labels, outcomes or
+holdout observations are copied into V7. Pending V6 observations may settle only
+in the V6 ledger. Earlier scored and scoreless cohorts remain separate and are
+never pooled into the active V7 split.
+
+The V7 calibration split remains 60 chronological, non-overlapping training
+entries followed by 60 untouched holdout entries. Each lot must contain at least
+30 decisive observations with a known buffer-at-expiry result (B); missing expiry
+outcomes may not exceed 10%, and the existing family-wise confidence/readiness
+requirements remain unchanged. An incomplete or failed training lot cannot
+select a bias, evaluate the untouched holdout early, approve execution calibration,
+or activate production parameters automatically.
+
+The live scope remains FINNHUB EUR/USD, strategy `3.0.0`,
+`PHYSICAL_ONLY_V3`, and `RECENT_PHYSICS_WITH_SAVED_CONTEXT_V1`, with the validated
+parameter hash unchanged. MEDIUM is a buffer mode, not a subscription tier or
+destination; subscription routes remain FREE/BASIC/PRO/ELITE. The lifecycle stays
+PRE → CONFIRM → OPEN_NOW. A new private study uses only a genuine accepted
+PRE/CONFIRM chain, the exact duration frozen at CONFIRM, the existing minimum
+30-second PRE lead, a real entry tick in its original 10-second source window,
+and a real expiry tick in its original 2-second source window. The separate
+15-second quote-arrival grace only allows an already eligible source tick to be
+received late; it does not move entry/expiry, create a quote, or convert a gap
+into a measured result.
+
+All study entries/results remain explicitly hypothetical, private and separate
+from canonical OPEN publication. API acceptance is not proof of phone display.
+The baseline Model Time outcome and buffer-at-expiry objective remain separate;
+post-model checkpoints and adjacent-source-quote estimates cannot rewrite the
+baseline. No score is used in the V3 decision, no threshold/duration/buffer is
+relaxed by this documentation, and broker execution remains disabled. No
+automatic approval, parameter activation, backfill or efficacy claim follows.
