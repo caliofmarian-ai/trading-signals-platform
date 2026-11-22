@@ -50,14 +50,12 @@ def _read(path, parameter_hash):
 
 
 _DIAGNOSTIC_EVENT_FIELDS = (
-    "decision_ts", "observed_at", "candle_ts", "evaluation_candle_age_seconds",
-    "decision_kind", "fsm_prior_state", "fsm_resulting_state", "fsm_reason",
-    "physical_pre_ts", "pre_api_accepted_ts", "pre_receipt_available_at_evaluation",
-    "pre_api_age_seconds", "remaining_pre_lead_seconds", "cooldown_remaining_seconds",
-    "hard_blockers", "noise_reasons", "structure_state", "structure_conflicts",
-    "room_over_buffer", "time_state", "model_minutes", "needed_adjusted_minutes",
-    "trend_context", "activity_state", "noise_state", "wick_body_ratio",
-    "range_deviation_sigma", "jump_vs_atr", "activity_ratio",
+    "decision_ts", "candle_ts", "evaluation_candle_age_seconds", "decision_kind",
+    "fsm_prior_state", "fsm_resulting_state", "fsm_reason",
+    "pre_receipt_available_at_evaluation", "pre_api_age_seconds", "remaining_pre_lead_seconds",
+    "cooldown_remaining_seconds", "hard_blockers", "noise_reasons", "structure_state",
+    "structure_conflicts", "room_over_buffer", "time_state", "model_minutes",
+    "needed_adjusted_minutes", "trend_context", "activity_state", "noise_state",
     "since_first_observed_pre_seconds", "since_first_observed_confirm_seconds",
 )
 _TRACE_EVENT_NAMES = frozenset({"PRE", "CONFIRM", "OPEN_NOW", "EXIT"})
