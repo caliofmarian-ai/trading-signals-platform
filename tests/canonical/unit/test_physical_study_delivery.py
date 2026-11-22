@@ -353,6 +353,37 @@ def test_duration_pair_diagnostics_joins_hashed_trace_without_private_fields():
     assert not any("price" in key for key in pair)
 
 
+def test_duration_pair_diagnostics_preserves_missing_pending_open_fields():
+    from intelligence import physical_expiry_calibration as study
+
+    row = {
+        "study_observation": {
+            "duration_policy": study.second_duration.POLICY,
+            "outcome": "PENDING",
+            "duration_plan": {"policy": study.second_duration.POLICY},
+        },
+        "policies": {"PHYSICAL_ONLY_V3": {}},
+        "decision_snapshot": {},
+    }
+    original = copy.deepcopy(row)
+
+    pairs = study._duration_pair_diagnostics([row])
+
+    assert row == original
+    assert len(pairs) == 1
+    pair = pairs[0]
+    assert pair["pre_decision_ts"] is None
+    assert pair["confirm_decision_ts"] is None
+    assert pair["open_decision_ts"] is None
+    assert pair["confirm_model_time_seconds"] is None
+    assert pair["confirm_adjusted_time_seconds"] is None
+    assert pair["confirmed_duration_seconds"] is None
+    assert pair["open_adjusted_time_seconds"] is None
+    assert pair["open_candle_age_seconds"] is None
+    assert pair["open_room_over_buffer"] is None
+    assert pair["entry_delivery_status"] == "NOT_ATTEMPTED"
+
+
 def test_confirmed_study_exact_fit_accepts_only_machine_precision_drift(study_setup):
     from dataclasses import replace
 
