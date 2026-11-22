@@ -1021,9 +1021,43 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
         if (not historical and cohort is not None
                 and cohort.get("revision") == DIRECTIONAL_FLOW_COHORT_REVISION
                 and state is not None):
-            pair_rows = _duration_pair_diagnostics(list(state["records"].values()))
+            trace_episodes = {}
+            trace_status = "READ_UNAVAILABLE"
+            trace_retained = 0
+            try:
+                from intelligence import physical_opportunity_trace
+                trace_snapshot = physical_opportunity_trace.diagnostic_snapshot(
+                    state["scope"]["parameter_sha256"]
+                )
+                if trace_snapshot.get("history_policy") != state["scope"]["history_policy"]:
+                    raise ValueError("TRACE_HISTORY_POLICY_MISMATCH")
+                trace_episodes = {
+                    episode["opportunity_hash"]: episode
+                    for episode in trace_snapshot["episodes"]
+                }
+                trace_status = trace_snapshot["status"]
+                trace_retained = trace_snapshot["retained_episodes"]
+            except Exception:
+                # A trace read failure must never block the observer or study sender.
+                trace_episodes = {}
+                trace_status = "READ_UNAVAILABLE"
+                trace_retained = 0
+            pair_rows = _duration_pair_diagnostics(
+                list(state["records"].values()), trace_episodes=trace_episodes
+            )
+            trace_matched = sum(row["opportunity_trace_status"] == "MATCHED" for row in pair_rows)
+            trace_join = {
+                "status": trace_status,
+                "retained_episodes": trace_retained,
+                "matched_pairs": trace_matched,
+                "unmatched_pairs": len(pair_rows) - trace_matched,
+                "no_state_mutation": True,
+                "execution_authority": False,
+                "broker_executed": False,
+            }
             pair_digest = hashlib.sha256(json.dumps(
-                pair_rows, sort_keys=True, separators=(",", ":"), allow_nan=False
+                {"pairs": pair_rows, "trace_join": trace_join},
+                sort_keys=True, separators=(",", ":"), allow_nan=False
             ).encode()).hexdigest()
             if _last_duration_pair_digest.get(str(path)) != pair_digest:
                 pair_payload = {
@@ -1036,8 +1070,9 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                     "pair_report_sha256": pair_digest,
                     "pairs": pair_rows[:TRAIN_ENTRIES + HOLDOUT_ENTRIES],
                     "truncated_pairs": max(0, len(pair_rows) - TRAIN_ENTRIES - HOLDOUT_ENTRIES),
+                    "trace_join": trace_join,
                     "truth_domain": "RESEARCH_DIAGNOSTIC_ONLY",
-                    "source": "FROZEN_CONFIRM_PLAN_AND_OPEN_SNAPSHOT_WITH_TRACE_CORRELATION_KEY",
+                    "source": "FROZEN_CONFIRM_PLAN_OPEN_SNAPSHOT_AND_PERSISTED_OPPORTUNITY_TRACE",
                     "no_state_mutation": True,
                     "no_outcome_relabeling": True,
                     "no_strategy_change": True,
@@ -1124,11 +1159,12 @@ def _duration_reserve_report(records):
     }
 
 
-def _duration_pair_diagnostics(rows):
+def _duration_pair_diagnostics(rows, *, trace_episodes=None):
     """Expose privacy-safe pair evidence with a key matching V3 opportunity traces.
 
-    The 12-character opportunity hash matches PHYSICAL_V3_OPPORTUNITY_TRACE
-    without exposing signal IDs, quote values or changing any stored outcome.
+    The 12-character opportunity hash joins the bounded persisted
+    PHYSICAL_V3_OPPORTUNITY_TRACE without exposing signal IDs, quote values
+    or changing any stored outcome.
     """
     pairs = []
     for row in rows:
@@ -1167,6 +1203,8 @@ def _duration_pair_diagnostics(rows):
         outcome = observation.get("outcome")
         plan_id = plan.get("plan_id") if isinstance(plan, dict) else None
         snapshot_hash = row.get("decision_snapshot_sha256")
+        trace_episode = trace_episodes.get(opportunity_hash) if isinstance(trace_episodes, dict) else None
+        trace_events = trace_episode.get("events") if isinstance(trace_episode, dict) else None
         pairs.append({
             "opportunity_hash": opportunity_hash,
             "confirm_plan_hash": plan_id[:12] if isinstance(plan_id, str) else None,
@@ -1208,6 +1246,12 @@ def _duration_pair_diagnostics(rows):
                 if available_distance is not None and buffer_distance is not None and buffer_distance > 0
                 else None
             ),
+            "opportunity_trace_status": (
+                "MATCHED" if isinstance(trace_episode, dict)
+                else "NOT_RETAINED" if isinstance(trace_episodes, dict) else "NOT_CONFIGURED"
+            ),
+            "opportunity_trace_closed": trace_episode.get("closed") if isinstance(trace_episode, dict) else None,
+            "opportunity_trace_events": trace_events if isinstance(trace_events, dict) else {},
         })
     pairs.sort(key=lambda item: (
         item["pre_decision_ts"] is None,
