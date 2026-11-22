@@ -1060,6 +1060,13 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                 sort_keys=True, separators=(",", ":"), allow_nan=False
             ).encode()).hexdigest()
             if _last_duration_pair_digest.get(str(path)) != pair_digest:
+                detail_payloads = _duration_pair_detail_payloads(
+                    pair_rows, pair_digest=pair_digest,
+                    cohort_revision=cohort["revision"],
+                    parameter_sha256=state["scope"]["parameter_sha256"],
+                    history_policy=state["scope"]["history_policy"],
+                    observed_at=now,
+                )
                 pair_payload = {
                     "protocol": "V3_DURATION_PAIR_DIAGNOSTICS_V1",
                     "observed_at": now,
@@ -1068,9 +1075,13 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                     "history_policy": state["scope"]["history_policy"],
                     "pair_count": len(pair_rows),
                     "pair_report_sha256": pair_digest,
-                    "pairs": pair_rows[:TRAIN_ENTRIES + HOLDOUT_ENTRIES],
-                    "truncated_pairs": max(0, len(pair_rows) - TRAIN_ENTRIES - HOLDOUT_ENTRIES),
+                    "pair_summary": _duration_pair_summary(pair_rows),
                     "trace_join": trace_join,
+                    "detail_chunk_count": len(detail_payloads),
+                    "detail_pair_count": sum(len(item["pairs"]) for item in detail_payloads),
+                    "detail_max_rows": DURATION_PAIR_DETAIL_MAX_ROWS,
+                    "detail_max_bytes": DURATION_PAIR_DETAIL_MAX_BYTES,
+                    "truncated_pairs": max(0, len(pair_rows) - DURATION_PAIR_DETAIL_MAX_PAIRS),
                     "truth_domain": "RESEARCH_DIAGNOSTIC_ONLY",
                     "source": "FROZEN_CONFIRM_PLAN_OPEN_SNAPSHOT_AND_PERSISTED_OPPORTUNITY_TRACE",
                     "no_state_mutation": True,
@@ -1082,8 +1093,13 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                     "calibration_authority": False,
                     "broker_executed": False,
                 }
+                if len(json.dumps(pair_payload, sort_keys=True, allow_nan=False).encode()) > DURATION_PAIR_DETAIL_MAX_BYTES:
+                    raise ValueError("DURATION_PAIR_SUMMARY_SIZE_LIMIT")
                 print("TSP_PHYSICAL_V3_DURATION_PAIR_DIAGNOSTICS "
                       + json.dumps(pair_payload, sort_keys=True, allow_nan=False), flush=True)
+                for detail_payload in detail_payloads:
+                    print("TSP_PHYSICAL_V3_DURATION_PAIR_DETAIL "
+                          + json.dumps(detail_payload, sort_keys=True, allow_nan=False), flush=True)
                 _last_duration_pair_digest[str(path)] = pair_digest
         _last_report[str(path)] = slot
         return report
@@ -1259,6 +1275,121 @@ def _duration_pair_diagnostics(rows, *, trace_episodes=None):
         item["opportunity_hash"] or "",
     ))
     return pairs
+
+
+
+DURATION_PAIR_DETAIL_MAX_ROWS = 4
+DURATION_PAIR_DETAIL_MAX_BYTES = 24 * 1024
+DURATION_PAIR_DETAIL_MAX_PAIRS = TRAIN_ENTRIES + HOLDOUT_ENTRIES
+
+
+def _duration_pair_summary(rows):
+    """Compact aggregate for the bounded CONFIRM/OPEN diagnostic."""
+    def counts(field, *, include_none=False):
+        values = [row.get(field) for row in rows]
+        if not include_none:
+            values = [value for value in values if value is not None]
+        return dict(Counter(
+            "null" if value is None else str(value).lower() if isinstance(value, bool) else str(value)
+            for value in values
+        ))
+
+    def quantiles(field):
+        values = []
+        for row in rows:
+            value = row.get(field)
+            if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and math.isfinite(value)):
+                values.append(float(value))
+        return _quantiles(values)
+
+    return {
+        "duration_feasibility": counts("duration_feasibility", include_none=True),
+        "entry_delivery_status": counts("entry_delivery_status", include_none=True),
+        "entry_delivery_reason": counts("entry_delivery_reason"),
+        "missing_data_reason": counts("missing_data_reason"),
+        "opportunity_trace_status": counts("opportunity_trace_status", include_none=True),
+        "opportunity_trace_closed": counts("opportunity_trace_closed", include_none=True),
+        "open_trend_context": counts("open_trend_context"),
+        "open_noise_context": counts("open_noise_context"),
+        "open_structure_state": counts("open_structure_state"),
+        "open_time_state": counts("open_time_state"),
+        "confirm_plan_available": sum(row.get("confirm_plan_available") is True for row in rows),
+        "confirm_plan_missing": sum(row.get("confirm_plan_available") is not True for row in rows),
+        "open_snapshot_available": sum(row.get("open_snapshot_available") is True for row in rows),
+        "open_snapshot_missing": sum(row.get("open_snapshot_available") is not True for row in rows),
+        "pre_to_confirm_seconds": quantiles("pre_to_confirm_seconds"),
+        "confirm_to_open_seconds": quantiles("confirm_to_open_seconds"),
+        "open_candle_age_seconds": quantiles("open_candle_age_seconds"),
+        "open_minus_confirm_adjusted_seconds": quantiles("open_minus_confirm_adjusted_seconds"),
+        "confirmed_duration_minus_open_adjusted_seconds": quantiles(
+            "confirmed_duration_minus_open_adjusted_seconds"),
+        "open_room_over_buffer": quantiles("open_room_over_buffer"),
+    }
+
+
+def _duration_pair_detail_payloads(rows, *, pair_digest, cohort_revision,
+                                   parameter_sha256, history_policy, observed_at):
+    """Split privacy-safe row detail into independently readable bounded log lines."""
+    visible_rows = list(rows[:DURATION_PAIR_DETAIL_MAX_PAIRS])
+
+    def payload(chunk, index, count):
+        return {
+            "protocol": "V3_DURATION_PAIR_DIAGNOSTICS_V1",
+            "pair_report_sha256": pair_digest,
+            "cohort_revision": cohort_revision,
+            "parameter_sha256": parameter_sha256,
+            "history_policy": history_policy,
+            "observed_at": observed_at,
+            "chunk_index": index,
+            "chunk_count": count,
+            "pairs": chunk,
+            "truth_domain": "RESEARCH_DIAGNOSTIC_ONLY",
+            "no_state_mutation": True,
+            "no_outcome_relabeling": True,
+            "no_strategy_change": True,
+            "no_historical_backfill": True,
+            "execution_authority": False,
+            "publication_authority": False,
+            "calibration_authority": False,
+            "broker_executed": False,
+        }
+
+    chunks = []
+    current = []
+    for row in visible_rows:
+        candidate = current + [row]
+        probe = payload(candidate, len(chunks), 999999)
+        encoded_size = len(json.dumps(
+            probe, sort_keys=True, allow_nan=False
+        ).encode())
+        if current and (
+            len(candidate) > DURATION_PAIR_DETAIL_MAX_ROWS
+            or encoded_size > DURATION_PAIR_DETAIL_MAX_BYTES
+        ):
+            chunks.append(current)
+            current = [row]
+            probe = payload(current, len(chunks), 999999)
+            encoded_size = len(json.dumps(
+                probe, sort_keys=True, allow_nan=False
+            ).encode())
+        else:
+            current = candidate
+        if encoded_size > DURATION_PAIR_DETAIL_MAX_BYTES:
+            raise ValueError("DURATION_PAIR_DETAIL_ROW_TOO_LARGE")
+    if current:
+        chunks.append(current)
+
+    chunk_count = len(chunks)
+    result = [
+        payload(chunk, index, chunk_count)
+        for index, chunk in enumerate(chunks)
+    ]
+    if any(len(json.dumps(item, sort_keys=True, allow_nan=False).encode())
+           > DURATION_PAIR_DETAIL_MAX_BYTES for item in result):
+        raise ValueError("DURATION_PAIR_DETAIL_CHUNK_SIZE_LIMIT")
+    return result
+
 
 
 def _duration_reconciliation_report(rows):
