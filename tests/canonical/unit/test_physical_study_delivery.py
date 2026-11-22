@@ -281,6 +281,78 @@ def test_open_market_duration_report_reconciles_frozen_confirm_plan_and_open_adj
     assert reconciliation["broker_executed"] is False
 
 
+def test_duration_pair_diagnostics_joins_hashed_trace_without_private_fields():
+    from intelligence import physical_expiry_calibration as study
+
+    signal_id = "sig-v3-duration-pair"
+    policy = study.second_duration.POLICY
+    row = {
+        "direction": "BUY",
+        "open_ts": BASE + 40,
+        "confirm_model_seconds": 180.0,
+        "adjusted_seconds": 150.0,
+        "policies": {"PHYSICAL_ONLY_V3": {
+            "opportunity_signal_id": signal_id,
+            "pre_ts": BASE + 1,
+            "confirm_ts": BASE + 10,
+        }},
+        "decision_snapshot": {
+            "signal_id": signal_id,
+            "candle_ts": BASE + 39,
+            "time": {"time_state": "READY", "model_expiry": 2.0},
+            "market_context": {
+                "trend_context": "WITH_TREND",
+                "noise_context": "STABLE",
+                "volatility_state": "ACTIVE",
+                "buffer_distance": 0.1,
+            },
+            "structure": {"feasibility_state": "VALID", "available_distance": 0.25},
+        },
+        "decision_snapshot_sha256": "a" * 64,
+        "study_observation": {
+            "duration_policy": policy,
+            "horizon_seconds": 90,
+            "outcome": "INFEASIBLE",
+            "duration_plan": {
+                "policy": policy,
+                "pre_ts": BASE + 1,
+                "confirmed_ts": BASE + 10,
+                "adjusted_minutes": 1.5,
+                "duration_seconds": 90,
+                "plan_id": "b" * 64,
+            },
+        },
+        "study_delivery": {"entry": {
+            "status": "SKIPPED_DURATION_INFEASIBLE",
+            "resolution_reason": "OPEN_ADJUSTED_TIME_EXCEEDS_CONFIRMED_DURATION",
+        }},
+    }
+    original = copy.deepcopy(row)
+
+    pairs = study._duration_pair_diagnostics([row])
+
+    assert row == original
+    assert len(pairs) == 1
+    pair = pairs[0]
+    assert pair["opportunity_hash"] == hashlib.sha256(signal_id.encode()).hexdigest()[:12]
+    assert pair["pre_to_confirm_seconds"] == 9
+    assert pair["confirm_to_open_seconds"] == 30
+    assert pair["confirm_adjusted_time_seconds"] == 90
+    assert pair["confirmed_duration_seconds"] == 90
+    assert pair["open_model_time_seconds"] == 120
+    assert pair["open_adjusted_time_seconds"] == 150
+    assert pair["open_minus_confirm_adjusted_seconds"] == 60
+    assert pair["confirmed_duration_minus_open_adjusted_seconds"] == -60
+    assert pair["open_candle_age_seconds"] == 1
+    assert pair["open_room_over_buffer"] == 2.5
+    assert pair["duration_feasibility"] == "INFEASIBLE"
+    assert pair["entry_delivery_status"] == "SKIPPED_DURATION_INFEASIBLE"
+    assert pair["entry_delivery_reason"] == "OPEN_ADJUSTED_TIME_EXCEEDS_CONFIRMED_DURATION"
+    assert pair["open_trend_context"] == "WITH_TREND"
+    assert "signal_id" not in pair
+    assert not any("price" in key for key in pair)
+
+
 def test_confirmed_study_exact_fit_accepts_only_machine_precision_drift(study_setup):
     from dataclasses import replace
 
