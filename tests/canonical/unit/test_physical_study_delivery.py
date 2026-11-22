@@ -288,13 +288,13 @@ def test_duration_pair_diagnostics_joins_hashed_trace_without_private_fields():
     policy = study.second_duration.POLICY
     row = {
         "direction": "BUY",
-        "open_ts": BASE + 40,
         "confirm_model_seconds": 180.0,
         "adjusted_seconds": 150.0,
         "policies": {"PHYSICAL_ONLY_V3": {
             "opportunity_signal_id": signal_id,
             "pre_ts": BASE + 1,
             "confirm_ts": BASE + 10,
+            "open_ts": BASE + 40,
         }},
         "decision_snapshot": {
             "signal_id": signal_id,
@@ -336,6 +336,7 @@ def test_duration_pair_diagnostics_joins_hashed_trace_without_private_fields():
     pair = pairs[0]
     assert pair["opportunity_hash"] == hashlib.sha256(signal_id.encode()).hexdigest()[:12]
     assert pair["pre_to_confirm_seconds"] == 9
+    assert pair["open_decision_ts"] == BASE + 40
     assert pair["confirm_to_open_seconds"] == 30
     assert pair["confirm_adjusted_time_seconds"] == 90
     assert pair["confirmed_duration_seconds"] == 90
