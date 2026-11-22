@@ -1032,7 +1032,7 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                     "pairs": pair_rows[:TRAIN_ENTRIES + HOLDOUT_ENTRIES],
                     "truncated_pairs": max(0, len(pair_rows) - TRAIN_ENTRIES - HOLDOUT_ENTRIES),
                     "truth_domain": "RESEARCH_DIAGNOSTIC_ONLY",
-                    "source": "FROZEN_CONFIRM_PLAN_AND_OPEN_SNAPSHOT_JOINED_TO_OPPORTUNITY_TRACE_HASH",
+                    "source": "FROZEN_CONFIRM_PLAN_AND_OPEN_SNAPSHOT_WITH_TRACE_CORRELATION_KEY",
                     "no_state_mutation": True,
                     "no_outcome_relabeling": True,
                     "no_strategy_change": True,
@@ -1120,7 +1120,7 @@ def _duration_reserve_report(records):
 
 
 def _duration_pair_diagnostics(rows):
-    """Expose a privacy-safe join between frozen CONFIRM plans and OPEN snapshots.
+    """Expose privacy-safe pair evidence with a key matching V3 opportunity traces.
 
     The 12-character opportunity hash matches PHYSICAL_V3_OPPORTUNITY_TRACE
     without exposing signal IDs, quote values or changing any stored outcome.
