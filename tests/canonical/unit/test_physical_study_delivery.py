@@ -329,7 +329,23 @@ def test_duration_pair_diagnostics_joins_hashed_trace_without_private_fields():
     }
     original = copy.deepcopy(row)
 
-    pairs = study._duration_pair_diagnostics([row])
+    opportunity_hash = hashlib.sha256(signal_id.encode()).hexdigest()[:12]
+    trace_episodes = {
+        opportunity_hash: {
+            "closed": True,
+            "events": {
+                "PRE": {"decision_ts": BASE + 1, "pre_api_age_seconds": 0.5,
+                        "remaining_pre_lead_seconds": 29.5},
+                "CONFIRM": {"decision_ts": BASE + 10, "needed_adjusted_minutes": 1.5,
+                            "trend_context": "WITH_TREND", "noise_state": "STABLE", "time_state": "READY"},
+                "OPEN_NOW": {"decision_ts": BASE + 40, "needed_adjusted_minutes": 2.5,
+                             "trend_context": "COUNTER_TREND", "noise_state": "STABLE", "time_state": "READY"},
+                "EXIT": {"decision_ts": BASE + 45, "hard_blockers": ["TIME_NOT_FEASIBLE"],
+                         "noise_reasons": [], "structure_conflicts": ["INSUFFICIENT_DIRECTIONAL_ROOM"]},
+            },
+        },
+    }
+    pairs = study._duration_pair_diagnostics([row], trace_episodes=trace_episodes)
 
     assert row == original
     assert len(pairs) == 1
@@ -350,6 +366,11 @@ def test_duration_pair_diagnostics_joins_hashed_trace_without_private_fields():
     assert pair["entry_delivery_status"] == "SKIPPED_DURATION_INFEASIBLE"
     assert pair["entry_delivery_reason"] == "OPEN_ADJUSTED_TIME_EXCEEDS_CONFIRMED_DURATION"
     assert pair["open_trend_context"] == "WITH_TREND"
+    assert pair["opportunity_trace_status"] == "MATCHED"
+    assert pair["opportunity_trace_closed"] is True
+    assert pair["opportunity_trace_events"]["CONFIRM"]["needed_adjusted_minutes"] == 1.5
+    assert pair["opportunity_trace_events"]["OPEN_NOW"]["needed_adjusted_minutes"] == 2.5
+    assert pair["opportunity_trace_events"]["EXIT"]["hard_blockers"] == ["TIME_NOT_FEASIBLE"]
     assert "signal_id" not in pair
     assert not any("price" in key for key in pair)
 
