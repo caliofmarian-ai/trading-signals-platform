@@ -1203,3 +1203,79 @@ def test_exact_source_cutover_keeps_bucket_records_and_uses_fractional_targets(s
     assert old["candidates"][0]["outcome"] == "WIN"
     assert "provider_tick_ms" not in old["candidates"][0]["quote"]
     assert not messages
+
+
+def test_duration_pair_report_summary_and_detail_chunks_are_bounded(canonical_runtime_root):
+    from intelligence import physical_expiry_calibration as study
+
+    rows = []
+    for index in range(11):
+        rows.append({
+            "duration_feasibility": "INFEASIBLE" if index < 5 else "WIN" if index < 8 else "UNKNOWN",
+            "entry_delivery_status": "SKIPPED_DURATION_INFEASIBLE" if index < 5 else "API_ACCEPTED",
+            "entry_delivery_reason": (
+                "OPEN_ADJUSTED_TIME_EXCEEDS_CONFIRMED_DURATION" if index < 5 else None
+            ),
+            "missing_data_reason": "EXPIRY_OBSERVATION_MISSING" if index >= 8 else None,
+            "opportunity_trace_status": "MATCHED" if index < 3 else "NOT_RETAINED",
+            "opportunity_trace_closed": True if index == 0 else False if index < 3 else None,
+            "open_trend_context": "WITH_TREND" if index % 2 == 0 else "COUNTER_TREND",
+            "open_noise_context": "STABLE",
+            "open_structure_state": "VALID",
+            "open_time_state": "READY",
+            "confirm_plan_available": True,
+            "open_snapshot_available": True,
+            "pre_to_confirm_seconds": 3.0,
+            "confirm_to_open_seconds": 30.0,
+            "open_candle_age_seconds": 35.0,
+            "open_minus_confirm_adjusted_seconds": 2.0,
+            "confirmed_duration_minus_open_adjusted_seconds": -2.0,
+            "open_room_over_buffer": 1.5,
+            "opportunity_trace_events": {"CONFIRM": {"fsm_reason": "confirm_seen"}},
+        })
+    original = copy.deepcopy(rows)
+    summary = study._duration_pair_summary(rows)
+    assert summary["duration_feasibility"] == {"INFEASIBLE": 5, "WIN": 3, "UNKNOWN": 3}
+    assert summary["entry_delivery_status"] == {
+        "SKIPPED_DURATION_INFEASIBLE": 5, "API_ACCEPTED": 6,
+    }
+    assert summary["entry_delivery_reason"] == {
+        "OPEN_ADJUSTED_TIME_EXCEEDS_CONFIRMED_DURATION": 5,
+    }
+    assert summary["missing_data_reason"] == {"EXPIRY_OBSERVATION_MISSING": 3}
+    assert summary["opportunity_trace_status"] == {"MATCHED": 3, "NOT_RETAINED": 8}
+    assert summary["opportunity_trace_closed"] == {"true": 1, "false": 2, "null": 8}
+    assert summary["confirm_to_open_seconds"]["sample"] == 11
+    assert rows == original
+
+    metadata = {
+        "pair_digest": "a" * 64,
+        "cohort_revision": "V3_DIRECTIONAL_FLOW_GATE_V7",
+        "parameter_sha256": "b" * 64,
+        "history_policy": study.HISTORY_POLICY,
+        "observed_at": BASE,
+    }
+    chunks = study._duration_pair_detail_payloads(rows, **metadata)
+    assert len(chunks) == 3
+    assert [pair for chunk in chunks for pair in chunk["pairs"]] == rows
+    assert all(chunk["chunk_index"] == index for index, chunk in enumerate(chunks))
+    assert all(chunk["chunk_count"] == len(chunks) for chunk in chunks)
+    assert all(len(chunk["pairs"]) <= study.DURATION_PAIR_DETAIL_MAX_ROWS for chunk in chunks)
+    assert all(
+        len(json.dumps(chunk, sort_keys=True, allow_nan=False).encode())
+        <= study.DURATION_PAIR_DETAIL_MAX_BYTES
+        for chunk in chunks
+    )
+
+    large_rows = [
+        {**rows[0], "opportunity_trace_events": {"payload": "x" * 9000}}
+        for _ in range(6)
+    ]
+    large_chunks = study._duration_pair_detail_payloads(large_rows, **metadata)
+    assert len(large_chunks) == 3
+    assert [pair for chunk in large_chunks for pair in chunk["pairs"]] == large_rows
+    assert all(
+        len(json.dumps(chunk, sort_keys=True, allow_nan=False).encode())
+        <= study.DURATION_PAIR_DETAIL_MAX_BYTES
+        for chunk in large_chunks
+    )
