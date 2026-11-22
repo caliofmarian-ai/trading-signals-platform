@@ -49,6 +49,69 @@ def _read(path, parameter_hash):
     return state
 
 
+_DIAGNOSTIC_EVENT_FIELDS = (
+    "decision_ts", "candle_ts", "evaluation_candle_age_seconds", "decision_kind",
+    "fsm_prior_state", "fsm_resulting_state", "fsm_reason",
+    "pre_receipt_available_at_evaluation", "pre_api_age_seconds", "remaining_pre_lead_seconds",
+    "cooldown_remaining_seconds", "hard_blockers", "noise_reasons", "structure_state",
+    "structure_conflicts", "room_over_buffer", "time_state", "model_minutes",
+    "needed_adjusted_minutes", "trend_context", "activity_state", "noise_state",
+    "since_first_observed_pre_seconds", "since_first_observed_confirm_seconds",
+)
+_TRACE_EVENT_NAMES = frozenset({"PRE", "CONFIRM", "OPEN_NOW", "EXIT"})
+
+
+def diagnostic_snapshot(parameter_hash):
+    """Read the bounded trace without acquiring the observer lock or mutating state.
+
+    Atomic replacement makes this bounded read consistent while the observer
+    continues to write. Only hashed opportunity keys and an explicit field
+    allowlist leave the trace store.
+    """
+    if (not isinstance(parameter_hash, str) or len(parameter_hash) != 64
+            or any(character not in "0123456789abcdef" for character in parameter_hash)):
+        raise ValueError("INVALID_TRACE_SCOPE")
+    state = _read(_path(parameter_hash), parameter_hash)
+    episodes, prefixes = [], set()
+    for identity, record in state["records"].items():
+        if (not isinstance(identity, str) or len(identity) != 64
+                or any(character not in "0123456789abcdef" for character in identity)
+                or not isinstance(record, dict) or type(record.get("closed")) is not bool
+                or not isinstance(record.get("events"), dict)
+                or not record["events"] or set(record["events"]) - _TRACE_EVENT_NAMES):
+            raise ValueError("INVALID_TRACE_SCOPE")
+        short_hash = identity[:12]
+        if short_hash in prefixes:
+            raise ValueError("TRACE_HASH_PREFIX_COLLISION")
+        prefixes.add(short_hash)
+        events = {}
+        for event_name, snapshot in record["events"].items():
+            if not isinstance(snapshot, dict):
+                raise ValueError("INVALID_TRACE_SCOPE")
+            events[event_name] = {
+                field: snapshot[field] for field in _DIAGNOSTIC_EVENT_FIELDS if field in snapshot
+            }
+        episodes.append({
+            "opportunity_hash": short_hash,
+            "closed": record["closed"],
+            "events": events,
+        })
+    episodes.sort(key=lambda episode: min(
+        event.get("decision_ts", 0) for event in episode["events"].values()
+    ))
+    return {
+        "protocol": PROTOCOL,
+        "parameter_sha256": parameter_hash,
+        "history_policy": HISTORY_POLICY,
+        "status": "AVAILABLE" if episodes else "EMPTY",
+        "retained_episodes": len(episodes),
+        "episodes": episodes,
+        "no_state_mutation": True,
+        "execution_authority": False,
+        "broker_executed": False,
+    }
+
+
 def _snapshot(evaluation, handoff, decision_ts, observed_at, signal_id):
     decision = evaluation.decision
     indicators = evaluation.market.evidence
