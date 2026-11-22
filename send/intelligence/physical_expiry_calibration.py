@@ -1233,7 +1233,11 @@ def _duration_pair_diagnostics(rows, *, trace_episodes=None):
             "open_decision_ts": open_ts,
             "pre_to_confirm_seconds": confirm_ts - pre_ts if pre_ts is not None and confirm_ts is not None else None,
             "confirm_to_open_seconds": open_ts - confirm_ts if open_ts is not None and confirm_ts is not None else None,
-            "confirm_model_time_seconds": _optional_number(row.get("confirm_model_seconds")),
+            "confirm_model_time_seconds": _optional_number(
+            context.get("confirm_model_seconds")
+            if context.get("confirm_model_seconds") is not None
+            else row.get("confirm_model_seconds")
+        ),
             "confirm_adjusted_time_seconds": confirm_adjusted,
             "confirmed_duration_seconds": confirmed_duration,
             "open_model_time_seconds": model_minutes * 60 if model_minutes is not None else None,
