@@ -77,6 +77,7 @@ BUFFERED_QUOTE_ARRIVAL_GRACE_SECONDS = 15.0
 QUOTE_RECOVERY_POLICY = "RETAINED_SOURCE_QUOTE_RECOVERY_V1"
 LEGACY_QUOTE_RECOVERY_POLICY = "RETAINED_SOURCE_QUOTE_LEGACY_4S"
 _last_report: dict[str, int] = {}
+_last_duration_pair_digest: dict[str, str] = {}
 _drained_historical: set[Path] = set()
 POST_MODEL_OFFSETS = (60, 180, 300)  # existing diagnostic checkpoints; never execution expiry
 STUDY_DURATION_SOURCE = "CONFIRM_MODEL_TIME"
@@ -283,6 +284,11 @@ def _number(value, *, zero=False):
     if type(value) not in (int, float) or not math.isfinite(value) or value < 0 or (not zero and value == 0):
         raise ValueError("INVALID_CALIBRATION_NUMBER")
     return float(value)
+
+
+def _optional_number(value, *, zero=False):
+    """Validate an optional diagnostic measurement without rejecting absence."""
+    return None if value is None else _number(value, zero=zero)
 
 
 def _digest(value):
@@ -1012,6 +1018,38 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
         if not historical and timing.get("eligible_entries", 0):
             print("TSP_PHYSICAL_BUFFER_FIRST_HIT_TIME "
                   + json.dumps(timing, sort_keys=True), flush=True)
+        if (not historical and cohort is not None
+                and cohort.get("revision") == DIRECTIONAL_FLOW_COHORT_REVISION
+                and state is not None):
+            pair_rows = _duration_pair_diagnostics(list(state["records"].values()))
+            pair_digest = hashlib.sha256(json.dumps(
+                pair_rows, sort_keys=True, separators=(",", ":"), allow_nan=False
+            ).encode()).hexdigest()
+            if _last_duration_pair_digest.get(str(path)) != pair_digest:
+                pair_payload = {
+                    "protocol": "V3_DURATION_PAIR_DIAGNOSTICS_V1",
+                    "observed_at": now,
+                    "cohort_revision": cohort["revision"],
+                    "parameter_sha256": state["scope"]["parameter_sha256"],
+                    "history_policy": state["scope"]["history_policy"],
+                    "pair_count": len(pair_rows),
+                    "pair_report_sha256": pair_digest,
+                    "pairs": pair_rows[:TRAIN_ENTRIES + HOLDOUT_ENTRIES],
+                    "truncated_pairs": max(0, len(pair_rows) - TRAIN_ENTRIES - HOLDOUT_ENTRIES),
+                    "truth_domain": "RESEARCH_DIAGNOSTIC_ONLY",
+                    "source": "FROZEN_CONFIRM_PLAN_AND_OPEN_SNAPSHOT_WITH_TRACE_CORRELATION_KEY",
+                    "no_state_mutation": True,
+                    "no_outcome_relabeling": True,
+                    "no_strategy_change": True,
+                    "no_historical_backfill": True,
+                    "execution_authority": False,
+                    "publication_authority": False,
+                    "calibration_authority": False,
+                    "broker_executed": False,
+                }
+                print("TSP_PHYSICAL_V3_DURATION_PAIR_DIAGNOSTICS "
+                      + json.dumps(pair_payload, sort_keys=True, allow_nan=False), flush=True)
+                _last_duration_pair_digest[str(path)] = pair_digest
         _last_report[str(path)] = slot
         return report
     return None
@@ -1084,6 +1122,97 @@ def _duration_reserve_report(records):
         "reserve_on_paired": _duration_diagnostic_counts(paired, "confirm_duration_reserve"),
         "publication_authority": False, "calibration_authority": False,
     }
+
+
+def _duration_pair_diagnostics(rows):
+    """Expose privacy-safe pair evidence with a key matching V3 opportunity traces.
+
+    The 12-character opportunity hash matches PHYSICAL_V3_OPPORTUNITY_TRACE
+    without exposing signal IDs, quote values or changing any stored outcome.
+    """
+    pairs = []
+    for row in rows:
+        observation = displayed_study_observation(row)
+        plan = observation.get("duration_plan")
+        context = (row.get("policies") or {}).get("PHYSICAL_ONLY_V3") or {}
+        snapshot = row.get("decision_snapshot") or {}
+        signal_id = context.get("opportunity_signal_id") or snapshot.get("signal_id")
+        opportunity_hash = (
+            hashlib.sha256(signal_id.encode()).hexdigest()[:12]
+            if isinstance(signal_id, str) and signal_id else None
+        )
+        pre_ts = _optional_number(plan.get("pre_ts")) if isinstance(plan, dict) else _optional_number(context.get("pre_ts"))
+        confirm_ts = (_optional_number(plan.get("confirmed_ts")) if isinstance(plan, dict)
+                      else _optional_number(context.get("confirm_ts")))
+        open_ts = _optional_number(row.get("open_ts"))
+        confirm_adjusted = (
+            _optional_number(plan.get("adjusted_minutes")) * 60
+            if isinstance(plan, dict) and _optional_number(plan.get("adjusted_minutes")) is not None else None
+        )
+        confirmed_duration = _optional_number(plan.get("duration_seconds")) if isinstance(plan, dict) else None
+        open_adjusted = _optional_number(row.get("adjusted_seconds"))
+        time_context = snapshot.get("time") if isinstance(snapshot.get("time"), dict) else {}
+        market_context = (snapshot.get("market_context")
+                          if isinstance(snapshot.get("market_context"), dict) else {})
+        structure = snapshot.get("structure") if isinstance(snapshot.get("structure"), dict) else {}
+        buffer_distance = _optional_number(market_context.get("buffer_distance"))
+        available_distance = _optional_number(structure.get("available_distance"), zero=True)
+        model_minutes = _optional_number(time_context.get("model_expiry"))
+        candle_ts = _optional_number(snapshot.get("candle_ts"))
+        receipt = ((row.get("study_delivery") or {}).get("entry") or {})
+        if not isinstance(receipt, dict):
+            receipt = {}
+        outcome = observation.get("outcome")
+        plan_id = plan.get("plan_id") if isinstance(plan, dict) else None
+        snapshot_hash = row.get("decision_snapshot_sha256")
+        pairs.append({
+            "opportunity_hash": opportunity_hash,
+            "confirm_plan_hash": plan_id[:12] if isinstance(plan_id, str) else None,
+            "open_snapshot_hash": snapshot_hash[:12] if isinstance(snapshot_hash, str) else None,
+            "direction": row.get("direction"),
+            "confirm_plan_available": isinstance(plan, dict),
+            "open_snapshot_available": bool(snapshot),
+            "pre_decision_ts": pre_ts,
+            "confirm_decision_ts": confirm_ts,
+            "open_decision_ts": open_ts,
+            "pre_to_confirm_seconds": confirm_ts - pre_ts if pre_ts is not None and confirm_ts is not None else None,
+            "confirm_to_open_seconds": open_ts - confirm_ts if open_ts is not None and confirm_ts is not None else None,
+            "confirm_model_time_seconds": _optional_number(row.get("confirm_model_seconds")),
+            "confirm_adjusted_time_seconds": confirm_adjusted,
+            "confirmed_duration_seconds": confirmed_duration,
+            "open_model_time_seconds": model_minutes * 60 if model_minutes is not None else None,
+            "open_adjusted_time_seconds": open_adjusted,
+            "open_minus_confirm_adjusted_seconds": (
+                open_adjusted - confirm_adjusted
+                if open_adjusted is not None and confirm_adjusted is not None else None
+            ),
+            "confirmed_duration_minus_open_adjusted_seconds": (
+                confirmed_duration - open_adjusted
+                if confirmed_duration is not None and open_adjusted is not None else None
+            ),
+            "duration_policy": observation.get("duration_policy"),
+            "duration_feasibility": outcome,
+            "missing_data_reason": observation.get("reason") if outcome == "UNKNOWN" else None,
+            "entry_delivery_status": receipt.get("status", "NOT_ATTEMPTED"),
+            "entry_delivery_reason": receipt.get("resolution_reason"),
+            "open_candle_age_seconds": open_ts - candle_ts if open_ts is not None and candle_ts is not None else None,
+            "open_time_state": time_context.get("time_state"),
+            "open_trend_context": market_context.get("trend_context"),
+            "open_noise_context": market_context.get("noise_context"),
+            "open_activity_state": market_context.get("volatility_state"),
+            "open_structure_state": structure.get("feasibility_state"),
+            "open_room_over_buffer": (
+                available_distance / buffer_distance
+                if available_distance is not None and buffer_distance is not None and buffer_distance > 0
+                else None
+            ),
+        })
+    pairs.sort(key=lambda item: (
+        item["pre_decision_ts"] is None,
+        item["pre_decision_ts"] if item["pre_decision_ts"] is not None else 0,
+        item["opportunity_hash"] or "",
+    ))
+    return pairs
 
 
 def _duration_reconciliation_report(rows):
