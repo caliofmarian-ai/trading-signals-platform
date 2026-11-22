@@ -106,6 +106,36 @@ def test_trace_is_restart_safe_deduplicated_and_not_a_study_or_approved_open(tra
     assert trace._read(trace._path(key), key) == state
 
 
+
+def test_diagnostic_snapshot_reads_bounded_trace_without_mutation_or_private_ids(tracing):
+    trace, cycle, saved, base, params, _ = tracing
+    cycle(base)
+    cycle(base+2)
+    cycle(base+31)
+    before = deepcopy(saved())
+    parameter_hash = trace.algo_params_sha256(params)
+
+    snapshot = trace.diagnostic_snapshot(parameter_hash)
+
+    assert saved() == before
+    assert snapshot["status"] == "AVAILABLE"
+    assert snapshot["parameter_sha256"] == parameter_hash
+    assert snapshot["retained_episodes"] == 1
+    assert snapshot["no_state_mutation"] is True
+    assert snapshot["execution_authority"] is False
+    episode = snapshot["episodes"][0]
+    assert episode["opportunity_hash"] == next(iter(before["records"]))[:12]
+    assert episode["closed"] is False
+    assert set(episode["events"]) == {"PRE", "CONFIRM", "OPEN_NOW"}
+    assert episode["events"]["CONFIRM"]["decision_kind"] == "CONFIRM"
+    assert episode["events"]["OPEN_NOW"]["decision_ts"] == base + 31
+    encoded = json.dumps(snapshot, sort_keys=True).lower()
+    assert "sig-v3-" not in encoded
+    assert "signal_id" not in encoded
+    assert "price" not in encoded
+
+
+
 def test_chains_begun_before_tracing_have_no_backfilled_pre(tracing):
     _, cycle, saved, base, _, _ = tracing
     cycle(base, observe=False)
