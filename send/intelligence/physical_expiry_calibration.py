@@ -286,6 +286,11 @@ def _number(value, *, zero=False):
     return float(value)
 
 
+def _optional_number(value, *, zero=False):
+    """Validate an optional diagnostic measurement without rejecting absence."""
+    return None if value is None else _number(value, zero=zero)
+
+
 def _digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
@@ -1136,24 +1141,24 @@ def _duration_pair_diagnostics(rows):
             hashlib.sha256(signal_id.encode()).hexdigest()[:12]
             if isinstance(signal_id, str) and signal_id else None
         )
-        pre_ts = _number(plan.get("pre_ts")) if isinstance(plan, dict) else _number(context.get("pre_ts"))
-        confirm_ts = (_number(plan.get("confirmed_ts")) if isinstance(plan, dict)
-                      else _number(context.get("confirm_ts")))
-        open_ts = _number(row.get("open_ts"))
+        pre_ts = _optional_number(plan.get("pre_ts")) if isinstance(plan, dict) else _optional_number(context.get("pre_ts"))
+        confirm_ts = (_optional_number(plan.get("confirmed_ts")) if isinstance(plan, dict)
+                      else _optional_number(context.get("confirm_ts")))
+        open_ts = _optional_number(row.get("open_ts"))
         confirm_adjusted = (
-            _number(plan.get("adjusted_minutes")) * 60
-            if isinstance(plan, dict) and _number(plan.get("adjusted_minutes")) is not None else None
+            _optional_number(plan.get("adjusted_minutes")) * 60
+            if isinstance(plan, dict) and _optional_number(plan.get("adjusted_minutes")) is not None else None
         )
-        confirmed_duration = _number(plan.get("duration_seconds")) if isinstance(plan, dict) else None
-        open_adjusted = _number(row.get("adjusted_seconds"))
+        confirmed_duration = _optional_number(plan.get("duration_seconds")) if isinstance(plan, dict) else None
+        open_adjusted = _optional_number(row.get("adjusted_seconds"))
         time_context = snapshot.get("time") if isinstance(snapshot.get("time"), dict) else {}
         market_context = (snapshot.get("market_context")
                           if isinstance(snapshot.get("market_context"), dict) else {})
         structure = snapshot.get("structure") if isinstance(snapshot.get("structure"), dict) else {}
-        buffer_distance = _number(market_context.get("buffer_distance"))
-        available_distance = _number(structure.get("available_distance"))
-        model_minutes = _number(time_context.get("model_expiry"))
-        candle_ts = _number(snapshot.get("candle_ts"))
+        buffer_distance = _optional_number(market_context.get("buffer_distance"))
+        available_distance = _optional_number(structure.get("available_distance"), zero=True)
+        model_minutes = _optional_number(time_context.get("model_expiry"))
+        candle_ts = _optional_number(snapshot.get("candle_ts"))
         receipt = ((row.get("study_delivery") or {}).get("entry") or {})
         if not isinstance(receipt, dict):
             receipt = {}
@@ -1172,7 +1177,7 @@ def _duration_pair_diagnostics(rows):
             "open_decision_ts": open_ts,
             "pre_to_confirm_seconds": confirm_ts - pre_ts if pre_ts is not None and confirm_ts is not None else None,
             "confirm_to_open_seconds": open_ts - confirm_ts if open_ts is not None and confirm_ts is not None else None,
-            "confirm_model_time_seconds": _number(row.get("confirm_model_seconds")),
+            "confirm_model_time_seconds": _optional_number(row.get("confirm_model_seconds")),
             "confirm_adjusted_time_seconds": confirm_adjusted,
             "confirmed_duration_seconds": confirmed_duration,
             "open_model_time_seconds": model_minutes * 60 if model_minutes is not None else None,
