@@ -1144,7 +1144,9 @@ def _duration_pair_diagnostics(rows):
         pre_ts = _optional_number(plan.get("pre_ts")) if isinstance(plan, dict) else _optional_number(context.get("pre_ts"))
         confirm_ts = (_optional_number(plan.get("confirmed_ts")) if isinstance(plan, dict)
                       else _optional_number(context.get("confirm_ts")))
-        open_ts = _optional_number(row.get("open_ts"))
+        open_ts = _optional_number(
+            context.get("open_ts") if context.get("open_ts") is not None else row.get("open_ts")
+        )
         confirm_adjusted = (
             _optional_number(plan.get("adjusted_minutes")) * 60
             if isinstance(plan, dict) and _optional_number(plan.get("adjusted_minutes")) is not None else None
