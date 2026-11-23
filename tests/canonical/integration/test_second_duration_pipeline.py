@@ -641,12 +641,12 @@ def test_directional_flow_cohort_registry_validates_each_successor_link(seconds_
     }
     historical_v7 = {
         "revision": revisions[6],
-        "starts_at": BASE - 2,
+        "starts_at": BASE - 1,
         "successor": {**common, "from_revision": revisions[5]},
     }
     current_v8 = {
         "revision": revisions[7],
-        "starts_at": BASE - 1,
+        "starts_at": BASE,
         "successor": {**common, "from_revision": revisions[6]},
     }
 
