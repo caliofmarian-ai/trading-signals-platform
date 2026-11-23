@@ -1251,7 +1251,7 @@ def test_duration_pair_report_summary_and_detail_chunks_are_bounded(canonical_ru
 
     metadata = {
         "pair_digest": "a" * 64,
-        "cohort_revision": "V3_DIRECTIONAL_FLOW_GATE_V7",
+        "cohort_revision": "V3_DIRECTIONAL_FLOW_GATE_V8",
         "parameter_sha256": "b" * 64,
         "history_policy": study.HISTORY_POLICY,
         "observed_at": BASE,
