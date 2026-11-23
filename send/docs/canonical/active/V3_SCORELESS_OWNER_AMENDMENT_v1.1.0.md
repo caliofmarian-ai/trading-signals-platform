@@ -88,10 +88,10 @@ Prospective expiry research currently uses study protocol
 `PROSPECTIVE_PHYSICAL_V3_EXPIRY_V5`, scoped to the declared history policy and
 stored separately in `recent_history_state.json`. This study-protocol version
 is distinct from the persistence/storage protocol (currently V5) and from the
-prospective cohort revision (currently `V3_DIRECTIONAL_FLOW_GATE_V7`); these
+prospective cohort revision (currently `V3_DIRECTIONAL_FLOW_GATE_V8`); these
 version numbers describe independent contracts. Storage protocol V5 preserves
-the earlier V2/V3/V4 records and their original labels. The V7 cohort is a fresh,
-chronological, non-copying successor to V6; V6 remains preserved as terminal
+the earlier V2/V3/V4 records and their original labels. The V8 cohort is a fresh,
+chronological, non-copying successor to V7; V7 remains preserved as terminal
 `TRAINING_DATA_QUALITY_FAILED`, and its pending observations settle only in its
 own ledger. Prior scored and prior scoreless cohorts are not merged. Owner timing
 uses a separate history-policy ledger. Calibration still requires 60 chronological
