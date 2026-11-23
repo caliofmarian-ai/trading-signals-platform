@@ -220,7 +220,7 @@ contain derived measurements and hashed opportunities, without quotes or private
 destination IDs. This diagnostic does not change expiry-study observations or
 establish strategy efficacy.
 
-## Current study protocol, storage protocol and cohort lineage — 2026-11-21
+## Current study protocol, storage protocol and cohort lineage — 2026-11-23
 
 The active expiry-research study protocol is
 `PROSPECTIVE_PHYSICAL_V3_EXPIRY_V5`. It defines the prospective research report
@@ -230,14 +230,14 @@ preserves the pre-upgrade bytes before migration, reads earlier V2/V3/V4 records
 without relabelling them, and keeps prior cohort records and outcomes intact.
 The matching numeral does not make these two V5 contracts interchangeable.
 
-The active prospective cohort is `V3_DIRECTIONAL_FLOW_GATE_V7`. V6 is preserved
-as terminal `TRAINING_DATA_QUALITY_FAILED`; V7 is its fresh chronological,
-non-copying successor with a new 60/60 boundary. No V6 rows, labels, outcomes or
-holdout observations are copied into V7. Pending V6 observations may settle only
-in the V6 ledger. Earlier scored and scoreless cohorts remain separate and are
-never pooled into the active V7 split.
+The active prospective cohort is `V3_DIRECTIONAL_FLOW_GATE_V8`. V7 is preserved
+as terminal `TRAINING_DATA_QUALITY_FAILED`; V8 is its fresh chronological,
+non-copying successor with a new 60/60 boundary. No V7 rows, labels, outcomes or
+holdout observations are copied into V8. Pending V7 observations may settle only
+in the V7 ledger. Earlier scored and scoreless cohorts remain separate and are
+never pooled into the active V8 split.
 
-The V7 calibration split remains 60 chronological, non-overlapping training
+The V8 calibration split remains 60 chronological, non-overlapping training
 entries followed by 60 untouched holdout entries. Each lot must contain at least
 30 decisive observations with a known buffer-at-expiry result (B); missing expiry
 outcomes may not exceed 10%, and the existing family-wise confidence/readiness
