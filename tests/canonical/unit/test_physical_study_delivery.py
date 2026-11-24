@@ -228,6 +228,10 @@ def test_new_study_capture_persists_both_scoreless_physical_component_snapshots(
     assert pairs[0]["physical_component_snapshot_status"] == "COMPLETE"
     assert pairs[0]["confirm_physical_components"] == confirm
     assert pairs[0]["open_physical_components"] == opened
+    report = study.summary(now_ts=BASE+32)
+    assert report["confirm_physical_component_entries"] == 1
+    assert report["open_physical_component_entries"] == 1
+    assert report["paired_physical_component_entries"] == 1
 
 def test_confirmed_study_that_no_longer_fits_open_physics_is_not_published(study_setup):
     _, study, _, result, _, _, messages, _ = study_setup
