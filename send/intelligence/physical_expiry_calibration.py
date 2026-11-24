@@ -808,7 +808,10 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
             if item.get("decision_snapshot") is not None:
                 row["decision_snapshot"] = item["decision_snapshot"]
                 row["decision_snapshot_sha256"] = _digest(row["decision_snapshot"])
-                open_components = physical_component_snapshot.from_snapshot(row["decision_snapshot"])
+                try:
+                    open_components = physical_component_snapshot.from_snapshot(row["decision_snapshot"])
+                except (TypeError, ValueError, OverflowError):
+                    open_components = None
                 if open_components is not None:
                     row["open_physical_components"] = open_components
                     row["open_physical_components_sha256"] = physical_component_snapshot.digest(open_components)
@@ -818,9 +821,14 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
                     for offset in POST_MODEL_OFFSETS]
             confirm_components = item.get("confirm_physical_components")
             if confirm_components is not None:
-                row["confirm_physical_components"] = physical_component_snapshot.validate(confirm_components)
-                row["confirm_physical_components_sha256"] = physical_component_snapshot.digest(
-                    row["confirm_physical_components"])
+                try:
+                    normalized_confirm = physical_component_snapshot.validate(confirm_components)
+                    confirm_hash = physical_component_snapshot.digest(normalized_confirm)
+                except (TypeError, ValueError, OverflowError):
+                    normalized_confirm = None
+                if normalized_confirm is not None:
+                    row["confirm_physical_components"] = normalized_confirm
+                    row["confirm_physical_components_sha256"] = confirm_hash
             if (item.get("publish_study") is True
                 and item.get("confirm_execution_status") == "UNAVAILABLE"):
                 # Only chains marked at PRE use the new seconds plan. Never
