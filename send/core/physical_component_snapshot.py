@@ -31,6 +31,7 @@ _NUMERIC_RULES = {
     "atr_speed_reference": "nonnegative",
     "directional_speed_ratio": "nonnegative",
     "movement_stress": "nonnegative",
+    "time_identity_residual_seconds": "signed",
 }
 _TEXT_FIELDS = (
     "trend_context",
@@ -91,8 +92,13 @@ def validate(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     needed = normalized["t_needed_seconds"]
     if speed is not None and speed > 0 and buffer is not None and needed is not None:
         expected = buffer / speed * 60.0
-        if not isclose(needed, expected, rel_tol=1e-12, abs_tol=1e-9):
-            raise ValueError("PHYSICAL_COMPONENT_TIME_IDENTITY_MISMATCH")
+        residual = normalized["time_identity_residual_seconds"]
+        if residual is None or not isclose(
+            residual, needed - expected, rel_tol=1e-12, abs_tol=1e-9
+        ):
+            raise ValueError("PHYSICAL_COMPONENT_TIME_RESIDUAL_MISMATCH")
+    elif normalized["time_identity_residual_seconds"] is not None:
+        raise ValueError("PHYSICAL_COMPONENT_TIME_RESIDUAL_WITHOUT_INPUTS")
 
     adjusted = normalized["t_needed_adjusted_seconds"]
     multiplier = normalized["adjustment_multiplier"]
@@ -146,6 +152,14 @@ def from_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any] | None:
             room_ratio = available_distance / buffer_distance
 
     multiplier = adjusted / t_needed if t_needed is not None and t_needed > 0 and adjusted is not None else None
+    speed = market.get("directional_effective_speed")
+    time_residual = (
+        t_needed - float(buffer_distance) / float(speed) * 60.0
+        if (type(speed) in (int, float) and speed > 0
+            and type(buffer_distance) in (int, float) and buffer_distance > 0
+            and t_needed is not None)
+        else None
+    )
     projected = {
         "protocol": PROTOCOL,
         "evaluated_ts": snapshot.get("candle_ts"),
@@ -166,6 +180,7 @@ def from_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any] | None:
         "atr_speed_reference": physics.get("atr_speed_reference"),
         "directional_speed_ratio": physics.get("directional_speed_ratio"),
         "movement_stress": physics.get("movement_stress"),
+        "time_identity_residual_seconds": time_residual,
         "trend_context": market.get("trend_context"),
         "volatility_state": market.get("volatility_state"),
         "noise_context": market.get("noise_context"),
