@@ -391,6 +391,10 @@ def advance_persistent_fsm(
         if physical_only:
             symbol_state["last_confirm_candle_ts"] = None
             symbol_state["physical_confirm_ts"] = None
+            # Clear the prior opportunity's research-only CONFIRM snapshot
+            # before fsm_runtime validates the newly opened PRE transition.
+            symbol_state.pop("physical_confirm_components", None)
+            symbol_state.pop("physical_confirm_components_sha256", None)
 
     try:
         next_state, event = fsm_runtime.apply_transition(working, payload, now_ts)
