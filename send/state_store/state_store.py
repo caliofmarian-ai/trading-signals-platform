@@ -288,20 +288,24 @@ def _normalize_symbol_state(symbol: str, raw: Any) -> Dict[str, Any]:
     components = raw.get("physical_confirm_components")
     components_hash = raw.get("physical_confirm_components_sha256")
     if components is not None:
-        prefix = f"per_symbol[{symbol}].physical_confirm_components"
-        if raw.get("physical_confirm_ts") is None or raw.get("physical_signal_id") is None:
-            raise StateValidationError(f"{prefix} requires an accepted physical CONFIRM")
+        # This field is research-only and must never make the canonical FSM fail
+        # closed. Invalid or orphaned diagnostics are discarded; signal/FSM
+        # invariants above remain authoritative.
         try:
+            if raw.get("physical_confirm_ts") is None or raw.get("physical_signal_id") is None:
+                raise ValueError("ORPHANED_PHYSICAL_CONFIRM_COMPONENTS")
             validated_components = physical_component_snapshot.validate(components)
             expected_hash = physical_component_snapshot.digest(validated_components)
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise StateValidationError(f"{prefix} is invalid") from exc
-        if components_hash != expected_hash:
-            raise StateValidationError(f"{prefix} digest does not match")
-        normalized["physical_confirm_components"] = validated_components
-        normalized["physical_confirm_components_sha256"] = expected_hash
+            if components_hash != expected_hash:
+                raise ValueError("PHYSICAL_CONFIRM_COMPONENTS_HASH_MISMATCH")
+        except (TypeError, ValueError, OverflowError):
+            normalized.pop("physical_confirm_components", None)
+            normalized.pop("physical_confirm_components_sha256", None)
+        else:
+            normalized["physical_confirm_components"] = validated_components
+            normalized["physical_confirm_components_sha256"] = expected_hash
     elif components_hash is not None:
-        raise StateValidationError(f"per_symbol[{symbol}] component digest has no snapshot")
+        normalized.pop("physical_confirm_components_sha256", None)
     return normalized
 
 
