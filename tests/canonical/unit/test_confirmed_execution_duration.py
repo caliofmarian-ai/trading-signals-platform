@@ -146,15 +146,17 @@ def test_confirm_physical_components_are_frozen_scoreless_and_restart_safe(canon
     assert decision.kind == "CONFIRM"
 
 
-def test_confirm_physical_components_rejects_price_and_score_fields(canonical_runtime_root):
-    from state_store.state_store import StateValidationError, validate_fsm_state
+def test_invalid_optional_confirm_components_are_dropped_without_blocking_fsm(canonical_runtime_root):
+    from state_store.state_store import validate_fsm_state
 
     _, confirm, _ = _confirmed()
     for forbidden in ("latest_price", "signal_id", "TPS", "score"):
         state = deepcopy(confirm.next_state)
         state["per_symbol"]["EUR/USD"]["physical_confirm_components"][forbidden] = 1
-        with pytest.raises(StateValidationError):
-            validate_fsm_state(state)
+        restored = validate_fsm_state(state)
+        row = restored["per_symbol"]["EUR/USD"]
+        assert "physical_confirm_components" not in row
+        assert "physical_confirm_components_sha256" not in row
 
 
 def test_legacy_confirm_component_snapshot_is_not_backfilled(canonical_runtime_root):
