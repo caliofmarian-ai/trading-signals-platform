@@ -133,6 +133,7 @@ def test_confirm_physical_components_are_frozen_scoreless_and_restart_safe(canon
     assert components["t_needed_seconds"] == pytest.approx(300.0)
     assert components["t_needed_adjusted_seconds"] == pytest.approx(3.8 * 60)
     assert components["adjustment_multiplier"] == pytest.approx(0.76)
+    assert components["time_identity_residual_seconds"] == pytest.approx(0.0)
     assert "latest_price" not in components
     assert "signal_id" not in components
     assert not any(key in components for key in ("score", "TPS", "S", "T", "P", "V"))
