@@ -384,7 +384,10 @@ def advance_persistent_fsm(
         decision.kind == "PRE"
         and physical_only
         and isinstance(symbol_state, dict)
-        and symbol_state.get("physical_confirm_components") is not None
+        and (
+            symbol_state.get("physical_confirm_components") is not None
+            or symbol_state.get("physical_confirm_components_sha256") is not None
+        )
         and symbol_state.get("physical_signal_id") != decision.signal_id
     ):
         symbol_state.pop("physical_confirm_components", None)
