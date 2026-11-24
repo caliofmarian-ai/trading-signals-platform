@@ -1361,7 +1361,7 @@ def test_duration_pair_detail_payloads_select_latest_chronological_rows_when_bou
     rows = [
         {"open_decision_ts": float(index), "pre_decision_ts": float(index),
          "opportunity_hash": f"{index:012d}"}
-        for index in range(count)
+        for index in reversed(range(count))
     ]
     metadata = {
         "pair_digest": "c" * 64,
