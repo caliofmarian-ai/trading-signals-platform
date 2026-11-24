@@ -47,7 +47,10 @@ score/TPS field. Each snapshot is schema-validated and SHA-256 hashed. The
 canonical time identity residual is recorded as the difference between the
 frozen t_needed and buffer_distance / directional_effective_speed; it is not
 used as a gate or forced to zero. The adjustment multiplier is checked against
-adjusted/unaltered movement time.
+adjusted/unaltered movement time. Because these fields are optional
+research metadata, an invalid or orphaned component snapshot is discarded
+without blocking the canonical FSM or study-delivery path; the pair report
+then records the component snapshot as missing.
 
 ## Pair reconciliation
 
