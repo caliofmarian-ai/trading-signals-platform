@@ -123,14 +123,22 @@ def record_stage(row: dict, previous_row: Mapping[str, Any], decision: Any, *, n
     components = row.get(PHYSICAL_COMPONENTS_FIELD)
     components_hash = row.get(PHYSICAL_COMPONENTS_HASH_FIELD)
     if components is not None:
-        normalized = physical_component_snapshot.validate(components)
-        if components_hash != physical_component_snapshot.digest(normalized):
-            raise ValueError("PHYSICAL_CONFIRM_COMPONENTS_HASH_MISMATCH")
-        row[PHYSICAL_COMPONENTS_FIELD] = normalized
+        try:
+            normalized = physical_component_snapshot.validate(components)
+            if components_hash != physical_component_snapshot.digest(normalized):
+                raise ValueError("PHYSICAL_CONFIRM_COMPONENTS_HASH_MISMATCH")
+        except (TypeError, ValueError, OverflowError):
+            row.pop(PHYSICAL_COMPONENTS_FIELD, None)
+            row.pop(PHYSICAL_COMPONENTS_HASH_FIELD, None)
+        else:
+            row[PHYSICAL_COMPONENTS_FIELD] = normalized
     elif components_hash is not None:
-        raise ValueError("PHYSICAL_CONFIRM_COMPONENTS_HASH_WITHOUT_SNAPSHOT")
+        row.pop(PHYSICAL_COMPONENTS_HASH_FIELD, None)
     elif row.get("physical_confirm_ts") == now_ts:
-        components = physical_component_snapshot.from_decision(decision)
+        try:
+            components = physical_component_snapshot.from_decision(decision)
+        except (TypeError, ValueError, OverflowError):
+            components = None
         if components is not None:
             row[PHYSICAL_COMPONENTS_FIELD] = components
             row[PHYSICAL_COMPONENTS_HASH_FIELD] = physical_component_snapshot.digest(components)
