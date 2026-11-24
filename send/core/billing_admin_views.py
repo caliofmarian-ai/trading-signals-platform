@@ -1,11 +1,38 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from collections import Counter
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 from billing import billing_observability, support_cases
+
+
+_CASE_TOKEN_RE = re.compile(r"^[0-9a-f]{16}$")
+_SAFE_PROVIDER_NAMES = frozenset({"REVOLUT_MERCHANT", "KUCOIN"})
+
+
+def _case_token(case_id: Any) -> str | None:
+    if not isinstance(case_id, str) or not case_id.strip():
+        return None
+    return hashlib.sha256(case_id.strip().encode("utf-8")).hexdigest()[:16]
+
+
+def _safe_support_provider(raw: Any) -> str:
+    provider = str(raw or "").strip().upper()
+    return provider if provider in _SAFE_PROVIDER_NAMES else "UNKNOWN"
+
+
+def _safe_case_time(row: Mapping[str, Any]) -> int:
+    value = row.get("occurred_at_epoch")
+    if isinstance(value, bool):
+        return 0
+    try:
+        stamp = int(value)
+    except (ValueError, TypeError, OverflowError):
+        return 0
+    return stamp if 0 < stamp <= 253402300799 else 0
 
 
 TRUTH_BOUNDARY = (
@@ -313,7 +340,7 @@ def render_support_queue(
         if row.get("case_state") not in support_cases.CLOSED_STATES
     ]
     open_cases.sort(
-        key=lambda row: int(row.get("occurred_at_epoch") or 0),
+        key=_safe_case_time,
         reverse=True,
     )
     lines.append(f"OPEN CASES: {len(open_cases)}")
@@ -323,7 +350,7 @@ def render_support_queue(
         for row in open_cases[: max(1, limit)]:
             case_ref = _mask_ref(row.get("case_id"), prefix="CASE")
             state = _text(row.get("case_state"))
-            provider = _text(row.get("provider"))
+            provider = _safe_support_provider(row.get("provider"))
             payment_link = (
                 "LINKED"
                 if _text(row.get("payment_intent_id"), "") 
@@ -339,6 +366,130 @@ def render_support_queue(
         ]
     )
     return _lines(lines)
+
+
+def _validated_support_rows(
+    context: Mapping[str, Any] | None,
+) -> list[Dict[str, Any]] | None:
+    """Return the complete verified support source, never a synthesized zero."""
+    if not isinstance(context, Mapping):
+        return None
+    statuses = context.get("source_status")
+    records = context.get("records")
+    if not isinstance(statuses, Mapping) or not isinstance(records, Mapping):
+        return None
+    status = statuses.get("support_cases")
+    if not isinstance(status, Mapping) or status.get("status") != "PASS":
+        return None
+    raw = records.get("support_cases")
+    if not isinstance(raw, (tuple, list)):
+        return None
+    if any(not isinstance(row, Mapping) for row in raw):
+        return None
+    return [dict(row) for row in raw]
+
+
+def support_case_navigation(
+    context: Optional[Mapping[str, Any]] = None,
+    *,
+    limit: int = 5,
+) -> list[tuple[str, str]]:
+    """Read-only opaque case selectors for the Owner/Admin queue.
+
+    The callback contains only a fixed-length hash prefix of a case UUID, not
+    a raw subscriber, case, payment, Telegram or support message identifier.
+    Any hash collision suppresses its selector instead of choosing a case.
+    """
+    ctx, _error = _context_or_unavailable(context)
+    rows = _validated_support_rows(ctx)
+    if rows is None:
+        return []
+    latest = _latest_by(rows, "case_id")
+    active = [
+        row for row in latest.values()
+        if row.get("case_state") in support_cases.CASE_STATES
+        and row["case_state"] not in support_cases.CLOSED_STATES
+    ]
+    active.sort(key=_safe_case_time, reverse=True)
+    token_counts = Counter(
+        token for row in latest.values()
+        if (token := _case_token(row.get("case_id"))) is not None
+    )
+    out: list[tuple[str, str]] = []
+    for row in active:
+        token = _case_token(row.get("case_id"))
+        if token is None or token_counts[token] != 1:
+            continue
+        out.append((f"CASE-…{token[:8].upper()}", token))
+        if len(out) >= max(1, min(5, int(limit))):
+            break
+    return out
+
+
+def render_support_queue_panel() -> tuple[str, list[tuple[str, str]]]:
+    """One source read for text + case navigation; no separate unbounded reads."""
+    ctx, error = _context_or_unavailable(None)
+    if ctx is None:
+        return (
+            _lines([
+                "Billing Support Queue",
+                "",
+                "Queue: UNKNOWN",
+                f"Reason: {error or 'UNKNOWN'}",
+                "PAYMENT PROOF SUBMITTED != PAYMENT VERIFIED",
+            ]),
+            [],
+        )
+    return render_support_queue(ctx), support_case_navigation(ctx)
+
+
+def render_support_case_detail(
+    case_token: str,
+    context: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """Show a masked, read-only support-case summary, never proofs or messages."""
+    token = str(case_token or "").lower()
+    preamble = ["Billing Support Case", "", "READ ONLY — No direct entitlement mutation"]
+    if not _CASE_TOKEN_RE.fullmatch(token):
+        return _lines([*preamble, "Case evidence: UNAVAILABLE"])
+
+    ctx, _error = _context_or_unavailable(context)
+    rows = _validated_support_rows(ctx)
+    if rows is None:
+        return _lines([*preamble, "Case evidence: UNKNOWN — source not validated"])
+
+    latest = _latest_by(rows, "case_id")
+    matches = [
+        (case_id, row)
+        for case_id, row in latest.items()
+        if _case_token(case_id) == token
+    ]
+    if len(matches) != 1:
+        return _lines([*preamble, "Case evidence: UNAVAILABLE"])
+
+    case_id, current = matches[0]
+    state = current.get("case_state")
+    if state not in support_cases.CASE_STATES:
+        return _lines([*preamble, "Case evidence: UNKNOWN — invalid state"])
+    history = [row for row in rows if row.get("case_id") == case_id]
+    events = Counter(str(row.get("event_type") or "") for row in history)
+    provider = _safe_support_provider(current.get("provider"))
+    return _lines([
+        *preamble,
+        f"Case: CASE-…{token[:8].upper()}",
+        f"State: {state}",
+        f"Provider: {provider}",
+        f"Payment intent: {'LINKED' if current.get('payment_intent_id') else 'NOT LINKED'}",
+        f"Recorded case events: {len(history)}",
+        f"Client messages: {events.get(support_cases.EVENT_CLIENT_MESSAGE, 0)}",
+        f"Admin replies: {events.get(support_cases.EVENT_ADMIN_MESSAGE, 0)}",
+        f"Payment-proof submissions: {events.get(support_cases.EVENT_PAYMENT_PROOF, 0)}",
+        f"Review events: {events.get(support_cases.EVENT_REVIEW, 0)}",
+        "",
+        "PAYMENT PROOF SUBMITTED != PAYMENT VERIFIED",
+        "Admin VERIFY writes evidence; it does not grant channels or tiers.",
+        "Raw messages, attachments, subscriber IDs and provider references are hidden.",
+    ])
 
 
 def render_provider_status(
