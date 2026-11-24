@@ -1096,6 +1096,7 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                 )
                 pair_payload = {
                     "protocol": "V3_DURATION_PAIR_DIAGNOSTICS_V1",
+                    "physical_components_protocol": physical_component_snapshot.PROTOCOL,
                     "observed_at": now,
                     "cohort_revision": cohort["revision"],
                     "parameter_sha256": state["scope"]["parameter_sha256"],
@@ -1110,7 +1111,7 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                     "detail_max_bytes": DURATION_PAIR_DETAIL_MAX_BYTES,
                     "truncated_pairs": max(0, len(pair_rows) - DURATION_PAIR_DETAIL_MAX_PAIRS),
                     "truth_domain": "RESEARCH_DIAGNOSTIC_ONLY",
-                    "source": "FROZEN_CONFIRM_PLAN_OPEN_SNAPSHOT_AND_PERSISTED_OPPORTUNITY_TRACE",
+                    "source": "FROZEN_CONFIRM_PLAN_CONFIRM_OPEN_PHYSICAL_COMPONENTS_AND_PERSISTED_OPPORTUNITY_TRACE",
                     "no_state_mutation": True,
                     "no_outcome_relabeling": True,
                     "no_strategy_change": True,
@@ -1248,6 +1249,59 @@ def _duration_pair_diagnostics(rows, *, trace_episodes=None):
         snapshot_hash = row.get("decision_snapshot_sha256")
         trace_episode = trace_episodes.get(opportunity_hash) if isinstance(trace_episodes, dict) else None
         trace_events = trace_episode.get("events") if isinstance(trace_episode, dict) else None
+        confirm_components = row.get("confirm_physical_components")
+        open_components = row.get("open_physical_components")
+        component_status = (
+            "COMPLETE" if isinstance(confirm_components, dict) and isinstance(open_components, dict)
+            else "CONFIRM_MISSING" if not isinstance(confirm_components, dict) and isinstance(open_components, dict)
+            else "OPEN_MISSING" if isinstance(confirm_components, dict) and not isinstance(open_components, dict)
+            else "BOTH_MISSING"
+        )
+
+        def component_delta(field):
+            before = confirm_components.get(field) if isinstance(confirm_components, dict) else None
+            after = open_components.get(field) if isinstance(open_components, dict) else None
+            if (type(before) in (int, float) and type(after) in (int, float)
+                    and math.isfinite(before) and math.isfinite(after)):
+                return float(after) - float(before)
+            return None
+
+        def component_change_pct(field):
+            before = confirm_components.get(field) if isinstance(confirm_components, dict) else None
+            delta = component_delta(field)
+            if (delta is None or type(before) not in (int, float)
+                    or not math.isfinite(before) or before == 0):
+                return None
+            return delta / abs(float(before)) * 100.0
+
+        component_deltas = {
+            field: component_delta(field)
+            for field in (
+                "directional_effective_speed", "buffer_distance", "available_distance",
+                "t_needed_seconds", "t_needed_adjusted_seconds", "adjustment_multiplier",
+                "flow_efficiency", "space_to_buffer_ratio",
+            )
+        }
+        component_change_percent = {
+            field: component_change_pct(field)
+            for field in (
+                "directional_effective_speed", "buffer_distance", "available_distance",
+                "t_needed_seconds", "t_needed_adjusted_seconds", "adjustment_multiplier",
+                "flow_efficiency", "space_to_buffer_ratio",
+            )
+        }
+        confirm_room_over_buffer = (
+            confirm_components.get("space_to_buffer_ratio")
+            if isinstance(confirm_components, dict) else None
+        )
+        open_room_over_buffer = (
+            open_components.get("space_to_buffer_ratio")
+            if isinstance(open_components, dict) else (
+                available_distance / buffer_distance
+                if available_distance is not None and buffer_distance is not None and buffer_distance > 0
+                else None
+            )
+        )
         pairs.append({
             "opportunity_hash": opportunity_hash,
             "confirm_plan_hash": plan_id[:12] if isinstance(plan_id, str) else None,
@@ -1288,11 +1342,13 @@ def _duration_pair_diagnostics(rows, *, trace_episodes=None):
             "open_noise_context": market_context.get("noise_context"),
             "open_activity_state": market_context.get("volatility_state"),
             "open_structure_state": structure.get("feasibility_state"),
-            "open_room_over_buffer": (
-                available_distance / buffer_distance
-                if available_distance is not None and buffer_distance is not None and buffer_distance > 0
-                else None
-            ),
+            "confirm_room_over_buffer": confirm_room_over_buffer,
+            "open_room_over_buffer": open_room_over_buffer,
+            "physical_component_snapshot_status": component_status,
+            "confirm_physical_components": deepcopy(confirm_components) if isinstance(confirm_components, dict) else None,
+            "open_physical_components": deepcopy(open_components) if isinstance(open_components, dict) else None,
+            "physical_component_deltas": component_deltas,
+            "physical_component_change_percent": component_change_percent,
             "opportunity_trace_status": (
                 "MATCHED" if isinstance(trace_episode, dict)
                 else "NOT_RETAINED" if isinstance(trace_episodes, dict) else "NOT_CONFIGURED"
@@ -1334,6 +1390,21 @@ def _duration_pair_summary(rows):
                 values.append(float(value))
         return _quantiles(values)
 
+    def component_quantiles(container, field):
+        values = [
+            (row.get(container) or {}).get(field)
+            for row in rows
+        ]
+        return _quantiles([
+            float(value) for value in values
+            if type(value) in (int, float) and math.isfinite(value)
+        ])
+
+    component_fields = (
+        "directional_effective_speed", "buffer_distance", "available_distance",
+        "t_needed_seconds", "t_needed_adjusted_seconds", "adjustment_multiplier",
+        "flow_efficiency", "space_to_buffer_ratio",
+    )
     return {
         "duration_feasibility": counts("duration_feasibility", include_none=True),
         "entry_delivery_status": counts("entry_delivery_status", include_none=True),
@@ -1349,7 +1420,17 @@ def _duration_pair_summary(rows):
         "confirm_plan_missing": sum(row.get("confirm_plan_available") is not True for row in rows),
         "open_snapshot_available": sum(row.get("open_snapshot_available") is True for row in rows),
         "open_snapshot_missing": sum(row.get("open_snapshot_available") is not True for row in rows),
+        "physical_component_snapshot_status": counts("physical_component_snapshot_status", include_none=True),
+        "physical_component_deltas": {
+            field: component_quantiles("physical_component_deltas", field)
+            for field in component_fields
+        },
+        "physical_component_change_percent": {
+            field: component_quantiles("physical_component_change_percent", field)
+            for field in component_fields
+        },
         "pre_to_confirm_seconds": quantiles("pre_to_confirm_seconds"),
+        "confirm_room_over_buffer": quantiles("confirm_room_over_buffer"),
         "confirm_to_open_seconds": quantiles("confirm_to_open_seconds"),
         "open_candle_age_seconds": quantiles("open_candle_age_seconds"),
         "open_minus_confirm_adjusted_seconds": quantiles("open_minus_confirm_adjusted_seconds"),
@@ -1367,6 +1448,7 @@ def _duration_pair_detail_payloads(rows, *, pair_digest, cohort_revision,
     def payload(chunk, index, count):
         return {
             "protocol": "V3_DURATION_PAIR_DIAGNOSTICS_V1",
+            "physical_components_protocol": physical_component_snapshot.PROTOCOL,
             "pair_report_sha256": pair_digest,
             "cohort_revision": cohort_revision,
             "parameter_sha256": parameter_sha256,
