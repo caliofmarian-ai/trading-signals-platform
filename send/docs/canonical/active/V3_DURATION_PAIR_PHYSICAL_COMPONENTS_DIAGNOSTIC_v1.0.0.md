@@ -44,8 +44,9 @@ canonical state labels:
 The snapshot deliberately excludes raw prices, quotes, support/resistance
 levels, signal IDs, decision IDs, destination IDs, personal data and every
 score/TPS field. Each snapshot is schema-validated and SHA-256 hashed. The
-canonical time identity is checked against buffer_distance /
-directional_effective_speed; the adjustment multiplier is checked against
+canonical time identity residual is recorded as the difference between the
+frozen t_needed and buffer_distance / directional_effective_speed; it is not
+used as a gate or forced to zero. The adjustment multiplier is checked against
 adjusted/unaltered movement time.
 
 ## Pair reconciliation
