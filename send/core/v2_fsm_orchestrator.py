@@ -377,6 +377,19 @@ def advance_persistent_fsm(
             transition_event=None,
         )
 
+    # The research-only CONFIRM component snapshot can outlive the canonical
+    # physical_signal_id after an OPEN. Clear it before state validation when a
+    # different PRE begins, including the post-OPEN case where current_id is None.
+    if (
+        decision.kind == "PRE"
+        and physical_only
+        and isinstance(symbol_state, dict)
+        and symbol_state.get("physical_confirm_components") is not None
+        and symbol_state.get("physical_signal_id") != decision.signal_id
+    ):
+        symbol_state.pop("physical_confirm_components", None)
+        symbol_state.pop("physical_confirm_components_sha256", None)
+
     # A newly accepted PRE establishes a new opportunity identity. Clear the
     # prior opportunity's OPEN_NOW marker before applying the PRE transition so
     # an unrelated opportunity evaluated on the same candle cannot be falsely
