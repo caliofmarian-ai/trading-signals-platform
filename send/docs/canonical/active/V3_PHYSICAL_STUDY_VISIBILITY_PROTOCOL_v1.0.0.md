@@ -290,3 +290,6 @@ This additive research metadata does not change study/storage protocol,
 training/holdout boundaries, labels, quote windows, PRE lead, CONFIRM duration,
 OPEN physical gate, buffer policy, strategy, publisher, destinations or
 execution authority. V3 remains scoreless and broker execution remains off.
+
+The time-identity residual is retained as a measured diagnostic difference;
+it is never used as a decision gate or to change the frozen duration.
