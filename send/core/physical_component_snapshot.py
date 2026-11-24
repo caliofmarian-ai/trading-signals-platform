@@ -99,6 +99,27 @@ def validate(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     if needed is not None and needed > 0 and adjusted is not None and multiplier is not None:
         if not isclose(multiplier, adjusted / needed, rel_tol=1e-12, abs_tol=1e-12):
             raise ValueError("PHYSICAL_COMPONENT_ADJUSTMENT_IDENTITY_MISMATCH")
+
+    gross = normalized["weighted_gross_speed"]
+    efficiency = normalized["flow_efficiency"]
+    if speed is not None and gross is not None and gross > 0 and efficiency is not None:
+        if not isclose(efficiency, speed / gross, rel_tol=1e-12, abs_tol=1e-12):
+            raise ValueError("PHYSICAL_COMPONENT_FLOW_IDENTITY_MISMATCH")
+
+    available = normalized["available_distance"]
+    room_ratio = normalized["space_to_buffer_ratio"]
+    if available is not None and buffer is not None and buffer > 0 and room_ratio is not None:
+        if not isclose(room_ratio, available / buffer, rel_tol=1e-12, abs_tol=1e-12):
+            raise ValueError("PHYSICAL_COMPONENT_ROOM_IDENTITY_MISMATCH")
+
+    model = normalized["model_expiry_seconds"]
+    reach = normalized["model_time_reach_ratio"]
+    time_ratio = normalized["time_to_buffer_ratio"]
+    if adjusted is not None and adjusted > 0 and model is not None and model > 0:
+        if reach is not None and not isclose(reach, adjusted / model, rel_tol=1e-12, abs_tol=1e-12):
+            raise ValueError("PHYSICAL_COMPONENT_MODEL_REACH_IDENTITY_MISMATCH")
+        if time_ratio is not None and not isclose(time_ratio, model / adjusted, rel_tol=1e-12, abs_tol=1e-12):
+            raise ValueError("PHYSICAL_COMPONENT_TIME_BUFFER_IDENTITY_MISMATCH")
     return normalized
 
 
