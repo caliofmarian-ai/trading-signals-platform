@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any, Callable, Dict, Optional
 
-from core import storage
+from core import storage, physical_component_snapshot
 from core.storage import save_json_atomic, with_lock
 
 
@@ -285,6 +285,23 @@ def _normalize_symbol_state(symbol: str, raw: Any) -> Dict[str, Any]:
         normalized["physical_confirm_execution"] = validated
     elif raw.get("physical_confirm_execution_status") == "FROZEN":
         raise StateValidationError(f"per_symbol[{symbol}] frozen execution plan is missing")
+    components = raw.get("physical_confirm_components")
+    components_hash = raw.get("physical_confirm_components_sha256")
+    if components is not None:
+        prefix = f"per_symbol[{symbol}].physical_confirm_components"
+        if raw.get("physical_confirm_ts") is None or raw.get("physical_signal_id") is None:
+            raise StateValidationError(f"{prefix} requires an accepted physical CONFIRM")
+        try:
+            validated_components = physical_component_snapshot.validate(components)
+            expected_hash = physical_component_snapshot.digest(validated_components)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise StateValidationError(f"{prefix} is invalid") from exc
+        if components_hash != expected_hash:
+            raise StateValidationError(f"{prefix} digest does not match")
+        normalized["physical_confirm_components"] = validated_components
+        normalized["physical_confirm_components_sha256"] = expected_hash
+    elif components_hash is not None:
+        raise StateValidationError(f"per_symbol[{symbol}] component digest has no snapshot")
     return normalized
 
 
