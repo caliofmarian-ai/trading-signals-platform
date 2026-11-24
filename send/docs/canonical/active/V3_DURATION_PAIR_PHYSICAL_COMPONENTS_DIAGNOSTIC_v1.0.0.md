@@ -66,8 +66,10 @@ detail chunks:
 - the already-frozen CONFIRM duration, OPEN feasibility, entry-delivery reason,
   elapsed lifecycle timing and the existing opportunity-trace join.
 
-The report remains research-only. Deltas describe observed changes between
-snapshots; they do not by themselves establish causality. A source-market
+The report remains research-only. Detail chunks retain the latest 120 pairs
+in chronological order; aggregate counts cover the full cohort, while older
+pairs remain represented in the summary. Deltas describe observed changes
+between snapshots; they do not by themselves establish causality. A source-market
 change, changed geometry or changed adjustment context must be interpreted
 from the paired evidence, not inferred from aggregate counts.
 
