@@ -1279,7 +1279,7 @@ def _duration_pair_diagnostics(rows, *, trace_episodes=None):
             for field in (
                 "directional_effective_speed", "buffer_distance", "available_distance",
                 "t_needed_seconds", "t_needed_adjusted_seconds", "adjustment_multiplier",
-                "flow_efficiency", "space_to_buffer_ratio",
+                "flow_efficiency", "space_to_buffer_ratio", "time_identity_residual_seconds",
             )
         }
         component_change_percent = {
@@ -1403,7 +1403,7 @@ def _duration_pair_summary(rows):
     component_fields = (
         "directional_effective_speed", "buffer_distance", "available_distance",
         "t_needed_seconds", "t_needed_adjusted_seconds", "adjustment_multiplier",
-        "flow_efficiency", "space_to_buffer_ratio",
+        "flow_efficiency", "space_to_buffer_ratio", "time_identity_residual_seconds",
     )
     return {
         "duration_feasibility": counts("duration_feasibility", include_none=True),
