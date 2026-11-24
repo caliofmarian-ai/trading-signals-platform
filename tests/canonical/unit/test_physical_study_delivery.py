@@ -387,6 +387,7 @@ def test_duration_pair_diagnostics_joins_hashed_trace_without_private_fields():
     row["open_physical_components"] = _components(
         stamp=BASE+39, speed=0.03, gross=0.04, buffer=0.12,
         available=0.30, needed=4.0, adjusted=2.5, model=2.5)
+    original = copy.deepcopy(row)
 
     opportunity_hash = hashlib.sha256(signal_id.encode()).hexdigest()[:12]
     trace_episodes = {
