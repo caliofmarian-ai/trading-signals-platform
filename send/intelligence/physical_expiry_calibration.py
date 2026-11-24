@@ -1405,6 +1405,9 @@ def _duration_pair_summary(rows):
         "t_needed_seconds", "t_needed_adjusted_seconds", "adjustment_multiplier",
         "flow_efficiency", "space_to_buffer_ratio", "time_identity_residual_seconds",
     )
+    component_percent_fields = tuple(
+        field for field in component_fields if field != "time_identity_residual_seconds"
+    )
     return {
         "duration_feasibility": counts("duration_feasibility", include_none=True),
         "entry_delivery_status": counts("entry_delivery_status", include_none=True),
@@ -1427,7 +1430,7 @@ def _duration_pair_summary(rows):
         },
         "physical_component_change_percent": {
             field: component_quantiles("physical_component_change_percent", field)
-            for field in component_fields
+            for field in component_percent_fields
         },
         "pre_to_confirm_seconds": quantiles("pre_to_confirm_seconds"),
         "confirm_room_over_buffer": quantiles("confirm_room_over_buffer"),
