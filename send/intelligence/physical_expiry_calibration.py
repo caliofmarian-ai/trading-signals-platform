@@ -1754,6 +1754,11 @@ def analyze(state, *, now_ts):
         "buffer_first_hit_time_collection_started_ts")
     report["buffer_first_hit_time_diagnostic"] = _buffer_first_hit_time_report(records)
     report["decision_snapshot_entries"] = sum("decision_snapshot" in r for r in records)
+    report["confirm_physical_component_entries"] = sum("confirm_physical_components" in r for r in records)
+    report["open_physical_component_entries"] = sum("open_physical_components" in r for r in records)
+    report["paired_physical_component_entries"] = sum(
+        "confirm_physical_components" in r and "open_physical_components" in r for r in records
+    )
     report["entry_quote_sources"] = dict(Counter(r["entry"]["source"] for r in records if r["entry"]))
     report["expiry_quote_sources"] = dict(Counter(c["quote"]["source"] for r in records
                                                 for c in r["candidates"] if c["quote"]))
