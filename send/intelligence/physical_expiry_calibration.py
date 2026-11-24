@@ -55,6 +55,7 @@ _DIRECTIONAL_FLOW_COHORTS = (
     ("V3_DIRECTIONAL_FLOW_GATE_V6", "directional_flow_gate_v6_state.json", "directional_flow_gate_v6_cutover.json"),
     ("V3_DIRECTIONAL_FLOW_GATE_V7", "directional_flow_gate_v7_state.json", "directional_flow_gate_v7_cutover.json"),
     ("V3_DIRECTIONAL_FLOW_GATE_V8", "directional_flow_gate_v8_state.json", "directional_flow_gate_v8_cutover.json"),
+    ("V3_DIRECTIONAL_FLOW_GATE_V9", "directional_flow_gate_v9_state.json", "directional_flow_gate_v9_cutover.json"),
 )
 _DIRECTIONAL_FLOW_REVISIONS = tuple(item[0] for item in _DIRECTIONAL_FLOW_COHORTS)
 DIRECTIONAL_FLOW_COHORT_REVISION = _DIRECTIONAL_FLOW_COHORTS[-1][0]
@@ -1115,6 +1116,7 @@ def _advance_ledger(path, *, now, active_provider, price_loader, observation_loa
                     "trace_join": trace_join,
                     "detail_chunk_count": len(detail_payloads),
                     "detail_pair_count": sum(len(item["pairs"]) for item in detail_payloads),
+                    "detail_selection": "LATEST_CHRONOLOGICAL",
                     "detail_max_rows": DURATION_PAIR_DETAIL_MAX_ROWS,
                     "detail_max_bytes": DURATION_PAIR_DETAIL_MAX_BYTES,
                     "truncated_pairs": max(0, len(pair_rows) - DURATION_PAIR_DETAIL_MAX_PAIRS),
@@ -1454,7 +1456,17 @@ def _duration_pair_summary(rows):
 def _duration_pair_detail_payloads(rows, *, pair_digest, cohort_revision,
                                    parameter_sha256, history_policy, observed_at):
     """Split privacy-safe row detail into independently readable bounded log lines."""
-    visible_rows = list(rows[:DURATION_PAIR_DETAIL_MAX_PAIRS])
+    def chronological_key(row):
+        value = row.get("open_decision_ts")
+        if type(value) not in (int, float) or not math.isfinite(value):
+            value = row.get("pre_decision_ts")
+        return (float(value) if type(value) in (int, float) and math.isfinite(value)
+                else float("-inf"))
+
+    # Keep recent prospective evidence visible as the cohort grows. Aggregate
+    # summaries still cover every pair; bounded detail must not freeze on the
+    # oldest records and hide every newly collected CONFIRM/OPEN comparison.
+    visible_rows = sorted(rows, key=chronological_key)[-DURATION_PAIR_DETAIL_MAX_PAIRS:]
 
     def payload(chunk, index, count):
         return {
@@ -1467,6 +1479,7 @@ def _duration_pair_detail_payloads(rows, *, pair_digest, cohort_revision,
             "observed_at": observed_at,
             "chunk_index": index,
             "chunk_count": count,
+            "detail_selection": "LATEST_CHRONOLOGICAL",
             "pairs": chunk,
             "truth_domain": "RESEARCH_DIAGNOSTIC_ONLY",
             "no_state_mutation": True,
