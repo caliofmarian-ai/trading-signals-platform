@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from statistics import NormalDist
 
-from core import storage
+from core import storage, physical_component_snapshot
 from core import confirmed_study_duration as second_duration
 from intelligence import shadow_model_time_research as quotes
 from intelligence import buffer_expiry_evidence as buffer_evidence
@@ -587,6 +587,23 @@ def validate(state):
                 or frozen.get("direction") != row["direction"]
                 or frozen.get("market_context", {}).get("buffer_distance") != row["buffer_snapshot"]["buffer_distance"]):
                 raise ValueError("PHYSICAL_DECISION_SNAPSHOT_CHANGED")
+        for field, hash_field in (
+            ("confirm_physical_components", "confirm_physical_components_sha256"),
+            ("open_physical_components", "open_physical_components_sha256"),
+        ):
+            components = row.get(field)
+            components_hash = row.get(hash_field)
+            if components is not None:
+                normalized_components = physical_component_snapshot.validate(components)
+                if components_hash != physical_component_snapshot.digest(normalized_components):
+                    raise ValueError("PHYSICAL_COMPONENT_SNAPSHOT_HASH_MISMATCH")
+                row[field] = normalized_components
+            elif components_hash is not None:
+                raise ValueError("PHYSICAL_COMPONENT_SNAPSHOT_HASH_WITHOUT_DATA")
+        if "open_physical_components" in row:
+            expected_open = physical_component_snapshot.from_snapshot(row.get("decision_snapshot") or {})
+            if expected_open is None or expected_open != row["open_physical_components"]:
+                raise ValueError("OPEN_PHYSICAL_COMPONENTS_SOURCE_MISMATCH")
         for extra, offset in zip(row.get("post_model_observations", []), POST_MODEL_OFFSETS):
             if extra.get("offset_seconds") != offset or extra.get("horizon_seconds") != model + offset:
                 raise ValueError("CHANGED_POST_MODEL_HORIZON")
@@ -791,10 +808,19 @@ def capture(entries, *, params, buffer_mode, strategy_version, canonical_spec, n
             if item.get("decision_snapshot") is not None:
                 row["decision_snapshot"] = item["decision_snapshot"]
                 row["decision_snapshot_sha256"] = _digest(row["decision_snapshot"])
+                open_components = physical_component_snapshot.from_snapshot(row["decision_snapshot"])
+                if open_components is not None:
+                    row["open_physical_components"] = open_components
+                    row["open_physical_components_sha256"] = physical_component_snapshot.digest(open_components)
                 row["post_model_observations"] = [{"offset_seconds": offset,
                     "horizon_seconds": row["model_seconds"] + offset,
                     "outcome": "PENDING", "reason": None, "quote": None}
                     for offset in POST_MODEL_OFFSETS]
+            confirm_components = item.get("confirm_physical_components")
+            if confirm_components is not None:
+                row["confirm_physical_components"] = physical_component_snapshot.validate(confirm_components)
+                row["confirm_physical_components_sha256"] = physical_component_snapshot.digest(
+                    row["confirm_physical_components"])
             if (item.get("publish_study") is True
                 and item.get("confirm_execution_status") == "UNAVAILABLE"):
                 # Only chains marked at PRE use the new seconds plan. Never
@@ -1853,6 +1879,7 @@ def observe_accepted_chain(decision, handoff, params, *, now_ts, provider, buffe
         "open_decision_id": decision.decision_id, "open_decision_audit_id": decision.decision_audit_id,
         "decision_snapshot": frozen,
         "confirm_execution_status": row.get("physical_confirm_execution_status"),
+        "confirm_physical_components": deepcopy(row.get("physical_confirm_components")),
         "study_duration_policy": row.get(second_duration.POLICY_FIELD),
         "confirmed_study_plan": deepcopy(row.get(second_duration.PLAN_FIELD)),
         "publish_study": (publish_study
