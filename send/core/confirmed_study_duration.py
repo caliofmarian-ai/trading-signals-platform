@@ -14,12 +14,15 @@ from math import isfinite
 from typing import Any, Mapping
 
 from intelligence.second_precision_duration import POLICY, prepare_candidate
+from . import physical_component_snapshot
 
 LEGACY_POLICY = "CONFIRM_INTEGER_MINUTE_V1"
 LEGACY_OPEN_POLICY = "LEGACY_OPEN_MODEL_TIME"
 SOURCE = "CONFIRM_MODEL_TIME"  # producer family; policy identifies its exact formula
 POLICY_FIELD = "physical_study_duration_policy"
 PLAN_FIELD = "physical_confirm_study_plan"
+PHYSICAL_COMPONENTS_FIELD = "physical_confirm_components"
+PHYSICAL_COMPONENTS_HASH_FIELD = "physical_confirm_components_sha256"
 _CANDIDATE_KEYS = {"policy", "adjusted_minutes", "minimum_minutes", "maximum_minutes",
                    "duration_seconds", "parameter_sha256"}
 _PLAN_KEYS = _CANDIDATE_KEYS | {"signal_id", "symbol", "direction", "pre_ts", "confirmed_ts",
@@ -102,18 +105,44 @@ def record_stage(row: dict, previous_row: Mapping[str, Any], decision: Any, *, n
         if (previous_row.get("physical_signal_id") == decision.signal_id
                 and previous_row.get("physical_pre_ts") is not None):
             # A retry cannot upgrade a chain that began before deployment.
-            for key in (POLICY_FIELD, PLAN_FIELD):
+            for key in (POLICY_FIELD, PLAN_FIELD, PHYSICAL_COMPONENTS_FIELD,
+                        PHYSICAL_COMPONENTS_HASH_FIELD):
                 if key in previous_row:
                     row[key] = deepcopy(previous_row[key])
                 else:
                     row.pop(key, None)
             return
-        row.pop(PLAN_FIELD, None)
-        row.pop(POLICY_FIELD, None)
+        for key in (PLAN_FIELD, POLICY_FIELD, PHYSICAL_COMPONENTS_FIELD,
+                    PHYSICAL_COMPONENTS_HASH_FIELD):
+            row.pop(key, None)
         if decision.fsm_inputs.get("study_duration_policy") == POLICY:
             row[POLICY_FIELD], row[PLAN_FIELD] = POLICY, None
         return
-    if decision.kind != "CONFIRM" or POLICY_FIELD not in row:
+    if decision.kind != "CONFIRM":
+        return
+    components = row.get(PHYSICAL_COMPONENTS_FIELD)
+    components_hash = row.get(PHYSICAL_COMPONENTS_HASH_FIELD)
+    if components is not None:
+        try:
+            normalized = physical_component_snapshot.validate(components)
+            if components_hash != physical_component_snapshot.digest(normalized):
+                raise ValueError("PHYSICAL_CONFIRM_COMPONENTS_HASH_MISMATCH")
+        except (TypeError, ValueError, OverflowError):
+            row.pop(PHYSICAL_COMPONENTS_FIELD, None)
+            row.pop(PHYSICAL_COMPONENTS_HASH_FIELD, None)
+        else:
+            row[PHYSICAL_COMPONENTS_FIELD] = normalized
+    elif components_hash is not None:
+        row.pop(PHYSICAL_COMPONENTS_HASH_FIELD, None)
+    elif row.get("physical_confirm_ts") == now_ts:
+        try:
+            components = physical_component_snapshot.from_decision(decision)
+        except (TypeError, ValueError, OverflowError):
+            components = None
+        if components is not None:
+            row[PHYSICAL_COMPONENTS_FIELD] = components
+            row[PHYSICAL_COMPONENTS_HASH_FIELD] = physical_component_snapshot.digest(components)
+    if POLICY_FIELD not in row:
         return
     if row[POLICY_FIELD] != POLICY:
         raise ValueError("UNKNOWN_STUDY_DURATION_POLICY")

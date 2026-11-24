@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any, Callable, Dict, Optional
 
-from core import storage
+from core import storage, physical_component_snapshot
 from core.storage import save_json_atomic, with_lock
 
 
@@ -285,6 +285,27 @@ def _normalize_symbol_state(symbol: str, raw: Any) -> Dict[str, Any]:
         normalized["physical_confirm_execution"] = validated
     elif raw.get("physical_confirm_execution_status") == "FROZEN":
         raise StateValidationError(f"per_symbol[{symbol}] frozen execution plan is missing")
+    components = raw.get("physical_confirm_components")
+    components_hash = raw.get("physical_confirm_components_sha256")
+    if components is not None:
+        # This field is research-only and must never make the canonical FSM fail
+        # closed. Invalid or orphaned diagnostics are discarded; signal/FSM
+        # invariants above remain authoritative.
+        try:
+            if raw.get("physical_confirm_ts") is None or raw.get("physical_signal_id") is None:
+                raise ValueError("ORPHANED_PHYSICAL_CONFIRM_COMPONENTS")
+            validated_components = physical_component_snapshot.validate(components)
+            expected_hash = physical_component_snapshot.digest(validated_components)
+            if components_hash != expected_hash:
+                raise ValueError("PHYSICAL_CONFIRM_COMPONENTS_HASH_MISMATCH")
+        except (TypeError, ValueError, OverflowError):
+            normalized.pop("physical_confirm_components", None)
+            normalized.pop("physical_confirm_components_sha256", None)
+        else:
+            normalized["physical_confirm_components"] = validated_components
+            normalized["physical_confirm_components_sha256"] = expected_hash
+    elif components_hash is not None:
+        normalized.pop("physical_confirm_components_sha256", None)
     return normalized
 
 

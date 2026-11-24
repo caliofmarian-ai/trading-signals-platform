@@ -206,6 +206,33 @@ def test_confirmed_duration_survives_changed_open_model_restart_and_independent_
     assert report["published_study_results"]["decisive"] == 0
 
 
+
+def test_new_study_capture_persists_both_scoreless_physical_component_snapshots(study_setup):
+    _, study, _, _, _, _, _, _ = study_setup
+    row = _capture(study_setup)
+    confirm = row["confirm_physical_components"]
+    opened = row["open_physical_components"]
+    assert confirm["protocol"] == "V3_PHYSICAL_COMPONENT_SNAPSHOT_V1"
+    assert opened["protocol"] == confirm["protocol"]
+    assert confirm["directional_effective_speed"] is not None
+    assert confirm["buffer_distance"] is not None
+    assert confirm["available_distance"] is not None
+    assert opened["directional_effective_speed"] is not None
+    assert row["confirm_physical_components_sha256"]
+    assert row["open_physical_components_sha256"]
+    for snapshot in (confirm, opened):
+        assert "latest_price" not in snapshot
+        assert "signal_id" not in snapshot
+        assert not any(key in snapshot for key in ("score", "TPS", "S", "T", "P", "V"))
+    pairs = study._duration_pair_diagnostics([row])
+    assert pairs[0]["physical_component_snapshot_status"] == "COMPLETE"
+    assert pairs[0]["confirm_physical_components"] == confirm
+    assert pairs[0]["open_physical_components"] == opened
+    report = study.summary(now_ts=BASE+32)
+    assert report["confirm_physical_component_entries"] == 1
+    assert report["open_physical_component_entries"] == 1
+    assert report["paired_physical_component_entries"] == 1
+
 def test_confirmed_study_that_no_longer_fits_open_physics_is_not_published(study_setup):
     _, study, _, result, _, _, messages, _ = study_setup
     _confirmed_duration(study_setup, result.decision.time.t_needed_adjusted * 30)
@@ -304,10 +331,19 @@ def test_duration_pair_diagnostics_joins_hashed_trace_without_private_fields():
                 "trend_context": "WITH_TREND",
                 "noise_context": "STABLE",
                 "volatility_state": "ACTIVE",
-                "buffer_distance": 0.1,
+                "directional_effective_speed": 0.03,
+                "weighted_gross_speed": 0.04,
+                "flow_efficiency": 0.75,
+                "buffer_distance": 0.12,
             },
-            "structure": {"feasibility_state": "VALID", "available_distance": 0.25},
+            "structure": {"feasibility_state": "VALID", "available_distance": 0.30,
+                          "corridor_width": 0.5},
+            "trade_physics": {"readiness_state": "READY", "space_to_buffer_ratio": 2.5,
+                "trade_space_margin_atr": 0.5, "atr_speed_reference": 0.01,
+                "directional_speed_ratio": 3.0, "movement_stress": 0.6},
         },
+        "open_physical_components": None,
+        "confirm_physical_components": None,
         "decision_snapshot_sha256": "a" * 64,
         "study_observation": {
             "duration_policy": policy,
@@ -327,6 +363,34 @@ def test_duration_pair_diagnostics_joins_hashed_trace_without_private_fields():
             "resolution_reason": "OPEN_ADJUSTED_TIME_EXCEEDS_CONFIRMED_DURATION",
         }},
     }
+    original = copy.deepcopy(row)
+
+    from core import physical_component_snapshot
+    def _components(*, stamp, speed, gross, buffer, available, needed, adjusted, model):
+        return physical_component_snapshot.from_snapshot({
+            "decision_policy": "PHYSICAL_ONLY_V3", "candle_ts": stamp,
+            "market_context": {
+                "directional_effective_speed": speed, "weighted_gross_speed": gross,
+                "flow_efficiency": speed/gross, "buffer_distance": buffer,
+                "trend_context": "WITH_TREND", "volatility_state": "ACTIVE",
+                "noise_context": "STABLE",
+            },
+            "structure": {"available_distance": available, "corridor_width": 0.5,
+                          "feasibility_state": "VALID"},
+            "time": {"t_needed": needed, "t_needed_adjusted": adjusted,
+                     "model_expiry": model, "model_time_reach_ratio": adjusted/model,
+                     "time_to_buffer_ratio": model/adjusted, "time_state": "READY"},
+            "trade_physics": {"readiness_state": "READY",
+                "space_to_buffer_ratio": available/buffer,
+                "trade_space_margin_atr": 0.5, "atr_speed_reference": 0.01,
+                "directional_speed_ratio": 3.0, "movement_stress": 0.6},
+        })
+    row["confirm_physical_components"] = _components(
+        stamp=BASE+10, speed=0.04, gross=0.05, buffer=0.1,
+        available=0.25, needed=2.5, adjusted=1.5, model=2.0)
+    row["open_physical_components"] = _components(
+        stamp=BASE+39, speed=0.03, gross=0.04, buffer=0.12,
+        available=0.30, needed=4.0, adjusted=2.5, model=2.5)
     original = copy.deepcopy(row)
 
     opportunity_hash = hashlib.sha256(signal_id.encode()).hexdigest()[:12]
@@ -363,6 +427,14 @@ def test_duration_pair_diagnostics_joins_hashed_trace_without_private_fields():
     assert pair["confirmed_duration_minus_open_adjusted_seconds"] == -60
     assert pair["open_candle_age_seconds"] == 1
     assert pair["open_room_over_buffer"] == 2.5
+    assert pair["confirm_room_over_buffer"] == 2.5
+    assert pair["physical_component_snapshot_status"] == "COMPLETE"
+    assert pair["physical_component_deltas"]["directional_effective_speed"] == pytest.approx(-0.01)
+    assert pair["physical_component_deltas"]["buffer_distance"] == pytest.approx(0.02)
+    assert pair["physical_component_deltas"]["available_distance"] == pytest.approx(0.05)
+    assert pair["physical_component_deltas"]["t_needed_seconds"] == pytest.approx(90.0)
+    assert pair["physical_component_change_percent"]["directional_effective_speed"] == pytest.approx(-25.0)
+    assert "latest_price" not in json.dumps(pair)
     assert pair["duration_feasibility"] == "INFEASIBLE"
     assert pair["entry_delivery_status"] == "SKIPPED_DURATION_INFEASIBLE"
     assert pair["entry_delivery_reason"] == "OPEN_ADJUSTED_TIME_EXCEEDS_CONFIRMED_DURATION"

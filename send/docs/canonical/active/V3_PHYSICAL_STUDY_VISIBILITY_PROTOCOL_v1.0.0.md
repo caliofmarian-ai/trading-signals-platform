@@ -264,3 +264,32 @@ post-model checkpoints and adjacent-source-quote estimates cannot rewrite the
 baseline. No score is used in the V3 decision, no threshold/duration/buffer is
 relaxed by this documentation, and broker execution remains disabled. No
 automatic approval, parameter activation, backfill or efficacy claim follows.
+
+## CONFIRM/OPEN physical component reconciliation — 2026-11-24
+
+New V3 study records additionally preserve a privacy-safe physical component
+snapshot from the first accepted CONFIRM and the matching accepted OPEN_NOW.
+The exact field contract is defined in
+V3_DURATION_PAIR_PHYSICAL_COMPONENTS_DIAGNOSTIC_v1.0.0.md.
+
+The pair records directional effective speed, gross speed/flow efficiency,
+buffer distance, available structural distance, adjusted and unadjusted
+movement time, Model Time, the derived adjustment multiplier and physical
+state context. It stores only derived measurements and state labels: no raw
+prices, quote samples, support/resistance levels, signal/decision IDs,
+destination IDs or score/TPS fields.
+
+The first accepted CONFIRM snapshot is immutable across retries and restart.
+OPEN captures its own matching snapshot. Existing records without CONFIRM
+components remain incomplete; no historical backfill or reconstructed stage
+is allowed. The existing bounded duration-pair report includes component
+availability and per-pair absolute/percentage deltas. These deltas are
+diagnostic evidence, not causal proof.
+
+This additive research metadata does not change study/storage protocol,
+training/holdout boundaries, labels, quote windows, PRE lead, CONFIRM duration,
+OPEN physical gate, buffer policy, strategy, publisher, destinations or
+execution authority. V3 remains scoreless and broker execution remains off.
+
+The time-identity residual is retained as a measured diagnostic difference;
+it is never used as a decision gate or to change the frozen duration.

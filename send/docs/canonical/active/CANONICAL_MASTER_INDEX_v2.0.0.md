@@ -33,6 +33,12 @@ Owner research visibility workflow 2026-11-06:
 defines explicitly uncalibrated private study observations outside canonical
 SignalEvent publication. Governed OPEN_NOW execution expiry remains required.
 
+Owner research diagnostic 2026-11-24:
+[V3_DURATION_PAIR_PHYSICAL_COMPONENTS_DIAGNOSTIC_v1.0.0.md](V3_DURATION_PAIR_PHYSICAL_COMPONENTS_DIAGNOSTIC_v1.0.0.md)
+defines immutable, price-free physical component snapshots at first accepted
+CONFIRM and matching OPEN_NOW. It adds no strategy, score, calibration or
+execution authority.
+
 This document is the sole authoritative Master Index for the canonical documentation graph after the staged-execution + current-scope Trade Physics promotion executed on 2026-09-01.
 
 `CANONICAL_MASTER_INDEX_v1.0.0.md` is superseded and historical only.
