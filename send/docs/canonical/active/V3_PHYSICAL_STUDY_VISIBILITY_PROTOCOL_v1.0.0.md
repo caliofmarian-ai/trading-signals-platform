@@ -230,14 +230,17 @@ preserves the pre-upgrade bytes before migration, reads earlier V2/V3/V4 records
 without relabelling them, and keeps prior cohort records and outcomes intact.
 The matching numeral does not make these two V5 contracts interchangeable.
 
-The active prospective cohort is `V3_DIRECTIONAL_FLOW_GATE_V8`. V7 is preserved
-as terminal `TRAINING_DATA_QUALITY_FAILED`; V8 is its fresh chronological,
-non-copying successor with a new 60/60 boundary. No V7 rows, labels, outcomes or
-holdout observations are copied into V8. Pending V7 observations may settle only
-in the V7 ledger. Earlier scored and scoreless cohorts remain separate and are
-never pooled into the active V8 split.
+The active prospective cohort is `V3_DIRECTIONAL_FLOW_GATE_V9`. V8 is preserved
+as terminal `TRAINING_DATA_QUALITY_FAILED`; V9 is its fresh chronological,
+non-copying successor with a new 60/60 boundary. V8 reached its fixed 60-entry
+training lot with 21 incomplete observations (2 missing entry quotes and 19
+missing expiry quotes; 35%), exceeding the 10% ceiling. No bias was selected,
+and the untouched holdout was not evaluated. No V8 rows, labels, outcomes or
+holdout observations are copied into V9. Pending V8 observations may settle only
+in the V8 ledger. Earlier scored and scoreless cohorts remain separate and are
+never pooled into the active V9 split.
 
-The V8 calibration split remains 60 chronological, non-overlapping training
+The V9 calibration split remains 60 chronological, non-overlapping training
 entries followed by 60 untouched holdout entries. Each lot must contain at least
 30 decisive observations with a known buffer-at-expiry result (B); missing expiry
 outcomes may not exceed 10%, and the existing family-wise confidence/readiness
