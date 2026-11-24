@@ -118,10 +118,8 @@ def record_stage(row: dict, previous_row: Mapping[str, Any], decision: Any, *, n
         if decision.fsm_inputs.get("study_duration_policy") == POLICY:
             row[POLICY_FIELD], row[PLAN_FIELD] = POLICY, None
         return
-    if decision.kind != "CONFIRM" or POLICY_FIELD not in row:
+    if decision.kind != "CONFIRM":
         return
-    if row[POLICY_FIELD] != POLICY:
-        raise ValueError("UNKNOWN_STUDY_DURATION_POLICY")
     components = row.get(PHYSICAL_COMPONENTS_FIELD)
     components_hash = row.get(PHYSICAL_COMPONENTS_HASH_FIELD)
     if components is not None:
@@ -136,6 +134,10 @@ def record_stage(row: dict, previous_row: Mapping[str, Any], decision: Any, *, n
         if components is not None:
             row[PHYSICAL_COMPONENTS_FIELD] = components
             row[PHYSICAL_COMPONENTS_HASH_FIELD] = physical_component_snapshot.digest(components)
+    if POLICY_FIELD not in row:
+        return
+    if row[POLICY_FIELD] != POLICY:
+        raise ValueError("UNKNOWN_STUDY_DURATION_POLICY")
     if row.get(PLAN_FIELD) is not None:
         validate_plan(row[PLAN_FIELD], row=row)
         return
