@@ -1352,3 +1352,32 @@ def test_duration_pair_report_summary_and_detail_chunks_are_bounded(canonical_ru
         <= study.DURATION_PAIR_DETAIL_MAX_BYTES
         for chunk in large_chunks
     )
+
+
+def test_duration_pair_detail_payloads_select_latest_chronological_rows_when_bounded(canonical_runtime_root):
+    from intelligence import physical_expiry_calibration as study
+
+    count = study.DURATION_PAIR_DETAIL_MAX_PAIRS + 7
+    rows = [
+        {"open_decision_ts": float(index), "pre_decision_ts": float(index),
+         "opportunity_hash": f"{index:012d}"}
+        for index in range(count)
+    ]
+    metadata = {
+        "pair_digest": "c" * 64,
+        "cohort_revision": "V3_DIRECTIONAL_FLOW_GATE_V9",
+        "parameter_sha256": "d" * 64,
+        "history_policy": study.HISTORY_POLICY,
+        "observed_at": BASE,
+    }
+
+    chunks = study._duration_pair_detail_payloads(rows, **metadata)
+    visible = [pair for chunk in chunks for pair in chunk["pairs"]]
+
+    assert len(visible) == study.DURATION_PAIR_DETAIL_MAX_PAIRS
+    assert [pair["open_decision_ts"] for pair in visible] == [
+        float(index) for index in range(7, count)
+    ]
+    assert all(chunk["detail_selection"] == "LATEST_CHRONOLOGICAL" for chunk in chunks)
+    assert all(chunk["chunk_index"] == index for index, chunk in enumerate(chunks))
+    assert all(chunk["chunk_count"] == len(chunks) for chunk in chunks)
