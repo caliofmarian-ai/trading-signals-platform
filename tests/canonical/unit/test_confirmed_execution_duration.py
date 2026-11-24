@@ -8,14 +8,22 @@ import pytest
 
 def _decision(stage, stamp, *, model=5.3, needed=3.8):
     from core.decision_object import (DecisionObject, MarketContext, RejectContext, ScoreContext,
-        SetupContext, StrategicFlags, StructureContext, TimeContext)
+        SetupContext, StrategicFlags, StructureContext, TimeContext, TradePhysicsContext)
     from core.market_history_policy import HISTORY_POLICY
+    physics = TradePhysicsContext(
+        readiness_state="READY", available_space=0.02, required_space=0.002,
+        space_to_buffer_ratio=10.0, trade_space_margin_atr=1.8,
+        time_to_buffer_ratio=model/needed, directional_effective_speed=0.0004,
+        weighted_gross_speed=0.0005, flow_efficiency=0.8, atr_speed_reference=0.0005,
+        directional_speed_ratio=0.8, movement_stress=0.2,
+        formula_version="V3_PHYSICAL_ONLY_1.0.0", feature_schema_version="2.0.0")
     return DecisionObject(kind=stage, signal_id="sig-v3-confirm-duration",
         setup=SetupContext("EUR/USD", "BUY", stamp, "M1", f"cycle-{stamp}", "test"),
-        market_context=MarketContext(1.1, 0.001, 0.002, "UP", "ACTIVE", "STABLE"),
+        market_context=MarketContext(1.1, 0.0005, 0.002, "UP", "ACTIVE", "STABLE",
+            directional_effective_speed=0.0004, weighted_gross_speed=0.0005, flow_efficiency=0.8),
         structure=StructureContext(1.09, 1.12, 1.09, 1.12, 0.03, 0.02, "INSIDE", "VALID"),
-        score=ScoreContext(None, None, {}, tier="PHYSICAL_READY"),
-        time=TimeContext(3.0, needed, model, needed/model, None, "READY", model/needed),
+        score=ScoreContext(None, None, {}, tier="PHYSICAL_READY", trade_physics=physics),
+        time=TimeContext(5.0, needed, model, needed/model, None, "READY", model/needed),
         strategic_flags=StrategicFlags(True, True, False, False, False, False, False),
         reject=RejectContext(),
         fsm_inputs={"decision_policy": "PHYSICAL_ONLY_V3", "history_policy": HISTORY_POLICY},
@@ -109,6 +117,32 @@ def test_uncalibrated_confirm_remains_study_when_calibration_appears(canonical_r
     _, _, execution = _step(repeated.next_state, "OPEN_NOW", 1032)
     assert not execution.available
 
+
+
+def test_confirm_physical_components_are_frozen_scoreless_and_restart_safe(canonical_runtime_root):
+    from state_store.state_store import validate_fsm_state
+
+    decision, confirm, _ = _confirmed()
+    row = confirm.next_state["per_symbol"]["EUR/USD"]
+    components = row["physical_confirm_components"]
+    assert components["directional_effective_speed"] == 0.0004
+    assert components["weighted_gross_speed"] == 0.0005
+    assert components["flow_efficiency"] == 0.8
+    assert components["buffer_distance"] == 0.002
+    assert components["available_distance"] == 0.02
+    assert components["t_needed_seconds"] == pytest.approx(300.0)
+    assert components["t_needed_adjusted_seconds"] == pytest.approx(3.8 * 60)
+    assert components["adjustment_multiplier"] == pytest.approx(0.76)
+    assert "latest_price" not in components
+    assert "signal_id" not in components
+    assert not any(key in components for key in ("score", "TPS", "S", "T", "P", "V"))
+    assert row["physical_confirm_components_sha256"]
+
+    restored = validate_fsm_state(json.loads(json.dumps(confirm.next_state)))
+    assert restored["per_symbol"]["EUR/USD"]["physical_confirm_components"] == components
+    _, repeated, _ = _step(restored, "CONFIRM", 1004, model=5.4, needed=3.9)
+    assert repeated.next_state["per_symbol"]["EUR/USD"]["physical_confirm_components"] == components
+    assert decision.kind == "CONFIRM"
 
 def test_repeated_confirm_retains_first_preparation(canonical_runtime_root):
     _, confirm, prepared = _confirmed()
